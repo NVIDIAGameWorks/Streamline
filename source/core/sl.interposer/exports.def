@@ -1,0 +1,25 @@
+EXPORTS
+
+	; d3d11.dll
+	D3D11CreateDevice @22
+	D3D11CreateDeviceAndSwapChain @23
+
+	; d3d12.dll
+	D3D12CreateDevice
+	D3D12GetDebugInterface
+	D3D12CreateRootSignatureDeserializer
+	D3D12CreateVersionedRootSignatureDeserializer
+	D3D12EnableExperimentalFeatures
+	D3D12SerializeRootSignature
+	D3D12SerializeVersionedRootSignature
+	D3D12GetInterface
+	
+	; dxgi.dll
+	CreateDXGIFactory
+	CreateDXGIFactory1
+	CreateDXGIFactory2
+	DXGIGetDebugInterface1
+
+	; vk
+	vkGetInstanceProcAddr
+	vkGetDeviceProcAddr	

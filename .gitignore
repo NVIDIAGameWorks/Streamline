@@ -1,0 +1,6 @@
+_project/
+_artifacts/
+_sdk/
+external/*
+package.bat
+copy.bat
