@@ -152,7 +152,11 @@ bool verifyEmbeddedSignature(const wchar_t* pathToFile);
 HMODULE loadLibrary(const wchar_t* path)
 {
     HMODULE mod = {};
+#ifdef SL_PRODUCTION
     if (verifyEmbeddedSignature(path))
+#else
+    SL_LOG_WARN("!!! NON-PRODUCTION - DO NOT SHIP - BYPASSING SIGNATURE CHECK !!!");
+#endif
     {
         mod = LoadLibraryW(path);
     }

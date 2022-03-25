@@ -1,0 +1,7 @@
+-- d3d11 not returning feature level bug fix
+-- d3d12 command list RT PSO tracking bug fix
+-- setup.bat now allowing vs2017 and vs2019 build configurations
+-- added source code for the sl.common plugin which includes common SL functionality and basic compute dispatch API
+-- added source code for the sl.template plugin to be used as a starting point when developing new SL plugins
+-- Shaders are provided pre-compiled.  If you need to compile HLSL shaders for your own plugin, you will need to place slang in the .\external\slang_internal folder and xxd in the .\tools folder.  Then any *.hlsl files in the .\shaders folder will be compiled at build time.
+-- Known Issue: Benign "error" message that gitVersion.h cannot be found upon first build 

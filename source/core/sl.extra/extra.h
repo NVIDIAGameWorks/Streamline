@@ -59,7 +59,7 @@ namespace extra
 // Ignore deprecated warning, c++17 does not provide proper alternative yet
 SL_IGNOREWARNING_WITH_PUSH(4996)
 
-inline std::wstring utf8ToWide(const char* source)
+inline std::wstring utf8ToUtf16(const char* source)
 {
     static std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> convert;
     return convert.from_bytes(source);
@@ -73,14 +73,14 @@ inline std::string utf16ToUtf8(const wchar_t* source)
 
 SL_IGNOREWARNING_POP
 
-inline std::wstring toWStr(const std::string &s)
+inline std::wstring toWStr(const std::string& s)
 {
-    return utf8ToWide(s.c_str());
+    return utf8ToUtf16(s.c_str());
 }
 
-inline std::wstring toWStr(const char *s)
+inline std::wstring toWStr(const char* s)
 {
-    return utf8ToWide(s);
+    return utf8ToUtf16(s);
 }
 
 inline std::string toStr(const std::wstring &s)

@@ -34,13 +34,13 @@ namespace param
 namespace global
 {
 
-constexpr const char *kColorBuffersHDR = "sl.param.global.colorBuffersHDR";
-constexpr const char *kSetConstsFunc = "sl.param.global.setConstsFunc";
-constexpr const char* kGetConstsFunc = "sl.param.global.getConstsFunc";
-constexpr const char *kPFunAllocateResource = "sl.param.global.allocateResource";
-constexpr const char *kPFunReleaseResource = "sl.param.global.releaseResource";
-constexpr const char *kPluginPath = "sl.param.global.pluginPath";
-constexpr const char *kLogInterface = "sl.param.global.logInterface";
+constexpr const char* kColorBuffersHDR = "sl.param.global.colorBuffersHDR";
+constexpr const char* kPFunSetConsts = "sl.param.global.setConstsFunc";
+constexpr const char* kPFunGetConsts = "sl.param.global.getConstsFunc";
+constexpr const char* kPFunAllocateResource = "sl.param.global.allocateResource";
+constexpr const char* kPFunReleaseResource = "sl.param.global.releaseResource";
+constexpr const char* kPluginPath = "sl.param.global.pluginPath";
+constexpr const char* kLogInterface = "sl.param.global.logInterface";
 constexpr const char* kPluginManagerInterface = "sl.param.global.pluginManagerInterface";
 constexpr const char* kOTAInterface = "sl.param.global.otaInterface";
 constexpr const char *kNeedNGX = "sl.param.global.needNGX";
@@ -59,20 +59,28 @@ constexpr const char *kGPUInfo = "sl.param.common.gpuInfo";
 constexpr const char *kComputeAPI = "sl.param.common.computeAPI";
 constexpr const char* kKeyboardAPI = "sl.param.common.keyboardAPI";
 constexpr const char* kPFunEvaluateFeature = "sl.param.common.evaluateFeature";
+constexpr const char* kPFunRegisterEvaluateCallbacks = "sl.param.common.registerEvaluateCallbacks";
 constexpr const char* kStats = "sl.param.common.stats";
-constexpr const char* kPFunBeginEvent = "sl.param.common.beginEvent";
-constexpr const char* kPFunEndEvent = "sl.param.common.endEvent";
+
+}
+
+namespace template_plugin
+{
+
+constexpr const char* kSupportedAdapters = "sl.param.template_plugin.supportedAdapters";
+constexpr const char* kSetConstsFunc = "sl.param.template_plugin.setConstsFunc";
+constexpr const char* kGetSettingsFunc = "sl.param.template_plugin.getSettingsFunc";
+constexpr const char* kStats = "sl.param.template_plugin.stats";
+constexpr const char* kCurrentFrame = "sl.param.template_plugin.frame";
 
 }
 
 namespace dlss
 {
 
-constexpr const char *kSupportedAdapters = "sl.param.dlss.supportedAdapters";
-constexpr const char *kSetConstsFunc = "sl.param.dlss.setConstsFunc";
-constexpr const char *kGetSettingsFunc = "sl.param.dlss.getSettingsFunc";
-constexpr const char *kPFunBeginEvent = "sl.param.dlss.beginEvent";
-constexpr const char *kPFunEndEvent = "sl.param.dlss.endEvent";
+constexpr const char* kSupportedAdapters = "sl.param.dlss.supportedAdapters";
+constexpr const char* kSetConstsFunc = "sl.param.dlss.setConstsFunc";
+constexpr const char* kGetSettingsFunc = "sl.param.dlss.getSettingsFunc";
 constexpr const char* kStats = "sl.param.dlss.stats";
 constexpr const char* kCurrentFrame = "sl.param.dlss.frame";
 constexpr const char* kMVecBuffer = "sl.param.dlss.mvec";
@@ -82,12 +90,10 @@ constexpr const char* kMVecBuffer = "sl.param.dlss.mvec";
 namespace nrd
 {
 
-constexpr const char *kSupportedAdapters = "sl.param.nrd.supportedAdapters";
-constexpr const char *kSetConstsFunc = "sl.param.nrd.setConstsFunc";
-constexpr const char *kGetSettingsFunc = "sl.param.nrd.getSettingsFunc";
-constexpr const char *kPFunBeginEvent = "sl.param.nrd.beginEvent";
-constexpr const char *kPFunEndEvent = "sl.param.nrd.endEvent";
-constexpr const char *kStats = "sl.param.nrd.stats";
+constexpr const char* kSupportedAdapters = "sl.param.nrd.supportedAdapters";
+constexpr const char* kSetConstsFunc = "sl.param.nrd.setConstsFunc";
+constexpr const char* kGetSettingsFunc = "sl.param.nrd.getSettingsFunc";
+constexpr const char* kStats = "sl.param.nrd.stats";
 constexpr const char* kCurrentFrame = "sl.param.nrd.frame";
 constexpr const char* kMVecBuffer = "sl.param.nrd.mvec";
 constexpr const char* kViewZBuffer = "sl.param.nrd.viewZ";

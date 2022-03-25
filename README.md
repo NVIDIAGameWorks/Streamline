@@ -1,4 +1,4 @@
-# Streamline (SL) - Version 1.0.0
+# Streamline (SL) - Version 1.0.1
 This is where all the components of SL are being developed.
 
 ## Prerequisites
@@ -13,17 +13,17 @@ This is where all the components of SL are being developed.
 - Install "git".
 - Install Python 3
 - Clone your fork to a local hard drive, make sure to use a NTFS drive on Windows (SL uses symbolic links)
-- Execute `./setup.bat` 
+- Execute `./setup.bat` with `{vs2017|vs2019}` (`vs2017` is default)
 
 The make/solution files will be found in the generated `_project` directory. 
 
 ## Building
 - Open Visual Studio command prompt
-- Run `msbuild _project\vs2017\streamline.sln /t:Clean,Build /property:Configuration=Production`
+- Run `msbuild _project\{vs2017|vs2019}\streamline.sln /t:Clean,Build /property:Configuration=Production`
 > **IMPORTANT:**
-> Only use `production` builds when releasing your software
+> Only use `production` builds when releasing your software otherwise SL plugins could be replaced with potentially malicious modules.
 
-The build output will be found in the generated `_artifacts` folder 
+The build output can be found in the generated `_artifacts` folder 
 
 The default setting is to target x86_64 CPU architecture.
 
@@ -39,5 +39,7 @@ Please read [ProgrammingGuideDLSS.md](docs/ProgrammingGuideDLSS.md) to learn abo
 ## Programming Guide - NRD
 Please read [ProgrammingGuideNRD.md](docs/ProgrammingGuideNRD.md) to learn about NRD specific integration in games.
 
+## Sample Plugin Source Code
+A sample Streamline plugin source code is located [here](source/plugins/sl.template/templateEntry.cpp)
 ## Sample App and Source
 A sample application using Streamline may be found in [this git repo](https://github.com/NVIDIAGameWorks/Streamline_Sample)

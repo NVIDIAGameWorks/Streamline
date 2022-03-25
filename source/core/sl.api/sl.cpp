@@ -182,7 +182,7 @@ bool setConstants(const Constants &values, uint32_t frameIndex, uint32_t id)
 
     using PFunSetConstants = bool(const Constants &, uint32_t, uint32_t);
     PFunSetConstants*fun;
-    if (!getPointerParam(param::getInterface(), param::global::kSetConstsFunc, &fun))
+    if (!getPointerParam(param::getInterface(), param::global::kPFunSetConsts, &fun))
     {
         SL_LOG_WARN("Unable to obtain set common constants callback, sl.common plugin missing or not initialized");
         return false;

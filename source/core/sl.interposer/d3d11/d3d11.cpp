@@ -65,11 +65,8 @@ extern "C" HRESULT WINAPI D3D11CreateDeviceAndSwapChain(IDXGIAdapter * pAdapter,
         }
     }
 
-    // Use local feature level variable in case the application did not pass one in
-    D3D_FEATURE_LEVEL FeatureLevel = D3D_FEATURE_LEVEL_11_0;
-
     // We avoid creating swapchain here because we need a device before any of the SL plugins can be initialized
-    HRESULT hr = sl::interposer::call(D3D11CreateDeviceAndSwapChain, d3d11CreateDeviceAndSwapChain)(pAdapter, DriverType, Software, Flags, pFeatureLevels, FeatureLevels, SDKVersion, nullptr, nullptr, ppDevice, &FeatureLevel, nullptr);
+    HRESULT hr = sl::interposer::call(D3D11CreateDeviceAndSwapChain, d3d11CreateDeviceAndSwapChain)(pAdapter, DriverType, Software, Flags, pFeatureLevels, FeatureLevels, SDKVersion, nullptr, nullptr, ppDevice, pFeatureLevel, nullptr);
     if (FAILED(hr))
     {
         SL_LOG_WARN("D3D11CreateDeviceAndSwapChain failed with error code %lx", hr);

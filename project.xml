@@ -4,10 +4,16 @@
     <package name="premake" version="5.0.0#0013-6e380c02-linux-x86_64" platforms="linux-x86_64" />
     <package name="premake" version="5.0.0.13-53e4f813-linux-aarch64" platforms="linux-aarch64" />  
   </dependency>  
+  <dependency name="nvapi" linkPath="external/nvapi">
+    <package name="nvapi" version="r470-developer-windows-x86_64" platforms="windows-x86_64"/>
+  </dependency>    
   <dependency name="VulkanSDK" linkPath="external/vulkan/1.2.141.0">
     <package name="vulkansdk" version="1.2.141.0-windows-x86_64" platforms="windows-x86_64"/>
   </dependency>  
   <dependency name="nlohmann_json" linkPath="external/json">
     <package name="nlohmann_json" version="v3.7.0" platforms="windows-x86_64"/>
-  </dependency>
+  </dependency>  
+  <dependency name="dlss" linkPath="external/ngx">
+    <package name="dlss" version="2.4.0" platforms="windows-x86_64"/>
+  </dependency>    
 </project>

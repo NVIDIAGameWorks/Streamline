@@ -85,7 +85,7 @@ project "sl.interposer"
 	characterset ("MBCS")
 	staticruntime "off"
 	
-	prebuildcommands { path.translate("../../tools/").."gitVersion.bat" }
+	prebuildcommands { 'pushd '..path.translate("../../_artifacts"), path.translate("../tools/").."gitVersion.bat", 'popd' }
 
 	files { 
 		"./include/**.h",
@@ -127,4 +127,117 @@ project "sl.interposer"
 		"./source/core/sl.plugin-manager/pluginManagerEntry.cpp","./source/core/sl.api/plugin-manager.h"
 	}
 
+group ""
+
+group "platforms"
+
+project "sl.compute"
+	kind "StaticLib"	
+	targetdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}")
+	objdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}") 
+	characterset ("MBCS")
+	staticruntime "off"
+	dependson { "sl.interposer"}
+
+	if os.host() == "windows" then
+		files {
+			"./shaders/**.hlsl",
+			"./source/platforms/sl.chi/compute.h",
+			"./source/platforms/sl.chi/generic.h",		
+			"./source/platforms/sl.chi/d3d12.cpp",
+			"./source/platforms/sl.chi/d3d12.h",
+			"./source/platforms/sl.chi/d3d11.cpp",
+			"./source/platforms/sl.chi/d3d11.h",
+			"./source/platforms/sl.chi/generic.cpp"	
+		}	
+	else
+		files {
+			"./shaders/**.hlsl",
+			"./source/platforms/sl.chi/compute.h",
+			"./source/platforms/sl.chi/generic.h",		
+			"./source/platforms/sl.chi/generic.cpp"	
+		}
+	end
+
+	vpaths { ["chi"] = {"./source/platforms/sl.chi/**.h","./source/platforms/sl.chi/**.cpp"}}
+
+group ""
+
+group "plugins"
+
+function pluginBasicSetup(name)
+	files { 
+		"./source/core/sl.api/**.h",
+		"./source/core/sl.log/**.h",				
+		"./source/core/sl.file/**.h",
+		"./source/core/sl.file/**.cpp",
+		"./source/core/sl.extra/**.h",		
+		"./source/core/sl.plugin/**.h",
+		"./source/core/sl.plugin/**.cpp",
+		"./source/plugins/sl."..name.."/versions.h",
+		"./source/plugins/sl."..name.."/resource.h",
+		"./source/plugins/sl."..name.."/**.rc"
+	}
+	removefiles {"./source/core/sl.api/plugin-manager.h"}
+	
+	vpaths { ["api"] = {"./source/core/sl.api/**.h"}}
+	vpaths { ["log"] = {"./source/core/sl.log/**.h","./source/core/sl.log/**.cpp"}}
+	vpaths { ["ota"] = {"./source/core/sl.ota/**.h", "./source/core/sl.ota/**.cpp"}}	
+	vpaths { ["file"] = {"./source/core/sl.file/**.h", "./source/core/sl.file/**.cpp"}}	
+	vpaths { ["extra"] = {"./source/core/sl.extra/**.h", "./source/core/sl.extra/**.cpp"}}		
+	vpaths { ["plugin"] = {"./source/core/sl.plugin/**.h","./source/core/sl.plugin/**.cpp"}}
+	vpaths { ["security"] = {"./source/core/sl.security/**.h","./source/core/sl.security/**.cpp"}}
+	vpaths { ["version"] = {"./source/plugins/sl."..name.."/resource.h","./source/plugins/sl."..name.."/versions.h","./source/plugins/sl."..name.."/**.rc"}}
+end
+
+project "sl.common"
+	kind "SharedLib"	
+	targetdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}")
+	objdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}") 
+	characterset ("MBCS")
+	dependson { "sl.compute"}
+
+	pluginBasicSetup("common")
+
+	defines {"SL_COMMON_PLUGIN"}
+
+	files { 
+		"./source/core/sl.extra/**.cpp",		
+		"./source/plugins/sl.common/**.h", 
+		"./source/plugins/sl.common/**.cpp"		
+	}
+
+	vpaths { ["imgui"] = {"./external/imgui/**.cpp" }}
+	vpaths { ["impl"] = {"./source/plugins/sl.common/**.h", "./source/plugins/sl.common/**.cpp" }}
+		
+	libdirs {externaldir .."nvapi/amd64",externaldir .."ngx/Lib/Windows_x86_64/x86_64"}
+
+    links
+    {     
+		"d3d12.lib", "nvapi64.lib", "dxguid.lib", (ROOT .. "_artifacts/sl.compute/%{cfg.buildcfg}_%{cfg.platform}/sl.compute.lib") 
+	}
+    filter "configurations:Debug"
+	 	links { "nvsdk_ngx_d_dbg.lib" }
+	filter "configurations:Release or Production"
+		links { "nvsdk_ngx_d.lib"}
+	filter {}
+   	
+project "sl.template"
+	kind "SharedLib"	
+	targetdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}")
+	objdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}") 
+	characterset ("MBCS")
+	dependson { "sl.common"}
+
+	pluginBasicSetup("template")
+	
+	files { 
+		"./source/plugins/sl.template/**.h", 
+		"./source/plugins/sl.template/**.cpp"		
+	}
+
+	vpaths { ["impl"] = {"./source/plugins/sl.template/**.h", "./source/plugins/sl.template/**.cpp" }}
+			
+	removefiles {"./source/core/sl.extra/extra.cpp"}
+	
 group ""

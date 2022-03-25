@@ -3,7 +3,7 @@
 Streamline - NRD
 =======================
 
-Version 1.0.0
+Version 1.0.1
 ------
 ### 1.0 INITIALIZE AND SHUTDOWN
 

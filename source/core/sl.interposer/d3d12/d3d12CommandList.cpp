@@ -167,6 +167,7 @@ HRESULT STDMETHODCALLTYPE D3D12GraphicsCommandList::Reset(ID3D12CommandAllocator
 
     m_rootSignature = {};
     m_pso = {};
+    m_so = {};
     m_numHeaps = {};
     m_mapHandles = {};
     m_mapCBV.clear();
@@ -239,6 +240,8 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetPipelineState(ID3D12Pipeline
     // This API is very CPU costly so only set when really changed
     if (m_pso != pPipelineState)
     {
+        // PSO and RT PSO are mutually exclusive so setting RT PSO to null (see SetPipelineState1)
+        m_so = {};
         m_base->SetPipelineState(pPipelineState);
         m_pso = pPipelineState;
     }
@@ -501,7 +504,14 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::CopyRaytracingAccelerationStruc
 }
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetPipelineState1(ID3D12StateObject* pStateObject)
 {
-    static_cast<ID3D12GraphicsCommandList4*>(m_base)->SetPipelineState1(pStateObject);
+    // This API is very CPU costly so only set when really changed
+    if (m_so != pStateObject)
+    {
+        // PSO and RT PSO are mutually exclusive so setting PSO to null (see SetPipelineState)
+        m_pso = {};
+        static_cast<ID3D12GraphicsCommandList4*>(m_base)->SetPipelineState1(pStateObject);
+        m_so = pStateObject;
+    }
 }
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::DispatchRays(const D3D12_DISPATCH_RAYS_DESC* pDesc)
 {
