@@ -8,8 +8,8 @@
     "implementation_version": "1",
     "description": "64-bit Streamline layer",
     "functions": {
-      "vkGetInstanceProcAddr": "vkGetInstanceProcAddr",
-      "vkGetDeviceProcAddr": "vkGetDeviceProcAddr"
+      "vkGetInstanceProcAddr": "slLayerGetInstanceProcAddr",
+      "vkGetDeviceProcAddr": "slLayerGetDeviceProcAddr"
     }
   }
 }

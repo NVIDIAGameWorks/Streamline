@@ -36,36 +36,12 @@
 #include "external/json/include/nlohmann/json.hpp"
 using json = nlohmann::json;
 
+//! IMPORTANT: This is our include with our constants and settings (if any)
+//!
+#include "include/sl_template.h"
+
 namespace sl
 {
-
-//! IMPORTANT: This definition must go to a header file accessible by the host (sl_consts.h or sl_template_consts.h)
-//! 
-//! If your plugin does not have any constants then
-//! this can be ignored.
-//! 
-//! 
-enum TemplateMode
-{
-    eOff,
-    eOn
-};
-
-struct TemplateConstants
-{
-    TemplateMode mode;
-};
-
-//! IMPORTANT: This definition must go to a header file accessible by the host (sl_consts.h or sl_template_consts.h)
-//! 
-//! If your plugin does not have any constants then
-//! this can be ignored.
-//! 
-//! 
-struct TemplateSettings
-{
-
-};
 
 //! Our common context
 //! 
@@ -77,12 +53,18 @@ struct TemplateContext
 
     // For example, we can use this template to store incoming constants
     // 
-    common::ViewportIdFrameData<TemplateConstants> constants = { "template" };
+    common::ViewportIdFrameData<> constants = { "template" };
 
     // Common constants for the frame/viewport we are currently evaluating
     // 
     // See 'templateBeginEvaluation' below for more details
-    sl::Constants commonConsts;
+    sl::Constants* commonConsts;
+
+    // Feature constants (if any)
+    //
+    // Note that we can chain as many feature
+    // constants as we want using the void* ext link.
+    sl::TemplateConstants* templateConsts;
 
     // Some compute kernel we want to use
     chi::Kernel myDenoisingKernel{};
@@ -107,7 +89,7 @@ bool setTemplateConstants(const void* data, uint32_t frameIndex, uint32_t id)
     // For example, we can set out constants like this
     // 
     auto consts = (const TemplateConstants*)data;
-    s_ctx.constants.set(*consts, frameIndex, id);
+    s_ctx.constants.set(frameIndex, id, consts);
     if (consts->mode == TemplateMode::eOff)
     {
         // User disabled our feature
@@ -137,7 +119,7 @@ void templateBeginEvaluation(chi::CommandList pCmdList, const common::EventData&
     // Get common constants if we need them
     //
     // Note that we are passing frame index, unique id provided with the 'evaluateFeature' call
-    if (!common::getConsts(evd, s_ctx.commonConsts))
+    if (!common::getConsts(evd, &s_ctx.commonConsts))
     {
         SL_LOG_ERROR("Cannot obtain common constants");
         return;
@@ -146,8 +128,7 @@ void templateBeginEvaluation(chi::CommandList pCmdList, const common::EventData&
     // Get our constants (if any)
     //
     // Note that we are passing frame index, unique id provided with the 'evaluateFeature' call
-    TemplateConstants consts;
-    if (!s_ctx.constants.get(evd, consts))
+    if (!s_ctx.constants.get(evd, &s_ctx.templateConsts))
     {
         SL_LOG_ERROR("Cannot obtain constants for sl.template plugin");
     }
@@ -289,7 +270,8 @@ bool slOnPluginStartup(const char* jsonConfig, void* device, param::IParameters*
         SL_LOG_ERROR("Cannot obtain `registerEvaluateCallbacks` interface - check that sl.common was initialized correctly");
         return false;
     }
-    s_ctx.registerEvaluateCallbacks(/* Change to correct enum */ eFeatureCount, templateBeginEvaluation, templateEndEvaluation);
+    //! IMPORTANT: Add new enum in sl.h and match that id in JSON config for this plugin (see below)
+    s_ctx.registerEvaluateCallbacks(/* Change to correct enum */ (Feature)eFeatureTemplate, templateBeginEvaluation, templateEndEvaluation);
 
     //! Plugin manager gives us the device type and the application id
     //! 
@@ -349,7 +331,9 @@ void slOnPluginShutdown()
     CHI_VALIDATE(s_ctx.compute->destroyKernel(s_ctx.myDenoisingKernel));
 
     // If we used 'evaluateFeature' mechanism reset the callbacks here
-    s_ctx.registerEvaluateCallbacks(/* Change to correct enum */ eFeatureCount, nullptr, nullptr);
+    //
+    //! IMPORTANT: Add new enum in sl.h and match that id in JSON config for this plugin (see below)
+    s_ctx.registerEvaluateCallbacks(/* Change to correct enum and also update the JSON config below */ (Feature)eFeatureTemplate, nullptr, nullptr);
 
     // Common shutdown
     plugin::onShutdown(api::getContext());
@@ -364,10 +348,14 @@ void slOnPluginShutdown()
 //! priorities listed by the plugin manager in the log during the startup.
 //!
 //! IMPORTANT: Please note that priority '0' is reserved for the sl.common plugin.
+//! 
+//! IMPORTANT: Please note that id must be provided and it has to match the Feature enum we assign for this plugin
 //!
 static const char* JSON = R"json(
 {
-    "priority" : 1000,
+    "_comment_id" : "id must match the sl::Feature enum in sl.h or sl_template.h, for example sl.dlss has id 0 hence eFeatureDLSS = 0",
+    "id" : 65535,
+    "priority" : 1,
     "hooks" :
     [
         {
@@ -417,11 +405,6 @@ uint32_t getSupportedAdapterMask()
             if (turingOrBetter)
             {
                 adapterMask |= 1 << i;
-                SL_LOG_INFO("sl.template on GPU %u with driver %u.%u supported.", i, info->driverVersionMajor, info->driverVersionMinor);
-            }
-            else
-            {
-                SL_LOG_WARN("sl.template on GPU %u with driver %u.%u NOT supported.", i, info->driverVersionMajor, info->driverVersionMinor);
             }
         }
     }

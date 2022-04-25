@@ -24,18 +24,17 @@
 
 #include "sl_consts.h"
 
-#ifdef SL_SDK
-#define SL_API __declspec(dllexport) 
-#else
-#define SL_API __declspec(dllimport)
-#endif
+#define SL_API extern "C"
 
 namespace sl {
 
 using CommandBuffer = void;
 
 //! Buffer types used for tagging
-enum BufferType
+//! 
+//! IMPORTANT: Each tag must use the unique id
+//! 
+enum BufferType : uint32_t
 {
     //! Depth buffer - IMPORTANT - Must be suitable to use with clipToPrevClip transformation (see Constants below)
     eBufferTypeDepth,
@@ -43,10 +42,10 @@ enum BufferType
     eBufferTypeMVec,
     //! Color buffer with all post-processing effects applied but without any UI/HUD elements
     eBufferTypeHUDLessColor,
-    //! Color buffer containing jittered input data for DLSS pass (same as input for the default TAAU pass)
-    eBufferTypeDLSSInputColor,
-    //! Color buffer containing results from the DLSS pass (same as the output for the default TAAU pass)
-    eBufferTypeDLSSOutputColor,
+    //! Color buffer containing jittered input data for the image scaling pass
+    eBufferTypeScalingInputColor,
+    //! Color buffer containing results from the image scaling pass
+    eBufferTypeScalingOutputColor,
     //! Normals
     eBufferTypeNormals,
     //! Roughness
@@ -83,7 +82,7 @@ enum BufferType
     eBufferTypeAmbientOcclusionNoisy,
     //! AO denoised
     eBufferTypeAmbientOcclusionDenoised,
-    
+
     //! Optional - UI/HUD pixels hint (set to 1 if a pixel belongs to the UI/HUD elements, 0 otherwise)
     eBufferTypeUIHint,
     //! Optional - Shadow pixels hint (set to 1 if a pixel belongs to the shadow area, 0 otherwise)
@@ -102,20 +101,18 @@ enum BufferType
     eBufferTypeRaytracingDistance,
     //! Optional - Motion vectors for reflections
     eBufferTypeReflectionMotionVectors,
-    
-    //! Total count
-    eBufferTypeCount
 };
 
 //! Features supported with this SDK
-enum Feature
+//! 
+//! IMPORTANT: Each feature must use the unique id
+//! 
+enum Feature : uint32_t
 {
     //! Deep Learning Super Sampling
-    eFeatureDLSS,
+    eFeatureDLSS = 0,
     //! Real-Time Denoiser
-    eFeatureNRD,
-    //! Total count
-    eFeatureCount
+    eFeatureNRD = 1
 };
 
 //! Different levels for logging
@@ -142,13 +139,13 @@ enum ResourceType : char
 struct ResourceDesc
 {
     //! Indicates the type of resource
-    ResourceType type;
+    ResourceType type = eResourceTypeTex2d;
     //! D3D12_RESOURCE_DESC/VkImageCreateInfo/VkBufferCreateInfo
-    void *desc;
+    void* desc = {};
     //! Initial state as D3D12_RESOURCE_STATES or VkMemoryPropertyFlags
-    unsigned int state;
+    uint32_t state = 0;
     //! CD3DX12_HEAP_PROPERTIES or nullptr
-    void *heap;
+    void* heap = {};
     //! Reserved for future expansion, must be set to null
     void* ext = {};
 };
@@ -157,13 +154,13 @@ struct ResourceDesc
 struct Resource
 {
     //! Indicates the type of resource
-    ResourceType type;
+    ResourceType type = eResourceTypeTex2d;
     //! ID3D11Resource/ID3D12Resource/VkBuffer/VkImage
-    void *native;
+    void* native = {};
     //! vkDeviceMemory or nullptr
-    void *memory;
+    void* memory = {};
     //! VkImageView/VkBufferView or nullptr
-    void *view;
+    void* view = {};
     //! Reserved for future expansion, must be set to null
     void* ext = {};
 };
@@ -173,10 +170,12 @@ struct Resource
 //! Use these callbacks to gain full control over 
 //! resource life cycle and memory allocation tracking.
 //!
+//! @param device - Device to be used (vkDevice or ID3D11Device or ID3D12Device)
+//!
 //! IMPORTANT: Textures must have the pixel shader resource
 //! and the unordered access view flags set
-using pfunResourceAllocateCallback = Resource(const ResourceDesc *desc);
-using pfunResourceReleaseCallback = void(Resource *resource);
+using pfunResourceAllocateCallback = Resource(const ResourceDesc* desc, void* device);
+using pfunResourceReleaseCallback = void(Resource* resource, void* device);
 
 //! Log type
 enum LogType
@@ -195,7 +194,7 @@ enum LogType
 //! Use these callbacks to track messages posted in the log.
 //! If any of the SL methods returns false use eLogTypeError
 //! type to track down what went wrong and why.
-using pfunLogMessageCallback = void(LogType type, const char *msg);
+using pfunLogMessageCallback = void(LogType type, const char* msg);
 
 //! Optional preferences
 struct Preferences
@@ -207,22 +206,36 @@ struct Preferences
     //! Optional - Absolute paths to locations where to look for plugins, first path in the list has the highest priority
     const wchar_t** pathsToPlugins = {};
     //! Optional - Number of paths to search
-    unsigned int numPathsToPlugins = 0;
+    uint32_t numPathsToPlugins = 0;
     //! Optional - Absolute path to location where logs and other data should be stored
     //! NOTE: Set this to nullptr in order to disable logging to a file
-    const wchar_t *pathToLogsAndData = {};
+    const wchar_t* pathToLogsAndData = {};
     //! Optional - Allows resource allocation tracking on the host side
     pfunResourceAllocateCallback* allocateCallback = {};
     //! Optional - Allows resource deallocation tracking on the host side
     pfunResourceReleaseCallback* releaseCallback = {};
     //! Optional - Allows log message tracking including critical errors if they occur
     pfunLogMessageCallback* logMessageCallback = {};
-    //! Reserved for future use, should be null
+    //! Pointer to Preferences1 or null if not used
     void* ext = {};
 };
 
 //! Unique application ID
 constexpr int kUniqueApplicationId = 0;
+
+}
+
+//! Streamline API functions
+//! 
+using PFunSlInit = bool(const sl::Preferences& pref, int applicationId);
+using PFunSlShutdown = bool();
+using PFunSlSetFeatureEnabled = bool(sl::Feature feature, bool enabled);
+using PFunSlIsFeatureSupported = bool(sl::Feature feature, uint32_t* adapterBitMask);
+using PFunSlSetTag = bool(const sl::Resource* resource, sl::BufferType tag, uint32_t id, const sl::Extent* extent);
+using PFunSlSetConstants = bool(const sl::Constants& values, uint32_t frameIndex, uint32_t id);
+using PFunSlSetFeatureConstants = bool(sl::Feature feature, const void* consts, uint32_t frameIndex, uint32_t id);
+using PFunSlGetFeatureSettings = bool(sl::Feature feature, const void* consts, void* settings);
+using PFunSlEvaluateFeature = bool(sl::CommandBuffer* cmdBuffer, sl::Feature feature, uint32_t frameIndex, uint32_t id);
 
 //! Initializes the SL module
 //!
@@ -233,7 +246,7 @@ constexpr int kUniqueApplicationId = 0;
 //! @return false if SL is not supported on the system true otherwise.
 //!
 //! This method is NOT thread safe.
-SL_API bool init(const Preferences &pref, int applicationId = kUniqueApplicationId);
+SL_API bool slInit(const sl::Preferences &pref, int applicationId = sl::kUniqueApplicationId);
 
 //! Shuts down the SL module
 //!
@@ -242,7 +255,7 @@ SL_API bool init(const Preferences &pref, int applicationId = kUniqueApplication
 //! @return false if SL did not shutdown correctly true otherwise.
 //!
 //! This method is NOT thread safe.
-SL_API bool shutdown();
+SL_API bool slShutdown();
 
 //! Checks is specific feature is supported or not.
 //!
@@ -257,7 +270,22 @@ SL_API bool shutdown();
 //! for which you are planning to create a device. For the adapter at index N you can check the bit 1 << N.
 //!
 //! This method is NOT thread safe.
-SL_API bool isFeatureSupported(Feature feature, uint32_t* adapterBitMask = nullptr);
+SL_API bool slIsFeatureSupported(sl::Feature feature, uint32_t* adapterBitMask = nullptr);
+
+//! Sets the specified feature to either enabled or disabled state.
+//!
+//! Call this method to enable or disable certain eFeature*. 
+//! All supported features are enabled by default and have to be disabled explicitly if needed.
+//!
+//! @param feature Specifies which feature to check
+//! @param enabled Value specifying if feature should be enabled or disabled.
+//! @return false if feature is not supported on the system true otherwise.
+//!
+//! NOTE: When this method is called no other DXGI/D3D/Vulkan APIs should be invoked in parallel so
+//! make sure to flush your pipeline before calling this method.
+//!
+//! This method is NOT thread safe.
+SL_API bool slSetFeatureEnabled(sl::Feature feature, bool enabled);
 
 //! Tags resource
 //!
@@ -270,7 +298,7 @@ SL_API bool isFeatureSupported(Feature feature, uint32_t* adapterBitMask = nullp
 //! @return false if resource cannot be tagged true otherwise.
 //!
 //! This method is thread safe.
-SL_API bool setTag(const Resource *resource, BufferType tag, uint32_t id = 0, const Extent* extent = nullptr);
+SL_API bool slSetTag(const sl::Resource *resource, sl::BufferType tag, uint32_t id = 0, const sl::Extent* extent = nullptr);
 
 //! Sets common constants.
 //!
@@ -281,8 +309,8 @@ SL_API bool setTag(const Resource *resource, BufferType tag, uint32_t id = 0, co
 //! @param id Unique id (can be viewport id | instance id etc.)
 //! @return false if constants cannot be set true otherwise.
 //! 
-//! This method is NOT thread safe.
-SL_API bool setConstants(const Constants& values, uint32_t frameIndex, uint32_t id = 0);
+//! This method is thread safe.
+SL_API bool slSetConstants(const sl::Constants& values, uint32_t frameIndex, uint32_t id = 0);
 
 //! Sets feature specific constants.
 //!
@@ -295,8 +323,8 @@ SL_API bool setConstants(const Constants& values, uint32_t frameIndex, uint32_t 
 //! @param id Unique id (can be viewport id | instance id etc.)
 //! @return false if constants cannot be set true otherwise.
 //!
-//! This method is NOT thread safe.
-SL_API bool setFeatureConstants(Feature feature, const void *consts, uint32_t frameIndex, uint32_t id = 0);
+//! This method is thread safe.
+SL_API bool slSetFeatureConstants(sl::Feature feature, const void *consts, uint32_t frameIndex, uint32_t id = 0);
 
 //! Gets feature specific settings.
 //!
@@ -307,47 +335,21 @@ SL_API bool setFeatureConstants(Feature feature, const void *consts, uint32_t fr
 //! @param settings Pointer to the returned feature specific settings
 //! @return false if feature does not have settings true otherwise.
 //!
-//! For example:
-//!
-//! DLSSSettings settings = {};
-//! DLSSConstants consts = {eDLSSModeBalanced, 3840, 2160, 0.0}; // targeting 4K
-//! if(getFeatureSettings(eFeatureDLSS, &consts, &settings))
-//! {
-//!    Setup application to use (settings.renderWidth, settings.renderHeight) render targets
-//! }
-//!
 //! This method is NOT thread safe.
-SL_API bool getFeatureSettings(Feature feature, const void* consts, void* settings);
+SL_API bool slGetFeatureSettings(sl::Feature feature, const void* consts, void* settings);
 
 //! Evaluates feature
 //! 
 //! Use this method to mark the section in your rendering pipeline 
 //! where specific feature should be injected.
 //!
-//! @param cmdBuffer Command buffer to use - must be created on device where feature is supported
+//! @param cmdBuffer Command buffer to use (must be created on device where feature is supported but can be null if not needed)
 //! @param feature Feature we are working with
-//! @param frameIndex Current frame index (must match the corresponding value in the sl::Constants)
+//! @param frameIndex Current frame index (can be 0 if not needed)
 //! @param id Unique id (can be viewport id | instance id etc.)
 //! @return false if feature event cannot be injected in the command buffer true otherwise.
 //! 
-//! For example:
+//! IMPORTANT: frameIndex and id must match whatever is used to set common and or feature constants (if any)
 //!
-//! bool useDLSS = isFeatureSupported(eFeatureDLSS) && userSelectedDLSS;
-//! if(useDLSS) 
-//! {
-//!    DLSSSettings settings = {};
-//!    DLSSConstants consts = {eDLSSModeBalanced, 3840, 2160, 0.0}; // targeting 4K
-//!    sl::setFeatureConstants(sl::Feature::eFeatureDLSS, &dlss);
-//!    sl::evaluateFeature(myCmdList, sl::Feature::eFeatureDLSS, myFrameIndex); 
-//! }
-//! else
-//! {
-//!    ... do TAAU pass with all draw calls included 
-//! }
-//!
-//! IMPORTANT: Unique id must match whatever is used to set constants
-//!
-//! This method is NOT thread safe.
-SL_API bool evaluateFeature(CommandBuffer* cmdBuffer, Feature feature, uint32_t frameIndex, uint32_t id = 0);
-
-} // namespace sl
+//! This method is NOT thread safe (Vulkan command buffers or D3D command lists by design and not thread safe)
+SL_API bool slEvaluateFeature(sl::CommandBuffer* cmdBuffer, sl::Feature feature, uint32_t frameIndex, uint32_t id = 0);

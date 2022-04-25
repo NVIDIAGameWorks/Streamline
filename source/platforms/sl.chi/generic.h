@@ -68,6 +68,7 @@ struct KernelDataBase
 
 struct TimestampedResource
 {
+    inline bool operator==(const TimestampedResource& rhs) const { return resource == rhs.resource; }
     Resource resource;
     uint32_t frame;
 };
@@ -84,7 +85,9 @@ protected:
     using KernelMap = std::map<Kernel, KernelDataBase*>;
     KernelMap m_kernels = {};
 
-    uint32_t m_finishedFrame = 0;
+    std::atomic<uint32_t> m_finishedFrame = 0;
+
+    Device m_typelessDevice{};
 
     param::IParameters* m_parameters = {};
 
@@ -118,10 +121,8 @@ protected:
     virtual void destroyResourceDeferredImpl(const Resource InResource) = 0;
     virtual ComputeStatus createBufferResourceImpl(ResourceDescription &InOutResourceDesc, Resource &OutResource, ResourceState InitialState) = 0;
     virtual ComputeStatus createTexture2DResourceSharedImpl(ResourceDescription &InOutResourceDesc, Resource &OutResource, bool UseNativeFormat, ResourceState InitialState) = 0;
-    virtual ComputeStatus insertGPUBarrierList(CommandList InCmdList, const Resource* InResources, unsigned int InResourceCount, BarrierType InBarrierType = eBarrierTypeUAV) override;
-    virtual ComputeStatus transitionResourceImpl(CommandList InCmdList, const ResourceTransition *transisitions, uint32_t count) = 0;
-    virtual ComputeStatus copyHostToDeviceBufferImpl(CommandList InCmdList, uint64_t InSize, const void *InData, Resource InUploadResource, Resource InTargetResource, unsigned long long InUploadOffset, unsigned long long InDstOffset) = 0;
-    virtual ComputeStatus writeTextureImpl(CommandList InCmdList, uint64_t InSize, uint64_t RowPitch, const void* InData, Resource InTargetResource, Resource& InUploadResource) = 0;
+    virtual ComputeStatus insertGPUBarrierList(CommandList cmdList, const Resource* InResources, unsigned int InResourceCount, BarrierType InBarrierType = eBarrierTypeUAV) override;
+    virtual ComputeStatus transitionResourceImpl(CommandList cmdList, const ResourceTransition *transisitions, uint32_t count) = 0;
     virtual ComputeStatus getAllocatedBytes(unsigned long long &bytes) const override  { bytes = m_totalAllocatedSize; return eComputeStatusOk; }
     virtual std::wstring getDebugName(Resource res) = 0;
 
@@ -145,7 +146,7 @@ public:
     virtual ComputeStatus createCommandListContext(CommandQueue queue, uint32_t count, ICommandListContext*& ctx, const char friendlyName[])  override { return eComputeStatusNoImplementation; }
     virtual ComputeStatus destroyCommandListContext(ICommandListContext* ctx) override { return eComputeStatusNoImplementation; }
 
-    virtual ComputeStatus createCommandQueue(CommandQueueType type, CommandQueue& queue, const char friendlyName[]) override { return eComputeStatusNoImplementation; }
+    virtual ComputeStatus createCommandQueue(CommandQueueType type, CommandQueue& queue, const char friendlyName[], uint32_t index) override { return eComputeStatusNoImplementation; }
     virtual ComputeStatus destroyCommandQueue(CommandQueue& queue) override { return eComputeStatusNoImplementation; }
 
     virtual ComputeStatus getDebugName(Resource res, std::wstring& name) { name = getDebugName(res); return eComputeStatusOk; }
@@ -167,8 +168,6 @@ public:
 
     ComputeStatus renderText(CommandList cmdList, int x, int y, const char *text, const ResourceArea &area, const float4& color = { 1.0f, 1.0f, 1.0f, 0.0f }, int reverseX = 0, int reverseY = 0) override;
 
-    ComputeStatus copyHostToDeviceBuffer(CommandList InCmdList, uint64_t InSize, const void *InData, Resource InUploadResource, Resource InTargetResource, unsigned long long InUploadOffset = 0, unsigned long long InDstOffset = 0) override final;
-    ComputeStatus writeTexture(CommandList InCmdList, uint64_t InSize, uint64_t RowPitch, const void* InData, Resource InTargetResource, Resource& InUploadResource) override final;
     ComputeStatus createBuffer(const ResourceDescription &CreateResourceDesc, Resource &OutResource, const char InFriendlyName[]) override final;
     ComputeStatus createTexture2D(const ResourceDescription &CreateResourceDesc, Resource &OutResource, const char InFriendlyName[]) override final;
         
@@ -184,12 +183,13 @@ public:
     ComputeStatus restorePipeline(CommandList cmdList)  override { return eComputeStatusOk; }
 
     ComputeStatus onHostResourceCreated(Resource resource, const ResourceInfo& info) override;
-    ComputeStatus onHostResourceViewCreated(Resource resource, ResourceView view) override { return eComputeStatusNoImplementation; }
+    ComputeStatus onHostResourceDestroyed(Resource resource) override { return eComputeStatusOk; }
+
     ComputeStatus transitionResources(CommandList cmdList, const ResourceTransition* transitions, uint32_t count, extra::ScopedTasks* tasks = nullptr) override;
     ComputeStatus setResourceState(Resource resource, ResourceState state, uint32_t subresource = kAllSubResources)  override;
     ComputeStatus getResourceState(Resource resource, ResourceState& state) override;
-    ComputeStatus copyResource(CommandList InCmdList, Resource InDstResource, Resource InSrcResource) override { return eComputeStatusNoImplementation; }
-    ComputeStatus cloneResource(Resource InResource, Resource &OutResource, const char friendlyName[], ResourceState InitialState, unsigned int InCreationMask, unsigned int InVisibilityMask) override { return eComputeStatusNoImplementation; }
+    ComputeStatus copyResource(CommandList cmdList, Resource dstResource, Resource srcResource) override { return eComputeStatusNoImplementation; }
+    ComputeStatus cloneResource(Resource inResource, Resource &outResource, const char friendlyName[], ResourceState initialState, unsigned int creationMask, unsigned int visibilityMask) override { return eComputeStatusNoImplementation; }
 
     ComputeStatus getResourceDescription(Resource InResource, ResourceDescription &OutDesc) override { return eComputeStatusNoImplementation; }
     
@@ -198,8 +198,8 @@ public:
     ComputeStatus dumpResource(CommandList cmdList, Resource src, const char *path) override { return eComputeStatusNoImplementation; }
 
 #if SL_ENABLE_PERF_TIMING
-    ComputeStatus beginProfiling(CommandList InCmdList, unsigned int Metadata, const void *pData, unsigned int Size) { return eComputeStatusOk;  }
-    ComputeStatus endProfiling(CommandList InCmdList) { return eComputeStatusOk; }
+    ComputeStatus beginProfiling(CommandList cmdList, unsigned int Metadata, const void *pData, unsigned int Size) { return eComputeStatusOk;  }
+    ComputeStatus endProfiling(CommandList cmdList) { return eComputeStatusOk; }
 #endif
 };
 

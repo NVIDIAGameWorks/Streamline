@@ -71,12 +71,18 @@ namespace interposer
 using VirtualAddress = void*;
 }
 
-enum Feature;
+enum Feature : uint32_t;
 
 namespace plugin_manager
 {
 
 using HookList = std::vector<interposer::VirtualAddress>;
+struct FeatureParameters
+{
+    std::string supportedAdapters;
+    std::string setConstants;
+    std::string getSettings;
+};
 
 struct IPluginManager
 {
@@ -89,6 +95,7 @@ struct IPluginManager
     virtual const HookList& getBeforeHooksWithoutLazyInit(FunctionHookID functionHookID) = 0;
     virtual const HookList& getAfterHooksWithoutLazyInit(FunctionHookID functionHookID) = 0;
 
+    virtual bool setFeatureEnabled(Feature feature, bool value) = 0;
     virtual void setPreferences(const Preferences& pref) = 0;
     virtual void setApplicationId(int appId) = 0;
     virtual void setD3D12Device(ID3D12Device* device) = 0;
@@ -101,6 +108,7 @@ struct IPluginManager
     virtual bool isRunningVulkan() const = 0;
     virtual bool isInitialized() const = 0;
     virtual bool arePluginsLoaded() const = 0;
+    virtual const FeatureParameters* getFeatureParameters(Feature feature) const = 0;
 };
 
 IPluginManager* getInterface();

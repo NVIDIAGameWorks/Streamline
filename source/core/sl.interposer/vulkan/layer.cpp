@@ -61,6 +61,10 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCreateInfo* pCre
     {
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     }
+    if (std::find(extensions.begin(), extensions.end(), std::string(VK_KHR_EXTERNAL_FENCE_CAPABILITIES_EXTENSION_NAME)) == extensions.end())
+    {
+        extensions.push_back(VK_KHR_EXTERNAL_FENCE_CAPABILITIES_EXTENSION_NAME);
+    }
     createInfo.enabledExtensionCount = (uint32_t)extensions.size();
     createInfo.ppEnabledExtensionNames = extensions.data();
 #endif
@@ -222,7 +226,7 @@ VkResult VKAPI_CALL vkCreateImage(VkDevice Device, const VkImageCreateInfo* Crea
     VkResult Result = vk.dispatchDeviceMap[vk.device].CreateImage(Device, CreateInfo, Allocator, Image);
 
     using vkCreateImage_t = VkResult(VkDevice Device, const VkImageCreateInfo* CreateInfo, const VkAllocationCallbacks* Allocator, VkImage* Image);
-    const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooks(FunctionHookID::eVulkan_CreateImage);
+    const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooksWithoutLazyInit(FunctionHookID::eVulkan_CreateImage);
     for (auto hook : hooks) ((vkCreateImage_t*)hook)(Device, CreateInfo, Allocator, Image);
 
     return Result;
@@ -233,7 +237,7 @@ VkResult VKAPI_CALL vkBeginCommandBuffer(VkCommandBuffer CommandBuffer, const Vk
     auto res = vk.dispatchDeviceMap[vk.device].BeginCommandBuffer(CommandBuffer, BeginInfo);
 
     using vkBeginCommandBuffer_t = void(VkCommandBuffer CommandBuffer, const VkCommandBufferBeginInfo* BeginInfo);
-    const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooks(FunctionHookID::eVulkan_BeginCommandBuffer);
+    const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooksWithoutLazyInit(FunctionHookID::eVulkan_BeginCommandBuffer);
     for (auto hook : hooks) ((vkBeginCommandBuffer_t*)hook)(CommandBuffer, BeginInfo);
 
     return res;
@@ -244,7 +248,7 @@ void VKAPI_CALL vkCmdBindPipeline(VkCommandBuffer CommandBuffer, VkPipelineBindP
     vk.dispatchDeviceMap[vk.device].CmdBindPipeline(CommandBuffer, PipelineBindPoint, Pipeline);
 
     using vkCmdBindPipeline_t = void(VkCommandBuffer CommandBuffer, VkPipelineBindPoint PipelineBindPoint, VkPipeline Pipeline);
-    const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooks(FunctionHookID::eVulkan_CmdBindPipeline);
+    const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooksWithoutLazyInit(FunctionHookID::eVulkan_CmdBindPipeline);
     for (auto hook : hooks) ((vkCmdBindPipeline_t*)hook)(CommandBuffer, PipelineBindPoint, Pipeline);
 }
 
@@ -253,7 +257,7 @@ void VKAPI_CALL vkCmdBindDescriptorSets(VkCommandBuffer CommandBuffer, VkPipelin
     vk.dispatchDeviceMap[vk.device].CmdBindDescriptorSets(CommandBuffer, PipelineBindPoint, Layout, FirstSet, DescriptorSetCount, DescriptorSets, DynamicOffsetCount, DynamicOffsets);
 
     using vkCmdBindDescriptorSets_t = void(VkCommandBuffer CommandBuffer, VkPipelineBindPoint PipelineBindPoint, VkPipelineLayout Layout, uint32_t FirstSet, uint32_t DescriptorSetCount, const VkDescriptorSet* DescriptorSets, uint32_t DynamicOffsetCount, const uint32_t* DynamicOffsets);
-    const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooks(FunctionHookID::eVulkan_CmdBindDescriptorSets);
+    const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooksWithoutLazyInit(FunctionHookID::eVulkan_CmdBindDescriptorSets);
     for (auto hook : hooks) ((vkCmdBindDescriptorSets_t*)hook)(CommandBuffer, PipelineBindPoint, Layout, FirstSet, DescriptorSetCount, DescriptorSets, DynamicOffsetCount, DynamicOffsets);
 }
 
@@ -279,7 +283,7 @@ void VKAPI_CALL vkCmdPipelineBarrier(
         uint32_t MemoryBarrierCount, const VkMemoryBarrier* MemoryBarriers,
         uint32_t BufferMemoryBarrierCount, const VkBufferMemoryBarrier* BufferMemoryBarriers,
         uint32_t ImageMemoryBarrierCount, const VkImageMemoryBarrier* ImageMemoryBarriers);
-    const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooks(FunctionHookID::eVulkan_CmdPipelineBarrier);
+    const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooksWithoutLazyInit(FunctionHookID::eVulkan_CmdPipelineBarrier);
     for (auto hook : hooks) ((vkCmdPipelineBarrier_t*)hook)(CommandBuffer, SrcStageMask, DstStageMask, DependencyFlags, MemoryBarrierCount, MemoryBarriers, BufferMemoryBarrierCount, BufferMemoryBarriers, ImageMemoryBarrierCount, ImageMemoryBarriers);
 }
 
@@ -301,7 +305,7 @@ VkResult VKAPI_CALL vkCreateSwapchainKHR(VkDevice Device, const VkSwapchainCreat
 VkResult VKAPI_CALL vkGetSwapchainImagesKHR(VkDevice Device, VkSwapchainKHR Swapchain, uint32_t* SwapchainImageCount, VkImage* SwapchainImages)
 {
     using vkGetSwapchainImagesKHR_t = VkResult(VkDevice Device, VkSwapchainKHR Swapchain, uint32_t* SwapchainImageCount, VkImage* SwapchainImages, bool& Skip);
-    const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eVulkan_GetSwapchainImagesKHR);
+    const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooksWithoutLazyInit(FunctionHookID::eVulkan_GetSwapchainImagesKHR);
     bool skip = false;
     for (auto hook : hooks) ((vkGetSwapchainImagesKHR_t*)hook)(Device, Swapchain, SwapchainImageCount, SwapchainImages, skip);
 
@@ -316,7 +320,7 @@ VkResult VKAPI_CALL vkGetSwapchainImagesKHR(VkDevice Device, VkSwapchainKHR Swap
 VkResult VKAPI_CALL vkAcquireNextImageKHR(VkDevice Device, VkSwapchainKHR Swapchain, uint64_t Timeout, VkSemaphore Semaphore, VkFence Fence, uint32_t* ImageIndex)
 {
     using vkAcquireNextImageKHR_t = VkResult(VkDevice Device, VkSwapchainKHR Swapchain, uint64_t Timeout, VkSemaphore Semaphore, VkFence Fence, uint32_t* ImageIndex, bool& Skip);
-    const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eVulkan_AcquireNextImageKHR);
+    const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooksWithoutLazyInit(FunctionHookID::eVulkan_AcquireNextImageKHR);
     bool skip = false;
     for (auto hook : hooks) ((vkAcquireNextImageKHR_t*)hook)(Device, Swapchain, Timeout, Semaphore, Fence, ImageIndex, skip);
 
@@ -331,7 +335,7 @@ VkResult VKAPI_CALL vkAcquireNextImageKHR(VkDevice Device, VkSwapchainKHR Swapch
 VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue Queue, const VkPresentInfoKHR* PresentInfo)
 {
     using vkQueuePresentKHR_t = VkResult(VkQueue Queue, const VkPresentInfoKHR* PresentInfo, bool& Skip);
-    const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eVulkan_Present);
+    const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooksWithoutLazyInit(FunctionHookID::eVulkan_Present);
     bool skip = false;
     for (auto hook : hooks) ((vkQueuePresentKHR_t*)hook)(Queue, PresentInfo, skip);
 
@@ -350,46 +354,46 @@ extern "C"
 {
 
 using namespace sl::interposer;
-
-#define SL_REDIRECT_API(F)                         \
+ 
+#define SL_INTERCEPT(F)                            \
 if (strcmp(pName, #F) == 0)                        \
 {                                                  \
   return (PFN_vkVoidFunction)sl::interposer::F;    \
 }
 
-PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice device, const char* pName)
+PFN_vkVoidFunction VKAPI_CALL slLayerGetDeviceProcAddr(VkDevice device, const char* pName)
 {
     // Redirect only the hooks we need
-    SL_REDIRECT_API(vkCreateInstance);
-    SL_REDIRECT_API(vkCreateDevice);
-    SL_REDIRECT_API(vkQueuePresentKHR);
-    SL_REDIRECT_API(vkCreateImage);
-    SL_REDIRECT_API(vkCmdPipelineBarrier);
-    SL_REDIRECT_API(vkCmdBindPipeline);
-    SL_REDIRECT_API(vkCmdBindDescriptorSets);
-    SL_REDIRECT_API(vkCreateSwapchainKHR);
-    SL_REDIRECT_API(vkGetSwapchainImagesKHR);
-    SL_REDIRECT_API(vkAcquireNextImageKHR);
-    SL_REDIRECT_API(vkBeginCommandBuffer);
+    SL_INTERCEPT(vkCreateInstance);
+    SL_INTERCEPT(vkCreateDevice);
+    SL_INTERCEPT(vkQueuePresentKHR);
+    SL_INTERCEPT(vkCreateImage);
+    SL_INTERCEPT(vkCmdPipelineBarrier);
+    SL_INTERCEPT(vkCmdBindPipeline);
+    SL_INTERCEPT(vkCmdBindDescriptorSets);
+    SL_INTERCEPT(vkCreateSwapchainKHR);
+    SL_INTERCEPT(vkGetSwapchainImagesKHR);
+    SL_INTERCEPT(vkAcquireNextImageKHR);
+    SL_INTERCEPT(vkBeginCommandBuffer);
 
     std::lock_guard<std::mutex> lock(vk.mutex);
     return vk.dispatchDeviceMap[device].GetDeviceProcAddr(device, pName);
 }
 
-PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance instance, const char* pName)
+PFN_vkVoidFunction VKAPI_CALL slLayerGetInstanceProcAddr(VkInstance instance, const char* pName)
 {
     // Redirect only the hooks we need
-    SL_REDIRECT_API(vkCreateInstance);
-    SL_REDIRECT_API(vkCreateDevice);
-    SL_REDIRECT_API(vkQueuePresentKHR);
-    SL_REDIRECT_API(vkCreateImage);
-    SL_REDIRECT_API(vkCmdPipelineBarrier);
-    SL_REDIRECT_API(vkCmdBindPipeline);
-    SL_REDIRECT_API(vkCmdBindDescriptorSets);
-    SL_REDIRECT_API(vkCreateSwapchainKHR);
-    SL_REDIRECT_API(vkGetSwapchainImagesKHR);
-    SL_REDIRECT_API(vkAcquireNextImageKHR);
-    SL_REDIRECT_API(vkBeginCommandBuffer);
+    SL_INTERCEPT(vkCreateInstance);
+    SL_INTERCEPT(vkCreateDevice);
+    SL_INTERCEPT(vkQueuePresentKHR);
+    SL_INTERCEPT(vkCreateImage);
+    SL_INTERCEPT(vkCmdPipelineBarrier);
+    SL_INTERCEPT(vkCmdBindPipeline);
+    SL_INTERCEPT(vkCmdBindDescriptorSets);
+    SL_INTERCEPT(vkCreateSwapchainKHR);
+    SL_INTERCEPT(vkGetSwapchainImagesKHR);
+    SL_INTERCEPT(vkAcquireNextImageKHR);
+    SL_INTERCEPT(vkBeginCommandBuffer);
 
     std::lock_guard<std::mutex> lock(vk.mutex);
     return vk.dispatchInstanceMap[instance].GetInstanceProcAddr(instance, pName);

@@ -56,6 +56,9 @@ struct CommonInterfaceContext
     thread::ThreadContext<chi::D3D12ThreadContext>* threadsD3D12 = {};
 
     std::map<Feature, EvaluateCallbacks> evalCallbacks;
+    NvPhysicalGpuHandle nvGPUHandle[NVAPI_MAX_PHYSICAL_GPUS] = { };
+    NvU32 nvGPUCount = 0;
+    common::GPUArch gpuInfo{};
 
     chi::CommonThreadContext& getThreadContext()
     {
@@ -81,35 +84,41 @@ static CommonInterfaceContext ctx = {};
 //! Get GPU information and share with other plugins
 //! 
 //! We need to add support for non-NVIDIA GPUs
-bool getGPUInfo(common::GPUArch& info, LUID* id)
+bool getGPUInfo(common::GPUArch*& info, LUID* id)
 {
 #if defined(SL_WINDOWS)    
-    NvPhysicalGpuHandle nvGPUHandle[NVAPI_MAX_PHYSICAL_GPUS] = { };
-    NvU32 gpuCount = 0;
-    NVAPI_VALIDATE_RF(NvAPI_EnumPhysicalGPUs(nvGPUHandle, &gpuCount));
+    NVAPI_VALIDATE_RF(NvAPI_EnumPhysicalGPUs(ctx.nvGPUHandle, &ctx.nvGPUCount));
     // Limiting to two GPUs (iGPU + dGPU) or 2x dGPU
-    gpuCount = std::min(2UL, gpuCount);
-    info.gpuCount = (uint32_t)gpuCount;
+    ctx.nvGPUCount = std::min(2UL, ctx.nvGPUCount);
+    ctx.gpuInfo.gpuCount = (uint32_t)ctx.nvGPUCount;
     NvU32 driverVersion;
     NvAPI_ShortString driverName;
     NVAPI_VALIDATE_RF(NvAPI_SYS_GetDriverAndBranchVersion(&driverVersion, driverName));
-    info.driverVersionMajor = driverVersion / 100;
-    info.driverVersionMinor = driverVersion % 100;
-    for (NvU32 gpu = 0; gpu < gpuCount; ++gpu)
+    SL_LOG_INFO("-----------------------------------------");
+    ctx.gpuInfo.driverVersionMajor = driverVersion / 100;
+    ctx.gpuInfo.driverVersionMinor = driverVersion % 100;
+    SL_LOG_INFO("NVIDIA driver %u.%u", ctx.gpuInfo.driverVersionMajor, ctx.gpuInfo.driverVersionMinor);
+    for (NvU32 gpu = 0; gpu < ctx.nvGPUCount; ++gpu)
     {
-        LUID luidTmp;
-        NVAPI_VALIDATE_RF(NvAPI_GPU_GetAdapterIdFromPhysicalGpu(nvGPUHandle[gpu], &luidTmp));
-        if (id && memcmp(&luidTmp, id, sizeof(LUID)) != 0)
+        if (id)
         {
-            continue;
+            LUID luidTmp;
+            NVAPI_VALIDATE_RF(NvAPI_GPU_GetAdapterIdFromPhysicalGpu(ctx.nvGPUHandle[gpu], &luidTmp));
+            if (memcmp(&luidTmp, id, sizeof(LUID)) != 0)
+            {
+                continue;
+            }
         }
         NV_GPU_ARCH_INFO archInfo;
         archInfo.version = NV_GPU_ARCH_INFO_VER;
-        NVAPI_VALIDATE_RF(NvAPI_GPU_GetArchInfo(nvGPUHandle[gpu], &archInfo));
-        info.architecture[gpu] = archInfo.architecture;
-        info.implementation[gpu] = archInfo.implementation;
-        info.revision[gpu] = archInfo.revision;
+        NVAPI_VALIDATE_RF(NvAPI_GPU_GetArchInfo(ctx.nvGPUHandle[gpu], &archInfo));
+        ctx.gpuInfo.architecture[gpu] = archInfo.architecture;
+        ctx.gpuInfo.implementation[gpu] = archInfo.implementation;
+        ctx.gpuInfo.revision[gpu] = archInfo.revision;
+        SL_LOG_INFO("GPU %u architecture 0x%x adapter mask 0x%0x", gpu, ctx.gpuInfo.architecture[gpu], 1 << gpu);
     };
+    SL_LOG_INFO("-----------------------------------------");
+    info = &ctx.gpuInfo;
 #endif
     return true;
 }
@@ -237,6 +246,7 @@ HRESULT slHookCreateCommittedResource(const D3D12_HEAP_PROPERTIES* pHeapProperti
     info.desc.mips = (uint32_t)pDesc->MipLevels;
     info.desc.flags = pDesc->Dimension == D3D12_RESOURCE_DIMENSION::D3D12_RESOURCE_DIMENSION_BUFFER ? chi::ResourceFlags::eRawOrStructuredBuffer : chi::ResourceFlags::eShaderResource;
     CHI_VALIDATE(ctx.compute->getResourceState(InitialState, info.desc.state));
+    CHI_VALIDATE(ctx.compute->getFormat(info.desc.nativeFormat, info.desc.format));
     CHI_VALIDATE(ctx.compute->onHostResourceCreated(*ppvResource, info));
     return S_OK;
 }
@@ -252,6 +262,7 @@ HRESULT slHookCreateReservedResource(const D3D12_RESOURCE_DESC* pDesc, D3D12_RES
     info.desc.mips = (uint32_t)pDesc->MipLevels;
     info.desc.flags = pDesc->Dimension == D3D12_RESOURCE_DIMENSION::D3D12_RESOURCE_DIMENSION_BUFFER ? chi::ResourceFlags::eRawOrStructuredBuffer : chi::ResourceFlags::eShaderResource;
     CHI_VALIDATE(ctx.compute->getResourceState(InitialState, info.desc.state));
+    CHI_VALIDATE(ctx.compute->getFormat(info.desc.nativeFormat, info.desc.format));
     CHI_VALIDATE(ctx.compute->onHostResourceCreated(*ppvResource, info));
     return S_OK;
 }
@@ -267,6 +278,7 @@ HRESULT slHookCreatePlacedResource(ID3D12Heap* pHeap, UINT64 HeapOffset, const D
     info.desc.mips = (uint32_t)pDesc->MipLevels;
     info.desc.flags = pDesc->Dimension == D3D12_RESOURCE_DIMENSION::D3D12_RESOURCE_DIMENSION_BUFFER ? chi::ResourceFlags::eRawOrStructuredBuffer : chi::ResourceFlags::eShaderResource;
     CHI_VALIDATE(ctx.compute->getResourceState(InitialState, info.desc.state));
+    CHI_VALIDATE(ctx.compute->getFormat(info.desc.nativeFormat, info.desc.format));
     CHI_VALIDATE(ctx.compute->onHostResourceCreated(*ppvResource, info));
     return S_OK;
 }
@@ -295,9 +307,18 @@ void presentCommon()
         CHI_VALIDATE(ctx.compute->collectGarbage(ctx.frameIndex));
     }
 
-    // Out stats
+    // Our stats including GPU load info
     static std::string s_stats;
     auto v = api::getContext()->pluginVersion;
+    
+    for (uint32_t i = 0; i < ctx.nvGPUCount; i++)
+    {
+        NV_GPU_DYNAMIC_PSTATES_INFO_EX gpuLoads{};
+        gpuLoads.version = NV_GPU_DYNAMIC_PSTATES_INFO_EX_VER;
+        NvAPI_GPU_GetDynamicPstatesInfoEx(ctx.nvGPUHandle[i], &gpuLoads);
+        ctx.gpuInfo.gpuLoad[i] = gpuLoads.utilization[i].percentage;
+    }
+
     s_stats = extra::format("sl.common {} - {}", v.toStr(), GIT_LAST_COMMIT);
     api::getContext()->parameters->set(sl::param::common::kStats, (void*)s_stats.c_str());
 }

@@ -40,11 +40,7 @@ struct IDXGISwapChain;
 #include "shaders/font_cs.h"
 #include "shaders/font_spv.h"
 
-//! Begin 'font.c' attribution comments
-//!
-//! Code originally from https://courses.cs.washington.edu/courses/cse457/98a/tech/OpenGL/font.c
-//!
-
+// begin font.c attribution comments
 /*
  * (c) Copyright 1993, Silicon Graphics, Inc.
  * ALL RIGHTS RESERVED 
@@ -81,8 +77,12 @@ struct IDXGISwapChain;
  *
  * OpenGL(TM) is a trademark of Silicon Graphics, Inc.
  */
-
-//! End 'font.c' attribution comments
+// Code originally from https://courses.cs.washington.edu/courses/cse457/98a/tech/OpenGL/font.c
+// 
+// Additional modifications by NVIDIA (c) 2020
+// that were required to make it compile within the Streamline library
+//
+// end font.c attribution comments
 
 unsigned char GFont[][13] = {
 {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
@@ -222,8 +222,6 @@ namespace chi
 
 ComputeStatus Generic::genericPostInit()
 {
-    SL_LOG_INFO("Fast UAV clear: %s", m_bFastUAVClearSupported ? "supported" : "not supported");
-
     PlatformType platform;
     getPlatformType(platform);
     if (platform == ePlatformTypeVK)
@@ -243,9 +241,10 @@ ComputeStatus Generic::genericPostInit()
     return eComputeStatusOk;
 }
 
-ComputeStatus Generic::init(Device InDevice, param::IParameters* params)
+ComputeStatus Generic::init(Device device, param::IParameters* params)
 {
     m_parameters = params;
+    m_typelessDevice = device;
     return eComputeStatusOk;
 }
 
@@ -373,7 +372,7 @@ ComputeStatus Generic::createBuffer(const ResourceDescription &CreateResourceDes
         ++m_allocCount;
         uint64_t currentSize = ResourceDesc.width;
         m_totalAllocatedSize += currentSize;
-        SL_LOG_VERBOSE("Buffer alloc (%s), m_allocCount=%d, currentSize %.1lf MB, totalSize %.1lf MB", InFriendlyName, m_allocCount.load(), (double)currentSize / (1024 * 1024), (double)m_totalAllocatedSize.load() / (1024 * 1024));
+        SL_LOG_VERBOSE("Buffer (%s), m_allocCount=%d, currentSize %.1lf MB, totalSize %.1lf MB", InFriendlyName, m_allocCount.load(), (double)currentSize / (1024 * 1024), (double)m_totalAllocatedSize.load() / (1024 * 1024));
     }
 
     CHI_CHECK(createBufferResourceImpl(ResourceDesc, OutResource, ResourceDesc.state));
@@ -398,18 +397,20 @@ ComputeStatus Generic::createTexture2DResourceShared(const ResourceDescription &
         return eComputeStatusError;
     }
 
-    resourceDesc.flags |= ResourceFlags::eShaderResourceStorage;
+    if (!(resourceDesc.state & ResourceState::ePresent))
+    {
+        resourceDesc.flags |= ResourceFlags::eShaderResourceStorage;
+    }
 
     {
         ++m_allocCount;
-        Format format = resourceDesc.format;
-        if (format == eFormatINVALID && resourceDesc.nativeFormat != NativeFormatUnknown)
+        if (resourceDesc.format == eFormatINVALID && resourceDesc.nativeFormat != NativeFormatUnknown)
         {
-            getFormat(resourceDesc.nativeFormat, format);
+            getFormat(resourceDesc.nativeFormat, resourceDesc.format);
         }
-        uint64_t currentSize = (format != eFormatINVALID) ? resourceDesc.width * resourceDesc.height * getFormatBytesPerPixel(format) : 0;
+        uint64_t currentSize = (resourceDesc.format != eFormatINVALID) ? resourceDesc.width * resourceDesc.height * getFormatBytesPerPixel(resourceDesc.format) : 0;
         m_totalAllocatedSize += currentSize;        
-        SL_LOG_VERBOSE("Tex2D alloc (%s:%u:%u:%s), m_allocCount=%d, currentSize %.1lf MB, totalSize %.1lf MB", InFriendlyName, resourceDesc.width, resourceDesc.height, GFORMAT_STR[resourceDesc.format], m_allocCount.load(), (double)currentSize / (1024 * 1024), (double)m_totalAllocatedSize.load() / (1024 * 1024));
+        SL_LOG_VERBOSE("Tex2d (%s:%u:%u:%s), m_allocCount=%d, currentSize %.1lf MB, totalSize %.1lf MB", InFriendlyName, resourceDesc.width, resourceDesc.height, GFORMAT_STR[resourceDesc.format], m_allocCount.load(), (double)currentSize / (1024 * 1024), (double)m_totalAllocatedSize.load() / (1024 * 1024));
     }
 
     CHI_CHECK(createTexture2DResourceSharedImpl(resourceDesc, OutResource, UseNativeFormat, resourceDesc.state));
@@ -427,7 +428,7 @@ ComputeStatus Generic::destroy(std::function<void(void)> task)
         std::lock_guard<std::mutex> lock(m_mutex);
         m_destroyWithLambdas.push_back({ task, m_finishedFrame });
     }
-    SL_LOG_VERBOSE("Scheduled to destroy lambda task - frame %u", m_finishedFrame);
+    SL_LOG_VERBOSE("Scheduled to destroy lambda task - frame %u", m_finishedFrame.load());
     return eComputeStatusOk;
 }
 
@@ -445,17 +446,21 @@ ComputeStatus Generic::destroyResource(Resource& resource)
             m_resourceStateMap.erase(resource);
         }
         sl::Resource res = { (desc.flags & ResourceFlags::eRawOrStructuredBuffer) != 0 ? ResourceType::eResourceTypeBuffer : ResourceType::eResourceTypeTex2d, (void*)resource, nullptr, nullptr, nullptr };
-        m_releaseCallback(&res);
+        m_releaseCallback(&res, m_typelessDevice);
     }
     else
     {
         // Delayed destroy for safety
         {
             std::lock_guard<std::mutex> lock(m_mutex);
-            m_resourcesToDestroy.push_back({ resource, m_finishedFrame });
+            TimestampedResource rest = { resource, m_finishedFrame };
+            if (std::find(m_resourcesToDestroy.begin(), m_resourcesToDestroy.end(), rest) == m_resourcesToDestroy.end())
+            {
+                m_resourcesToDestroy.push_back(rest);
+                auto name = getDebugName(resource);
+                SL_LOG_VERBOSE("Scheduled to destroy 0x%llx(%S) - frame %u", resource, name.c_str(), m_finishedFrame.load());
+            }
         }
-        auto name = getDebugName(resource);
-        SL_LOG_VERBOSE("Scheduled to destroy 0x%llx(%S) - frame %u", resource, name.c_str(), m_finishedFrame);
     }
     resource = {};
     return eComputeStatusOk;
@@ -465,7 +470,7 @@ ComputeStatus Generic::collectGarbage(uint32_t finishedFrame)
 {    
     if (finishedFrame != UINT_MAX)
     {
-        m_finishedFrame = finishedFrame;
+        m_finishedFrame.store(finishedFrame);
     }
 
     TimestampedLambdaList destroyWithLambdas;
@@ -484,7 +489,7 @@ ComputeStatus Generic::collectGarbage(uint32_t finishedFrame)
             // Run lambda is
             if (finishedFrame > tres.frame + 3)
             {
-                SL_LOG_VERBOSE("Calling destroy lambda - scheduled at frame %u - finished frame %u", tres.frame, finishedFrame);
+                SL_LOG_VERBOSE("Calling destroy lambda - scheduled at frame %u - finished frame %u - forced %s", tres.frame, m_finishedFrame.load(), finishedFrame != UINT_MAX ? "no" : "yes");
                 tres.task();
                 it = destroyWithLambdas.erase(it);
             }
@@ -508,7 +513,7 @@ ComputeStatus Generic::collectGarbage(uint32_t finishedFrame)
                     m_resourceStateMap.erase(tres.resource);
                 }
                 auto name = getDebugName(tres.resource);
-                SL_LOG_VERBOSE("Destroying 0x%llx(%S) - scheduled at frame %u - finished frame %u", tres.resource, name.c_str(), tres.frame, finishedFrame);
+                SL_LOG_VERBOSE("Destroying 0x%llx(%S) - scheduled at frame %u - finished frame %u - forced %s", tres.resource, name.c_str(), tres.frame, m_finishedFrame.load(), finishedFrame != UINT_MAX ? "no" : "yes");
                 destroyResourceDeferredImpl(tres.resource);
                 it = resourcesToDestroy.erase(it);
             }
@@ -546,28 +551,6 @@ ComputeStatus Generic::insertGPUBarrierList(CommandList cmdList, const Resource*
         return eComputeStatusNotSupported;
     }
     return eComputeStatusOk;
-}
-
-ComputeStatus Generic::copyHostToDeviceBuffer(CommandList cmdList, uint64_t InSize, const void *InData, Resource InUploadResource, Resource InTargetResource, unsigned long long InUploadOffset, unsigned long long InDstOffset)
-{    
-    if (!InTargetResource || !InUploadResource)
-    {
-        SL_LOG_ERROR("error: CopyHostToDeviceBuffer called with null InTargetBuffer or null InUploadResource");
-        return eComputeStatusInvalidArgument;
-    }
-
-    return copyHostToDeviceBufferImpl(cmdList, InSize, InData, InUploadResource, InTargetResource, InUploadOffset, InDstOffset);
-}
-
-ComputeStatus Generic::writeTexture(CommandList cmdList, uint64_t InSize, uint64_t RowPitch, const void* InData, Resource InTargetResource, Resource& InUploadResource)
-{
-    if (!InTargetResource)
-    {
-        SL_LOG_ERROR("error: writeTexture called with null InTargetBuffer or null InUploadResource");
-        return eComputeStatusInvalidArgument;
-    }
-
-    return writeTextureImpl(cmdList, InSize, RowPitch, InData, InTargetResource, InUploadResource);
 }
 
 ComputeStatus Generic::renderText(CommandList cmdList, int x, int y, const char *text, const ResourceArea &out, const float4& color, int reverseX, int reverseY)

@@ -104,8 +104,6 @@ class D3D11 : public Generic
 
     thread::ThreadContext<DispatchDataD3D11> m_dispatchContext;
 
-    virtual ComputeStatus copyHostToDeviceBufferImpl(CommandList cmdList, uint64_t InSize, const void* InData, Resource InUploadResource, Resource InTargetResource, unsigned long long InUploadOffset, unsigned long long InDstOffset) override final;
-    virtual ComputeStatus writeTextureImpl(CommandList cmdList, uint64_t InSize, uint64_t RowPitch, const void* InData, Resource InTargetResource, Resource& InUploadResource) override final;
     virtual void destroyResourceDeferredImpl(const Resource InResource) override final;
     virtual std::wstring getDebugName(Resource res) override final;
 
@@ -132,7 +130,7 @@ public:
     virtual ComputeStatus createCommandListContext(CommandQueue queue, uint32_t count, ICommandListContext*& ctx, const char friendlyName[]) override final;
     virtual ComputeStatus destroyCommandListContext(ICommandListContext* ctx) override final;
 
-    virtual ComputeStatus createCommandQueue(CommandQueueType type, CommandQueue& queue, const char friendlyName[]) override final;
+    virtual ComputeStatus createCommandQueue(CommandQueueType type, CommandQueue& queue, const char friendlyName[], uint32_t index) override final;
     virtual ComputeStatus destroyCommandQueue(CommandQueue& queue) override final;
 
     virtual ComputeStatus pushState(CommandList cmdList) override final;
@@ -154,7 +152,6 @@ public:
     virtual ComputeStatus clearView(CommandList cmdList, Resource InResource, const float4 Color, const RECT * pRect, unsigned int NumRects, CLEAR_TYPE &outType) override final;
     
     virtual ComputeStatus onHostResourceCreated(Resource resource, const ResourceInfo& info) override final { return eComputeStatusOk; }
-    virtual ComputeStatus onHostResourceViewCreated(Resource resource, ResourceView view) override final { return eComputeStatusOk; }
     virtual ComputeStatus setResourceState(Resource resource, ResourceState state, uint32_t subresource = kAllSubResources) override final { return eComputeStatusOk; }
 
     virtual ComputeStatus insertGPUBarrierList(CommandList cmdList, const Resource* InResources, unsigned int InResourceCount, BarrierType InBarrierType = eBarrierTypeUAV) override final;
@@ -164,15 +161,18 @@ public:
     virtual ComputeStatus copyBufferToReadbackBuffer(CommandList cmdList, Resource InResource, Resource OutResource, unsigned int InBytesToCopy) override final;
     virtual ComputeStatus getResourceDescription(Resource InResource, ResourceDescription &OutDesc) override final;
 
+    virtual ComputeStatus copyHostToDeviceBuffer(CommandList InCmdList, uint64_t InSize, const void* InData, Resource InUploadResource, Resource InTargetResource, unsigned long long InUploadOffset, unsigned long long InDstOffset) override final;
+    virtual ComputeStatus copyHostToDeviceTexture(CommandList InCmdList, uint64_t InSize, uint64_t RowPitch, const void* InData, Resource InTargetResource, Resource& InUploadResource) override final;
+
     virtual ComputeStatus dumpResource(CommandList cmdList, Resource src, const char *path) override final;
 
     virtual ComputeStatus setDebugName(Resource res, const char friendlyName[]) override final;
 
-    ComputeStatus beginPerfSection(CommandList cmdList, const char *key, unsigned int node, bool InReset = false) override final;
-    ComputeStatus endPerfSection(CommandList cmdList, const char *key, float &OutAvgTimeMS, unsigned int node) override final;
+    virtual ComputeStatus beginPerfSection(CommandList cmdList, const char *key, unsigned int node, bool InReset = false) override final;
+    virtual ComputeStatus endPerfSection(CommandList cmdList, const char *key, float &OutAvgTimeMS, unsigned int node) override final;
 #if SL_ENABLE_PERF_TIMING
-    ComputeStatus beginProfiling(CommandList cmdList, UINT Metadata, const void *pData, UINT Size) override final;
-    ComputeStatus endProfiling(CommandList cmdList) override final;
+    virtual ComputeStatus beginProfiling(CommandList cmdList, UINT Metadata, const void *pData, UINT Size) override final;
+    virtual ComputeStatus endProfiling(CommandList cmdList) override final;
 #endif
 };
 

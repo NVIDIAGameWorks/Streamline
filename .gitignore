@@ -4,3 +4,4 @@ _sdk/
 external/*
 package.bat
 copy.bat
+**/*.aps

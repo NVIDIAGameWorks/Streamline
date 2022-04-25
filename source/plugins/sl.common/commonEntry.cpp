@@ -57,7 +57,7 @@ extern HRESULT slHookCreatePlacedResource(ID3D12Heap* pHeap, UINT64 HeapOffset, 
 extern HRESULT slHookCreateReservedResource(const D3D12_RESOURCE_DESC* pDesc, D3D12_RESOURCE_STATES InitialState, const D3D12_CLEAR_VALUE* pOptimizedClearValue, REFIID riid, void** ppvResource);
 extern void slHookResourceBarrier(ID3D12GraphicsCommandList* pCmdList, UINT NumBarriers, const D3D12_RESOURCE_BARRIER* pBarriers);
 extern HRESULT slHookPresent(IDXGISwapChain* swapChain, UINT SyncInterval, UINT Flags, bool& Skip);
-extern bool getGPUInfo(common::GPUArch& info, LUID* id);
+extern bool getGPUInfo(common::GPUArch*& info, LUID* id);
 
 //! Our common context
 //! 
@@ -77,7 +77,7 @@ struct CommonEntryContext
 #endif
     std::mutex resourceTagMutex = {};
     std::map<uint64_t, CommonResource> idToResourceMap;
-    common::ViewportIdFrameData<Constants, 3> constants = { "common" };
+    common::ViewportIdFrameData<3> constants = { "common" };
 };
 static CommonEntryContext ctx = {};
 
@@ -157,11 +157,11 @@ bool setCommonConstants(const Constants& consts, uint32_t frame, uint32_t id)
         validateCommonConstants(consts);
     }
     // Common constants are per frame, per special id (viewport, instance etc)
-    ctx.constants.set(consts, frame, id);
+    ctx.constants.set(frame, id, &consts);
     return true;
 }
 
-bool getCommonConstants(const common::EventData& ev, Constants& consts)
+bool getCommonConstants(const common::EventData& ev, Constants** consts)
 {
     return ctx.constants.get(ev, consts);
 }
@@ -267,6 +267,15 @@ void releaseNGXResourceCallback(IUnknown* resource)
     }
 }
 
+void ngxLog(const char* message, NVSDK_NGX_Logging_Level loggingLevel, NVSDK_NGX_Feature sourceComponent)
+{
+    switch (loggingLevel)
+    {
+        case NVSDK_NGX_LOGGING_LEVEL_ON: SL_LOG_INFO(message); break;
+        case NVSDK_NGX_LOGGING_LEVEL_VERBOSE: SL_LOG_VERBOSE(message); break;
+    }
+};
+
 } // namespace ngx
 
 //! Main entry point - starting our plugin
@@ -291,12 +300,13 @@ bool slOnPluginStartup(const char* jsonConfig, void* device, param::IParameters*
     config.at("deviceType").get_to(deviceType);
 
     //! Some optional tweaks, NGX logging included in SL logging 
-    bool ngxLogging = true;
+    uint32_t logLevelNGX = log::getInterface()->getLogLevel();
     //! Extra config is always `sl.plugin_name.json` so in our case `sl.common.json`
     json& extraConfig = *(json*)api::getContext()->extConfig;
-    if (extraConfig.contains("ngxLogging"))
+    if (extraConfig.contains("logLevelNGX"))
     {
-        extraConfig.at("ngxLogging").get_to(ngxLogging);
+        extraConfig.at("logLevelNGX").get_to(logLevelNGX);
+        SL_LOG_HINT("Overriding NGX logging level to %u'", logLevelNGX);
     }
     //! Optional hot-key bindings
     if (extraConfig.contains("keys"))
@@ -326,15 +336,7 @@ bool slOnPluginStartup(const char* jsonConfig, void* device, param::IParameters*
     if (ctx.needNGX)
     {
         // NGX initialization
-#if SL_ENABLE_OTA
-        // Async initialization for NGX and OTA since this can be a slow process
-        ctx.otaLambda = std::async(std::launch::async, []()->bool
-            {
-                // Non blocking check for OTA
-                // IMPORTANT: must be called before NGX init because we use NGX updater
-                return ota::getInterface()->checkForOTA();
-            });
-#endif
+
         SL_LOG_INFO("At least one plugin requires NGX, trying to initialize ...");
 
         // Reset our flag until we see if NGX can be initialized correctly
@@ -370,21 +372,12 @@ bool slOnPluginStartup(const char* jsonConfig, void* device, param::IParameters*
         NVSDK_NGX_FeatureCommonInfo info = {};
         info.PathListInfo.Length = (uint32_t)ngxPaths.size();
         info.PathListInfo.Path = ngxPaths.data();
-        if (ngxLogging)
         {
             // We can control NXG logging as well
-            auto ngxLogginCallback = [](const char* message, NVSDK_NGX_Logging_Level loggingLevel, NVSDK_NGX_Feature sourceComponent)->void
-            {
-                switch (loggingLevel)
-                {
-                    case NVSDK_NGX_LOGGING_LEVEL_ON: SL_LOG_INFO(message); break;
-                    case NVSDK_NGX_LOGGING_LEVEL_VERBOSE: SL_LOG_VERBOSE(message); break;
-                }
-            };
-
-            info.LoggingInfo.LoggingCallback = ngxLogginCallback;
+            
+            info.LoggingInfo.LoggingCallback = ngx::ngxLog;
             info.LoggingInfo.DisableOtherLoggingSinks = true;
-            switch (log::getInterface()->getLogLevel())
+            switch (logLevelNGX)
             {
                 case LogLevel::eLogLevelOff:
                     info.LoggingInfo.MinimumLoggingLevel = NVSDK_NGX_LOGGING_LEVEL_OFF;
@@ -422,10 +415,7 @@ bool slOnPluginStartup(const char* jsonConfig, void* device, param::IParameters*
             assert(vk->dispatchDeviceMap.find(slVkDevices->device) != vk->dispatchDeviceMap.end());
             assert(vk->dispatchInstanceMap.find(slVkDevices->instance) != vk->dispatchInstanceMap.end());
 
-            auto ddt = vk->dispatchDeviceMap[slVkDevices->device];
-            auto idt = vk->dispatchInstanceMap[slVkDevices->instance];
-
-            CHECK_NGX_RETURN_ON_ERROR(NVSDK_NGX_VULKAN_Init(appId, documentsDataPath, slVkDevices->instance, slVkDevices->physical, slVkDevices->device, &info, NVSDK_NGX_Version_API));
+            CHECK_NGX_RETURN_ON_ERROR(NVSDK_NGX_VULKAN_Init(appId, documentsDataPath, slVkDevices->instance, slVkDevices->physical, slVkDevices->device, /*vk->getInstanceProcAddr, vk->getDeviceProcAddr,*/ &info, NVSDK_NGX_Version_API));
             CHECK_NGX_RETURN_ON_ERROR(NVSDK_NGX_VULKAN_GetCapabilityParameters(&ctx.ngxContext.params));
         }
 
@@ -459,15 +449,15 @@ void slOnPluginShutdown()
         SL_LOG_INFO("Shutting down NGX");
         if (ctx.platform == chi::ePlatformTypeD3D11)
         {
-            NVSDK_NGX_D3D11_Shutdown();
+            NVSDK_NGX_D3D11_Shutdown1(nullptr);
         }
         else if (ctx.platform == chi::ePlatformTypeD3D12)
         {
-            NVSDK_NGX_D3D12_Shutdown();
+            NVSDK_NGX_D3D12_Shutdown1(nullptr);
         }
         else
         {
-            NVSDK_NGX_VULKAN_Shutdown();
+            NVSDK_NGX_VULKAN_Shutdown1(nullptr);
         }
         ctx.needNGX = false;
     }
@@ -483,6 +473,7 @@ void slOnPluginShutdown()
 //! 
 static const char* JSON = R"json(
 {
+    "id" : -1,
     "priority" : 0,
     "hooks" :
     [
@@ -536,10 +527,10 @@ uint32_t getSupportedAdapterMask()
     api::getContext()->parameters->set(param::common::kKeyboardAPI, extra::keyboard::getInterface());
 
     // We are always supported but need to provide a way for other plugins to check GPU caps
-    static common::GPUArch s_arch{};
-    if (getGPUInfo(s_arch, nullptr))
+    common::GPUArch* arch{};
+    if (getGPUInfo(arch, nullptr))
     {
-        api::getContext()->parameters->set(sl::param::common::kGPUInfo, (void*)&s_arch);
+        api::getContext()->parameters->set(sl::param::common::kGPUInfo, (void*)arch);
     }
 
     // Always supported across all adapters

@@ -49,13 +49,17 @@ extern "C" HRESULT WINAPI D3D12CreateDevice(
     loadD3D12Module();
 
     const HRESULT hr = sl::interposer::call(D3D12CreateDevice, hookD3D12CreateDevice)(pAdapter, MinimumFeatureLevel, riid, ppDevice);
-    if (FAILED(hr) || !ppDevice)
+    if (FAILED(hr))
     {
-        SL_LOG_WARN("D3D12CreateDevice failed with error code %lx", hr);
+        if (ppDevice)
+        {
+            // User actually requested a device so report an error
+            SL_LOG_WARN("D3D12CreateDevice failed with error code %lx", hr);
+        }
         return hr;
     }
 
-    if (sl::interposer::getInterface()->isEnabled())
+    if (ppDevice && *ppDevice && sl::interposer::getInterface()->isEnabled())
     {
         auto deviceProxy = new sl::interposer::D3D12Device(static_cast<ID3D12Device*>(*ppDevice));
 

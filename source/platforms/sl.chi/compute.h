@@ -150,6 +150,7 @@ enum class ResourceState : uint32_t
     eStorageRW = eStorageRead | eStorageWrite,
     eColorAttachmentRead = 1 << 8,
     eColorAttachmentWrite = 1 << 9,
+    eColorAttachmentRW = eColorAttachmentRead | eColorAttachmentWrite,
     eDepthStencilAttachmentWrite = 1 << 10,
     eDepthStencilAttachmentRead = 1 << 11,
     eCopySource = 1 << 12,
@@ -214,6 +215,12 @@ inline bool operator&(ResourceFlags a, ResourceFlags b)
     return ((uint32_t)a & (uint32_t)b) != 0;
 }
 
+inline ResourceFlags operator&=(ResourceFlags& a, ResourceFlags b)
+{
+    a = (ResourceFlags)((uint32_t)a & (uint32_t)b);
+    return a;
+}
+
 inline ResourceFlags operator|(ResourceFlags a, ResourceFlags b)
 {
     return (ResourceFlags)((uint32_t)a | (uint32_t)b);
@@ -223,6 +230,11 @@ inline ResourceFlags& operator |= (ResourceFlags& lhs, ResourceFlags rhs)
 {
     lhs = (ResourceFlags)((int)lhs | (int)rhs);
     return lhs;
+}
+
+inline ResourceFlags operator~(ResourceFlags a)
+{
+    return (ResourceFlags)~((uint32_t)a);
 }
 
 struct CommonThreadContext
@@ -302,13 +314,11 @@ struct ResourceInfo
     {
         desc = rhs.desc;
         memory = rhs.memory;
-        views = rhs.views;
         return *this;
     }
 
-    ResourceDescription desc;
-    void* memory;
-    std::vector<ResourceView> views;
+    ResourceDescription desc{};
+    void* memory{};
 };
 
 struct Coordinates
@@ -383,6 +393,7 @@ enum ComputeStatus
 #define CHI_CHECK(f) {auto _r = f;if(_r != sl::chi::eComputeStatusOk) { SL_LOG_ERROR("%s failed",#f); return _r;}};
 #define CHI_CHECK_RF(f) {auto _r = f;if(_r != sl::chi::eComputeStatusOk) { SL_LOG_ERROR("%s failed",#f); return false;}};
 #define CHI_CHECK_RV(f) {auto _r = f;if(_r != sl::chi::eComputeStatusOk) { SL_LOG_ERROR("%s failed",#f); return;}};
+#define NVAPI_CHECK(f) {auto r = f; if(r != NVAPI_OK) { SL_LOG_ERROR("%s failed error %d", #f, r); return sl::chi::eComputeStatusError;} };
 
 class ICompute
 {
@@ -414,7 +425,7 @@ public:
     virtual ComputeStatus destroyResource(Resource& resource) = 0;
     virtual ComputeStatus destroy(std::function<void(void)> task) = 0;
 
-    virtual ComputeStatus createCommandQueue(CommandQueueType type, CommandQueue& queue, const char friendlyName[] = "") = 0;
+    virtual ComputeStatus createCommandQueue(CommandQueueType type, CommandQueue& queue, const char friendlyName[] = "", uint32_t index = 0) = 0;
     virtual ComputeStatus destroyCommandQueue(CommandQueue& queue) = 0;
 
     virtual ComputeStatus createCommandListContext(CommandQueue queue, uint32_t count, ICommandListContext*& ctx, const char friendlyName[] = "") = 0;
@@ -451,13 +462,13 @@ public:
     virtual ComputeStatus getResourceState(Resource resource, ResourceState& state) = 0;
 
     virtual ComputeStatus onHostResourceCreated(Resource resource, const ResourceInfo& info) = 0;
-    virtual ComputeStatus onHostResourceViewCreated(Resource resource, ResourceView view) = 0;
+    virtual ComputeStatus onHostResourceDestroyed(Resource resource) = 0;
 
     virtual ComputeStatus copyResource(CommandList cmdList, Resource dstResource, Resource srcResource) = 0;
     virtual ComputeStatus cloneResource(Resource resource, Resource &outResource, const char friendlyName[] = "", ResourceState initialState = ResourceState::eCopyDestination, uint32_t creationMask = 0, uint32_t visibilityMask = 0) = 0;
-    virtual ComputeStatus copyBufferToReadbackBuffer(CommandList cmdList, Resource source, Resource destination, uint32_t InBytesToCopy) = 0;
+    virtual ComputeStatus copyBufferToReadbackBuffer(CommandList cmdList, Resource source, Resource destination, uint32_t bytesToCopy) = 0;
     virtual ComputeStatus copyHostToDeviceBuffer(CommandList cmdList, uint64_t size, const void *data, Resource uploadResource, Resource targetResource, unsigned long long uploadOffset = 0, unsigned long long dstOffset = 0) = 0;
-    virtual ComputeStatus writeTexture(CommandList cmdList, uint64_t size, uint64_t rowPitch, const void* data, Resource targetResource, Resource& uploadResource) = 0;
+    virtual ComputeStatus copyHostToDeviceTexture(CommandList cmdList, uint64_t size, uint64_t rowPitch, const void* data, Resource targetResource, Resource& uploadResource) = 0;
 
     virtual ComputeStatus getResourceDescription(Resource resource, ResourceDescription &OutDesc) = 0;
 

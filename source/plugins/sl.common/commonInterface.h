@@ -79,19 +79,20 @@ inline bool getTaggedResource(BufferType tag, void*& res, uint32_t id = 0, Exten
 
 struct CommonResource;
 struct Constants;
-enum BufferType;
+enum BufferType : uint32_t;
 
 namespace common
 {
 struct GPUArch
 {
-    uint32_t gpuCount;
-    uint32_t driverVersionMajor;
-    uint32_t driverVersionMinor;
     // We cover up to 2 GPUs (iGPU + dGPU on laptops)
-    uint32_t architecture[2];
-    uint32_t implementation[2];
-    uint32_t revision[2];
+    uint32_t gpuCount{};
+    uint32_t driverVersionMajor{};
+    uint32_t driverVersionMinor{};
+    uint32_t architecture[2]{};
+    uint32_t implementation[2]{};
+    uint32_t revision[2]{};
+    uint32_t gpuLoad[2]{}; // percentage
 };
 
 bool createCompute(void* device, uint32_t deviceType);
@@ -124,9 +125,9 @@ struct EventData
     }
 };
 
-using PFunGetConstants = bool(const EventData&, Constants& consts);
+using PFunGetConstants = bool(const EventData&, Constants** consts);
 
-inline bool getConsts(const EventData& data, sl::Constants& consts)
+inline bool getConsts(const EventData& data, sl::Constants** consts)
 {
     auto parameters = api::getContext()->parameters;
     common::PFunGetConstants* getConsts = {};
@@ -146,13 +147,74 @@ using PFunRegisterEvaluateCallbacks = void(Feature feature, PFunBeginEvent* begi
 bool evaluateFeature(void* pCmdList, Feature feature, uint32_t frameIndex, uint32_t id);
 void registerEvaluateCallbacks(Feature feature, PFunBeginEvent* beginEvent, PFunEndEvent* endEvent);
 
-template<typename T, uint32_t kDataQueueSize = 24, bool mustSetEachFrame = true>
+template<typename T, typename... Args>
+void packData(std::vector<uint8_t>& blob, const T* a)
+{
+    if (a)
+    {
+        auto offset = blob.size();
+        blob.resize(offset + sizeof(T));
+        auto p = blob.data() + offset;
+        *((T*)p) = *a;
+    }
+}
+
+template<typename T, typename... Args>
+void packData(std::vector<uint8_t>& blob, const T* a, Args... args)
+{
+    packData(blob, a);
+    packData(blob, args...);
+}
+
+template<typename T, typename... Args>
+void unpackData(std::vector<uint8_t>& blob, size_t& offset, T** a)
+{
+    if (blob.size() > offset)
+    {
+        auto p = blob.data() + offset;
+        *a = ((T*)p);
+        (*a)->ext = {};
+        offset += sizeof(T);
+    }
+    else
+    {
+        a = nullptr;
+    }
+}
+
+template<typename T, typename... Args>
+void unpackData(std::vector<uint8_t>& blob, size_t& offset, T** a, Args... args)
+{
+    unpackData(blob, offset, a);
+    unpackData(blob, offset, args...);
+}
+
+//! Unique frame data
+//! 
+//! By default we assume that no more than 3 unique data sets will
+//! be prepared (queuing up no more than 3 frames in advance).
+//! 
+//! We also assume that by default data needs to be set each frame
+//! but in some cases that is not needed if data does not change every
+//! frame (we will fetch whatever was set last).
+//! 
+template<uint32_t dataQueueSize = 3, bool mustSetEachFrame = true >
 struct ViewportIdFrameData
 {
     struct FrameData
     {
-        T data;
-        uint32_t frame;
+        FrameData() {};
+        FrameData(const std::vector<uint8_t>& d, uint32_t f) : data(d), frame(f) {};
+        FrameData(const FrameData& rhs) { operator=(rhs); }
+        inline FrameData& operator=(const FrameData& rhs)
+        {
+            data = rhs.data;
+            frame = rhs.frame;
+            return *this;
+        }
+
+        std::vector<uint8_t> data{};
+        uint32_t frame{};
     };
 
     struct IndexedFrameData
@@ -174,20 +236,60 @@ struct ViewportIdFrameData
 
     ViewportIdFrameData(const char* name) : m_name(name) {};
 
-    void set(const T& data, uint32_t frame, uint32_t id)
+    template<typename T, typename... Args>
+    void set(uint32_t frame, uint32_t id, const T* a)
+    {
+        std::vector<uint8_t> blob;
+        packData(blob, a);
+        set(blob, frame, id);
+    }
+
+    template<typename T, typename... Args>
+    void set(uint32_t frame, uint32_t id, const T* a, Args... args)
+    {
+        std::vector<uint8_t> blob;
+        packData(blob, a);
+        packData(blob, args...);
+        set(blob, frame, id);
+    }
+
+    template<typename T, typename... Args>
+    bool get(const common::EventData& ev, T** a)
+    {
+        std::vector<uint8_t>* blob{};
+        if (!get(ev, blob)) return false;
+        size_t offset = 0;
+        unpackData(*blob, offset, a);
+        return *a != nullptr;
+    }
+
+    template<typename T, typename... Args>
+    bool get(const common::EventData& ev, T** a, Args... args)
+    {
+        std::vector<uint8_t>* blob{};
+        if (!get(ev, blob)) return false;
+        size_t offset = 0;
+        unpackData(*blob, offset, a);
+        unpackData(*blob, offset, args...);
+        return *a != nullptr;
+    }
+
+private:
+
+    void set(const std::vector<uint8_t>& data, uint32_t frame, uint32_t id)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         auto& item = m_list[id];
         if (item.frames.empty())
         {
-            item.frames.resize(kDataQueueSize);
+            item.frames.resize(dataQueueSize);
         }
         item.frames[item.index] = { data, frame };
         item.lastIndex = item.index;
-        item.index = (item.index + 1) % kDataQueueSize;
+        item.index = (item.index + 1) % dataQueueSize;
     }
 
-    bool get(const common::EventData& ev, T& outData)
+    bool get(const common::EventData& ev, std::vector<uint8_t>*& outData)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         auto* item = &m_list[ev.id];
@@ -201,16 +303,16 @@ struct ViewportIdFrameData
                 return false;
             }
         }
-        for (uint32_t i = 0; i < kDataQueueSize; i++)
+        for (uint32_t i = 0; i < dataQueueSize; i++)
         {
-            uint32_t n = (item->lastIndex + i) % kDataQueueSize;
+            uint32_t n = (item->lastIndex + i) % dataQueueSize;
             if (item->frames[n].frame == ev.frame)
             {
-                outData = item->frames[n].data;
+                outData = &item->frames[n].data;
                 return true;
             }
         }
-        outData = item->frames[item->lastIndex].data;
+        outData = &item->frames[item->lastIndex].data;
         if (!ev.empty())
         {
             if (mustSetEachFrame)
@@ -225,9 +327,9 @@ struct ViewportIdFrameData
         return true;
     }
 
-    std::map<uint32_t, IndexedFrameData> m_list = {};
     std::string m_name = {};
     std::mutex m_mutex = {};
+    std::map<uint32_t, IndexedFrameData> m_list = {};
 };
 
 }

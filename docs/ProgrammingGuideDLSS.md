@@ -3,14 +3,18 @@
 Streamline - DLSS
 =======================
 
-Version 1.0.1
+Version 1.0.2
 ------
 
 ### 1.0 INITIALIZE AND SHUTDOWN
 
-Call `sl::init` as early as possible (before any dxgi/d3d11/d3d12 APIs are invoked)
+Call `slInit` as early as possible (before any dxgi/d3d11/d3d12 APIs are invoked)
 
 ```cpp
+#include <sl.h>
+#include <sl_consts.h>
+#include <sl_dlss.h>
+
 sl::Preferences pref{};
 pref.showConsole = true; // for debugging, set to false in production
 pref.logLevel = sl::eLogLevelDefault;
@@ -18,7 +22,7 @@ pref.pathsToPlugins = {}; // change this if Streamline plugins are not located n
 pref.numPathsToPlugins = 0; // change this if Streamline plugins are not located next to the executable
 pref.pathToLogsAndData = {}; // change this to enable logging to a file
 pref.logMessageCallback = myLogMessageCallback; // highly recommended to track warning/error messages in your callback
-if(!sl::init(pred, myApplicationId)) // !!! Make sure to obtain your app Id from NVIDIA !!!
+if(!slInit(pref, myApplicationId))
 {
     // Handle error, check the logs
 }
@@ -26,10 +30,10 @@ if(!sl::init(pred, myApplicationId)) // !!! Make sure to obtain your app Id from
 
 For more details please see [preferences](ProgrammingGuide.md#221-preferences)
 
-Call `sl::shutdown()` before destroying dxgi/d3d11/d3d12/vk instances, devices and other components in your engine.
+Call `slShutdown()` before destroying dxgi/d3d11/d3d12/vk instances, devices and other components in your engine.
 
 ```cpp
-if(!sl::shutdown())
+if(!slShutdown())
 {
     // Handle error, check the logs
 }
@@ -41,7 +45,7 @@ As soon as SL is initialized, you can check if DLSS is available for the specifi
 
 ```cpp
 uint32_t adapterBitMask = 0;
-if(!isFeatureSupported(sl::Feature::eFeatureDLSS, &adapterBitMask))
+if(!slIsFeatureSupported(sl::Feature::eFeatureDLSS, &adapterBitMask))
 {
     // DLSS is not supported on the system, fallback to the default upscaling method
 }
@@ -64,12 +68,12 @@ dlssConsts.mode = myUI->getDLSSMode(); // e.g. sl::eDLSSModeBalanced;
 dlssConsts.outputWidth = myUI->getOutputWidth();    // e.g 1920;
 dlssConsts.outputHeight = myUI->getOutputHeight(); // e.g. 1080;
 // Now let's check what should our rendering resolution be
-if(!sl::getFeatureSettings(sl::eFeatureDLSS, &dlssConsts, &dlssSettings))
+if(!slGetFeatureSettings(sl::eFeatureDLSS, &dlssConsts, &dlssSettings))
 {
     // Handle error here, check the logs
 }
 // Setup rendering based on the provided values in the sl::DLSSSettings structure
-myViewport->setSize(dlssSettings.renderWidth, dlssSettings.renderHeight);
+myViewport->setSize(dlssSettings.optimalRenderWidth, dlssSettings.optimalRenderHeight);
 // Use recommended sharpness
 dlssConsts.sharpness = dlssSettings.optimalSharpness;
 ```
@@ -85,8 +89,8 @@ sl::Resource colorOut = {sl::ResourceType::eResourceTypeTex2d, myTAAUOutput, nul
 sl::Resource depth = {sl::ResourceType::eResourceTypeTex2d, myDepthBuffer, nullptr, nullptr, nullptr};
 sl::Resource mvec = {sl::ResourceType::eResourceTypeTex2d, myMotionVectorsBuffer, nullptr, nullptr, nullptr};
 // Note that you can also pass unique id (if using multiple viewports) and the extent of the resource if dynamic resolution is active
-setTag(&colorIn, sl::BufferType::eBufferTypeDLSSInputColor);
-setTag(&colorOut, sl::BufferType::eBufferTypeDLSSOutputColor);
+setTag(&colorIn, sl::BufferType::eBufferTypeScalingInputColor);
+setTag(&colorOut, sl::BufferType::eBufferTypeScalingOutputColor);
 setTag(&depth, sl::BufferType::eBufferTypeDepth);
 setTag(&mvec, sl::BufferType::eBufferTypeMVec);
 ```
@@ -118,18 +122,18 @@ dlssConsts.outputWidth = myUI->getOutputWidth();    // e.g 1920;
 dlssConsts.outputHeight = myUI->getOutputHeight(); // e.g. 1080;
 dlssConsts.sharpness = dlssSettings.sharpness; // optimal sharpness
 dlssConsts.colorBuffersHDR = sl::Boolean::eTrue; // assuming HDR pipeline
-if(!sl::setFeatureSettings(sl::eFeatureDLSS, &dlssConsts))
+if(!slSetFeatureSettings(sl::eFeatureDLSS, &dlssConsts))
 {
     // Handle error here, check the logs
 }
 ```
 
 > **NOTE:**
-> To disable DLSS set `sl::DLSSConstants.mode` to `sl::DLSSMode::eDLSSModeOff`or simply stop calling `sl::evaluateFeature`
+> To disable DLSS set `sl::DLSSConstants.mode` to `sl::DLSSMode::eDLSSModeOff`or simply stop calling `slEvaluateFeature`
 
 ### 6.0 PROVIDE COMMON CONSTANTS
 
-Various per frame camera related constants are required by all Streamline features and must be provided ***as early in the frame as possible***. Please keep in mind the following: 
+Various per frame camera related constants are required by all Streamline features and must be provided ***if any SL feature is active and as early in the frame as possible***. Please keep in mind the following: 
 
 * All SL matrices are row-major and should not contain any jitter offsets
 * If motion vector values in your buffer are in {-1,1} range then motion vector scale factor in common constants should be {1,1}
@@ -155,11 +159,11 @@ On your rendering thread, call `evaluateFeature` at the appropriate location whe
 
 ```cpp
 // Make sure DLSS is available and user selected this option in the UI
-bool useDLSS = sl::isFeatureSupported(sl::eFeatureDLSS) && userSelectedDLSSInUI;
+bool useDLSS = slIsFeatureSupported(sl::eFeatureDLSS) && userSelectedDLSSInUI;
 if(useDLSS) 
 {
     // Inform SL that DLSS should be injected at this point
-    if(!sl::evaluateFeature(myCmdList, sl::Feature::eFeatureDLSS, myFrameIndex)) 
+    if(!slEvaluateFeature(myCmdList, sl::Feature::eFeatureDLSS, myFrameIndex)) 
     {
         // Handle error
     }

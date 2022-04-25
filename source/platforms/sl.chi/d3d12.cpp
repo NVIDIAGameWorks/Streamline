@@ -29,6 +29,7 @@
 #include "source/core/sl.log/log.h"
 #include "source/platforms/sl.chi/d3d12.h"
 #include "shaders/copy_to_buffer_cs.h"
+#include "external/nvapi/nvapi.h"
 
 namespace sl
 {
@@ -343,7 +344,7 @@ struct CommandListContext : public ICommandListContext
                 return false;
             if (SUCCEEDED(fence[i]->SetEventOnCompletion(syncValue, fenceEvent)))
             {
-                WaitForSingleObject(fenceEvent, 500); // don't wait INFINITE
+                WaitForSingleObject(fenceEvent, INFINITE);
             }
             else
             {
@@ -395,16 +396,22 @@ struct CommandListContext : public ICommandListContext
     {
         // Flush command list, to avoid it still referencing resources that may be destroyed after this call
         if (cmdListIsRecording)
+        {
             executeCommandList();
+        }
         // Increment fence value to ensure it has not been signaled before
         const UINT64 syncValue = fenceValue[index] + 1;
         if (FAILED(cmdQueue->Signal(fence[index], syncValue)))
+        {
             return false; // Cannot wait on fence if signaling was not successful
+        }
         if (ft == eCurrent)
         {
             // Flushing so wait for current sync value
             if (SUCCEEDED(fence[index]->SetEventOnCompletion(syncValue, fenceEvent)))
-                WaitForSingleObject(fenceEvent, 500); // don't wait INFINITE
+            {
+                WaitForSingleObject(fenceEvent, INFINITE);
+            }
         }
         else if (ft == ePrevious && lastIndex != UINT_MAX)
         {
@@ -412,7 +419,9 @@ struct CommandListContext : public ICommandListContext
             if (fence[lastIndex]->GetCompletedValue() < fenceValue[lastIndex])
             {
                 if (SUCCEEDED(fence[lastIndex]->SetEventOnCompletion(fenceValue[lastIndex], fenceEvent)))
-                    WaitForSingleObject(fenceEvent, 500); // don't wait INFINITE
+                {
+                    WaitForSingleObject(fenceEvent, INFINITE);
+                }
             }
         }
         else
@@ -421,7 +430,7 @@ struct CommandListContext : public ICommandListContext
             if (fence[index]->GetCompletedValue() < fenceValue[index])
             {
                 if (SUCCEEDED(fence[index]->SetEventOnCompletion(fenceValue[index], fenceEvent)))
-                    WaitForSingleObject(fenceEvent, 500); // don't wait INFINITE
+                    WaitForSingleObject(fenceEvent, INFINITE);
             }
         }
         // Update CPU side fence value now that it is guaranteed to have come through
@@ -479,8 +488,6 @@ ComputeStatus D3D12::init(Device InDevice, param::IParameters* params)
         m_dbgSupportRs2RelaxedConversionRules = true;
     }
 
-    SL_LOG_INFO("GPU nodes %u - visible node mask %u", NodeCount, m_visibleNodeMask);
-
     m_heap = new HeapInfo;
 
     for(UINT Node = 0; Node < NodeCount; Node++)
@@ -511,26 +518,11 @@ ComputeStatus D3D12::init(Device InDevice, param::IParameters* params)
 
     CHI_CHECK(createKernel((void*)copy_to_buffer_cs, copy_to_buffer_cs_len, "copy_to_buffer.cs", "main", m_copyKernel));
 
-    m_workCompleteEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
-    if (!m_workCompleteEvent) 
-    { 
-        SL_LOG_ERROR("error: failed to create event"); 
-        return eComputeStatusError; 
-    }
-    hr = m_device->CreateFence(0ull, D3D12_FENCE_FLAG_NONE, __uuidof(ID3D12Fence), (void**)&m_fence);
-    if (FAILED(hr)) 
-    { 
-        SL_LOG_ERROR("error: failed to create fence, hr=%d", hr); 
-        return eComputeStatusError; 
-    }
-
     return eComputeStatusOk;
 }
 
 ComputeStatus D3D12::shutdown()
 {
-    SL_SAFE_RELEASE(m_fence);
-
     CHI_CHECK(destroyKernel(m_copyKernel));
     m_copyKernel = {};
 
@@ -593,12 +585,14 @@ ComputeStatus D3D12::getPlatformType(PlatformType &OutType)
     return eComputeStatusOk;
 }
 
-ComputeStatus D3D12::restorePipeline(CommandList pCmdList)
+ComputeStatus D3D12::restorePipeline(CommandList cmdBuffer)
 {
+    if (!cmdBuffer) return eComputeStatusOk;
+
     D3D12ThreadContext* thread = (D3D12ThreadContext*)m_getThreadContext();
-    auto cmdList = ((ID3D12GraphicsCommandList*)pCmdList);
+    auto cmdList = ((ID3D12GraphicsCommandList*)cmdBuffer);
     
-    assert(thread->cmdList->m_base == pCmdList);
+    assert(thread->cmdList->m_base == cmdBuffer);
 
     if (thread->cmdList->m_numHeaps > 0)
     {
@@ -720,9 +714,22 @@ ComputeStatus D3D12::getNativeResourceState(ResourceState states, uint32_t& reso
 
 ComputeStatus D3D12::createKernel(void *blobData, unsigned int blobSize, const char* fileName, const char *entryPoint, Kernel &kernel)
 {
-    if (!blobData) return eComputeStatusInvalidArgument;
+    if (!blobData || !fileName || !entryPoint)
+    {
+        return eComputeStatusInvalidArgument;
+    }
 
     size_t hash = 0;
+    const char* p = fileName;
+    while (*p)
+    {
+        hash_combine(hash, *p++);
+    }
+    p = entryPoint;
+    while (*p)
+    {
+        hash_combine(hash, *p++);
+    }
     auto i = blobSize;
     while (i--)
     {
@@ -804,13 +811,16 @@ ComputeStatus D3D12::createCommandListContext(CommandQueue queue, uint32_t count
 
 ComputeStatus D3D12::destroyCommandListContext(ICommandListContext* ctx)
 {
-    auto tmp = (CommandListContext*)ctx;
-    tmp->shutdown();
-    delete tmp;
+    if (ctx)
+    {
+        auto tmp = (CommandListContext*)ctx;
+        tmp->shutdown();
+        delete tmp;
+    }
     return eComputeStatusOk;
 }
 
-ComputeStatus D3D12::createCommandQueue(CommandQueueType type, CommandQueue& queue, const char friendlyName[])
+ComputeStatus D3D12::createCommandQueue(CommandQueueType type, CommandQueue& queue, const char friendlyName[], uint32_t index)
 {
     D3D12_COMMAND_QUEUE_DESC desc = {};
     desc.Type = type == CommandQueueType::eGraphics ? D3D12_COMMAND_LIST_TYPE_DIRECT : D3D12_COMMAND_LIST_TYPE_COMPUTE;
@@ -1388,45 +1398,44 @@ bool D3D12::isSupportedFormat(DXGI_FORMAT format, int flag1, int flag2)
     return false;
 }
 
-ComputeStatus D3D12::createTexture2DResourceSharedImpl(ResourceDescription &InOutResourceDesc, Resource &OutResource, bool UseNativeFormat, ResourceState InitialState)
+ComputeStatus D3D12::createTexture2DResourceSharedImpl(ResourceDescription &resourceDesc, Resource &outResource, bool useNativeFormat, ResourceState initialState)
 {
-    ID3D12Resource *Res = nullptr;
+    ID3D12Resource *res = nullptr;
     D3D12_HEAP_TYPE NativeHeapType;
-    D3D12_RESOURCE_STATES NativeInitialState = toD3D12States(InitialState);
     D3D12_RESOURCE_DESC texDesc = {};
     texDesc.Alignment = 65536;
-    texDesc.MipLevels = (UINT16)InOutResourceDesc.mips;
-    if (UseNativeFormat)
+    texDesc.MipLevels = (UINT16)resourceDesc.mips;
+    if (useNativeFormat)
     {
-        assert(InOutResourceDesc.nativeFormat != NativeFormatUnknown &&
-                 InOutResourceDesc.format == eFormatINVALID);
-        texDesc.Format = (DXGI_FORMAT)InOutResourceDesc.nativeFormat;
+        assert(resourceDesc.nativeFormat != NativeFormatUnknown);
+        texDesc.Format = (DXGI_FORMAT)resourceDesc.nativeFormat;
     }
     else
     {
-        assert(InOutResourceDesc.nativeFormat == NativeFormatUnknown && InOutResourceDesc.format != eFormatINVALID);
+        assert(resourceDesc.format != eFormatINVALID);
         NativeFormat native;
-        getNativeFormat(InOutResourceDesc.format, native);
+        getNativeFormat(resourceDesc.format, native);
+        resourceDesc.nativeFormat = native;
         texDesc.Format = (DXGI_FORMAT)native;
     }
-    texDesc.Width = InOutResourceDesc.width;
-    texDesc.Height = InOutResourceDesc.height;
-    switch(InOutResourceDesc.heapType)
+    texDesc.Width = resourceDesc.width;
+    texDesc.Height = resourceDesc.height;
+    switch(resourceDesc.heapType)
     {
-    case eHeapTypeReadback:
-        texDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
-        NativeHeapType = D3D12_HEAP_TYPE_READBACK;
-        break;
-    case eHeapTypeUpload:
-        texDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
-        NativeHeapType = D3D12_HEAP_TYPE_UPLOAD;
-        break;
-    default:
-        assert(0);// fall through
-    case eHeapTypeDefault:
-        texDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
-        NativeHeapType = D3D12_HEAP_TYPE_DEFAULT;
-        break;
+        case eHeapTypeReadback:
+            texDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+            NativeHeapType = D3D12_HEAP_TYPE_READBACK;
+            break;
+        case eHeapTypeUpload:
+            texDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+            NativeHeapType = D3D12_HEAP_TYPE_UPLOAD;
+            break;
+        default:
+            assert(0);// fall through
+        case eHeapTypeDefault:
+            texDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+            NativeHeapType = D3D12_HEAP_TYPE_DEFAULT;
+            break;
     }
     texDesc.DepthOrArraySize = 1;
     texDesc.SampleDesc.Count = 1;
@@ -1434,21 +1443,59 @@ ComputeStatus D3D12::createTexture2DResourceSharedImpl(ResourceDescription &InOu
     texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
     texDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
 
-    CD3DX12_HEAP_PROPERTIES heapProp(NativeHeapType, InOutResourceDesc.creationMask, InOutResourceDesc.visibilityMask ? InOutResourceDesc.visibilityMask : m_visibleNodeMask);
-
-    if (m_allocateCallback)
+    if (isSupportedFormat(texDesc.Format, 0, D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD | D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE))
     {
-        ResourceDesc desc = { ResourceType::eResourceTypeTex2d, &texDesc, (uint32_t)NativeInitialState, &heapProp, nullptr };
-        auto result = m_allocateCallback(&desc);
-        Res = (ID3D12Resource*)result.native;
+        texDesc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
     }
     else
     {
-        m_device->CreateCommittedResource(&heapProp, D3D12_HEAP_FLAG_NONE, &texDesc, NativeInitialState, nullptr, IID_PPV_ARGS(&Res));
+        initialState &= ~ResourceState::eStorageRW;
+    }
+    if (isSupportedFormat(texDesc.Format, D3D12_FORMAT_SUPPORT1_RENDER_TARGET, 0))
+    {
+        texDesc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+    }
+    else
+    {
+        initialState &= ~(ResourceState::eColorAttachmentRead | ResourceState::eColorAttachmentWrite);
+    }
+    if (isSupportedFormat(texDesc.Format, D3D12_FORMAT_SUPPORT1_DEPTH_STENCIL, 0))
+    {
+        texDesc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+    }
+    else
+    {
+        initialState &= ~(ResourceState::eDepthStencilAttachmentRead | ResourceState::eDepthStencilAttachmentWrite);
     }
 
-    OutResource = Res;
-    if (!OutResource)
+    D3D12_RESOURCE_STATES nativeInitialState = toD3D12States(initialState);
+
+    CD3DX12_HEAP_PROPERTIES heapProp(NativeHeapType, resourceDesc.creationMask, resourceDesc.visibilityMask ? resourceDesc.visibilityMask : m_visibleNodeMask);
+
+    if (m_allocateCallback)
+    {
+        ResourceDesc desc = { ResourceType::eResourceTypeTex2d, &texDesc, (uint32_t)nativeInitialState, &heapProp, nullptr };
+        auto result = m_allocateCallback(&desc, m_device);
+        res = (ID3D12Resource*)result.native;
+
+        // We provide native device so in this case we 
+        // need to call onHostResourceCreated manually
+        chi::ResourceInfo info = {};
+        info.desc.width = (uint32_t)texDesc.Width;
+        info.desc.height = (uint32_t)texDesc.Height;
+        info.desc.nativeFormat = (uint32_t)texDesc.Format;
+        info.desc.mips = (uint32_t)texDesc.MipLevels;
+        info.desc.flags = chi::ResourceFlags::eShaderResource;
+        info.desc.state = initialState;
+        onHostResourceCreated(res, info);
+    }
+    else
+    {
+        m_device->CreateCommittedResource(&heapProp, D3D12_HEAP_FLAG_NONE, &texDesc, nativeInitialState, nullptr, IID_PPV_ARGS(&res));
+    }
+
+    outResource = res;
+    if (!outResource)
     {
         SL_LOG_ERROR(" CreateCommittedResource failed");
         return eComputeStatusError;
@@ -1456,14 +1503,14 @@ ComputeStatus D3D12::createTexture2DResourceSharedImpl(ResourceDescription &InOu
     return eComputeStatusOk;
 }
 
-ComputeStatus D3D12::createBufferResourceImpl(ResourceDescription &InOutResourceDesc, Resource &OutResource, ResourceState InitialState)
+ComputeStatus D3D12::createBufferResourceImpl(ResourceDescription &resourceDesc, Resource &outResource, ResourceState initialState)
 {
-    ID3D12Resource *Res = nullptr;
+    ID3D12Resource *res = nullptr;
     D3D12_RESOURCE_DESC bufferDesc = {};
     bufferDesc.MipLevels = 1;
     bufferDesc.Format = DXGI_FORMAT_UNKNOWN;
-    bufferDesc.Width = InOutResourceDesc.width;
-    assert(InOutResourceDesc.height == 1);
+    bufferDesc.Width = resourceDesc.width;
+    assert(resourceDesc.height == 1);
     bufferDesc.Height = 1;
     bufferDesc.DepthOrArraySize = 1;
     bufferDesc.SampleDesc.Count = 1;
@@ -1471,38 +1518,50 @@ ComputeStatus D3D12::createBufferResourceImpl(ResourceDescription &InOutResource
     bufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
     bufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 
-    switch (InOutResourceDesc.heapType)
+    switch (resourceDesc.heapType)
     {
-    default: assert(0); // Fall through
-    case eHeapTypeDefault:
-        bufferDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
-        break;
-    case eHeapTypeUpload:
-        bufferDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
-        break;
-    case eHeapTypeReadback:
-        bufferDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
-        break;
+        default: assert(0); // Fall through
+        case eHeapTypeDefault:
+            bufferDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+            break;
+        case eHeapTypeUpload:
+            bufferDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+            break;
+        case eHeapTypeReadback:
+            bufferDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+            break;
     }
 
-    D3D12_HEAP_TYPE NativeHeapType = (D3D12_HEAP_TYPE) InOutResourceDesc.heapType; // TODO : proper conversion !
+    D3D12_HEAP_TYPE NativeHeapType = (D3D12_HEAP_TYPE) resourceDesc.heapType; // TODO : proper conversion !
 
-    D3D12_RESOURCE_STATES NativeInitialState = toD3D12States(InitialState);
+    D3D12_RESOURCE_STATES NativeInitialState = toD3D12States(initialState);
 
-    CD3DX12_HEAP_PROPERTIES heapProp(NativeHeapType, InOutResourceDesc.creationMask, InOutResourceDesc.visibilityMask ? InOutResourceDesc.visibilityMask : m_visibleNodeMask);
+    CD3DX12_HEAP_PROPERTIES heapProp(NativeHeapType, resourceDesc.creationMask, resourceDesc.visibilityMask ? resourceDesc.visibilityMask : m_visibleNodeMask);
 
     if (m_allocateCallback)
     {
         ResourceDesc desc = { ResourceType::eResourceTypeBuffer, &bufferDesc, (uint32_t)NativeInitialState, &heapProp };
-        auto result = m_allocateCallback(&desc);
-        Res = (ID3D12Resource*)result.native;
+        auto result = m_allocateCallback(&desc, m_device);
+        res = (ID3D12Resource*)result.native;
+
+        // We provide native device so in this case we 
+        // need to call onHostResourceCreated manually
+        chi::ResourceInfo info = {};
+        info.desc.width = (uint32_t)bufferDesc.Width;
+        info.desc.height = (uint32_t)bufferDesc.Height;
+        info.desc.nativeFormat = (uint32_t)bufferDesc.Format;
+        info.desc.mips = (uint32_t)bufferDesc.MipLevels;
+        info.desc.flags = chi::ResourceFlags::eRawOrStructuredBuffer;
+        info.desc.state = initialState;
+        onHostResourceCreated(res, info);
     }
     else
     {
-        m_device->CreateCommittedResource(&heapProp, D3D12_HEAP_FLAG_NONE, &bufferDesc, NativeInitialState, nullptr, IID_PPV_ARGS(&Res));
+        m_device->CreateCommittedResource(&heapProp, D3D12_HEAP_FLAG_NONE, &bufferDesc, NativeInitialState, nullptr, IID_PPV_ARGS(&res));
     }
-    OutResource = Res;
-    if (!OutResource)
+
+    outResource = res;
+    if (!outResource)
     {
         SL_LOG_ERROR(" CreateCommittedResource failed");
         return eComputeStatusError;
@@ -1517,7 +1576,7 @@ ComputeStatus D3D12::setDebugName(Resource res, const char name[])
     return eComputeStatusOk;
 }
 
-ComputeStatus D3D12::copyHostToDeviceBufferImpl(CommandList InCmdList, uint64_t InSize, const void *InData, Resource InUploadResource, Resource InTargetResource, unsigned long long InUploadOffset, unsigned long long InDstOffset)
+ComputeStatus D3D12::copyHostToDeviceBuffer(CommandList InCmdList, uint64_t InSize, const void *InData, Resource InUploadResource, Resource InTargetResource, unsigned long long InUploadOffset, unsigned long long InDstOffset)
 {
     UINT8 *StagingPtr = nullptr;
 
@@ -1542,7 +1601,7 @@ ComputeStatus D3D12::copyHostToDeviceBufferImpl(CommandList InCmdList, uint64_t 
     return eComputeStatusOk;
 }
 
-ComputeStatus D3D12::writeTextureImpl(CommandList InCmdList, uint64_t InSize, uint64_t RowPitch, const void* InData, Resource InTargetResource, Resource& InUploadResource)
+ComputeStatus D3D12::copyHostToDeviceTexture(CommandList InCmdList, uint64_t InSize, uint64_t RowPitch, const void* InData, Resource InTargetResource, Resource& InUploadResource)
 {
     uint64_t depthPitch = 1;
     uint64_t mipLevel = 0;
@@ -1560,24 +1619,10 @@ ComputeStatus D3D12::writeTextureImpl(CommandList InCmdList, uint64_t InSize, ui
     m_device->GetCopyableFootprints(&resourceDesc, subresource, 1, 0, &footprint, &numRows, &rowSizeInBytes, &totalBytes);
     assert(numRows <= footprint.Footprint.Height);
 
-    ResourceDescription bufferDesc((uint32_t)totalBytes, 1, chi::eFormatINVALID, HeapType::eHeapTypeUpload, ResourceState::eUnknown);
-    CHI_CHECK(createBuffer(bufferDesc, InUploadResource, "writeUploadBuffer"));
-    if (!InUploadResource) {
-        return eComputeStatusError;
-    }
-
-    void* cpuVA = nullptr;
     ID3D12Resource* uploadBuffer = (ID3D12Resource*)InUploadResource;
-    uploadBuffer->Map(0, nullptr, &cpuVA);    
-    for (uint32_t depthSlice = 0; depthSlice < footprint.Footprint.Depth; depthSlice++)
-    {
-        for (uint32_t row = 0; row < numRows; row++)
-        {
-            void* destAddress = (char*)cpuVA + footprint.Footprint.RowPitch * (row + depthSlice * numRows);
-            void* srcAddress = (char*)InData + RowPitch * row + depthPitch * depthSlice;
-            memcpy(destAddress, srcAddress, std::min(RowPitch, rowSizeInBytes));
-        }
-    }
+    void* cpuVA = nullptr;
+    uploadBuffer->Map(0, nullptr, &cpuVA);
+    memcpy(cpuVA, InData, InSize);
     uploadBuffer->Unmap(0, nullptr);
 
     D3D12_TEXTURE_COPY_LOCATION destCopyLocation = {};
@@ -1713,9 +1758,19 @@ ComputeStatus D3D12::cloneResource(Resource resource, Resource &clone, const cha
     if (m_allocateCallback)
     {
         ResourceDesc desc = { desc1.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER ? ResourceType::eResourceTypeBuffer : ResourceType::eResourceTypeTex2d, &desc1, (uint32_t)initialState, &heapProp, nullptr };
-        auto result = m_allocateCallback(&desc);
+        auto result = m_allocateCallback(&desc, m_device);
         res = (ID3D12Resource*)result.native;
-        // This will trigger onHostResourceCreated which will set state correctly
+        
+        // We provide native device so in this case we 
+        // need to call onHostResourceCreated manually
+        chi::ResourceInfo info = {};
+        info.desc.width = (uint32_t)desc1.Width;
+        info.desc.height = (uint32_t)desc1.Height;
+        info.desc.nativeFormat = (uint32_t)desc1.Format;
+        info.desc.mips = (uint32_t)desc1.MipLevels;
+        info.desc.flags = desc.type == ResourceType::eResourceTypeBuffer ? chi::ResourceFlags::eShaderResource : chi::ResourceFlags::eRawOrStructuredBuffer;
+        info.desc.state = initialState;
+        onHostResourceCreated(res, info);
     }
     else
     {        

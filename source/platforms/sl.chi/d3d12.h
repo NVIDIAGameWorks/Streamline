@@ -251,10 +251,6 @@ class D3D12 : public Generic
     std::map<Resource, ResourceReadbackQueue> m_readbackMap;
     std::vector<std::future<bool>> m_readbackThreads;
 
-    HANDLE m_workCompleteEvent = {};
-    int m_fenceValue = 0;
-    ID3D12Fence *m_fence = {};
-
     Kernel m_copyKernel = {};
 
     bool m_dbgSupportRs2RelaxedConversionRules = false;
@@ -273,8 +269,6 @@ class D3D12 : public Generic
 
     size_t hashRootSignature(const CD3DX12_ROOT_SIGNATURE_DESC& desc);
 
-    virtual ComputeStatus copyHostToDeviceBufferImpl(CommandList cmdList, uint64_t InSize, const void *InData, Resource InUploadResource, Resource InTargetResource, unsigned long long InUploadOffset, unsigned long long InDstOffset) override final;
-    virtual ComputeStatus writeTextureImpl(CommandList cmdList, uint64_t InSize, uint64_t RowPitch, const void* InData, Resource InTargetResource, Resource& InUploadResource) override final;
     virtual std::wstring getDebugName(Resource res) override final;
     virtual void destroyResourceDeferredImpl(const Resource InResource) override final;
 
@@ -314,7 +308,7 @@ public:
     virtual ComputeStatus createCommandListContext(CommandQueue queue, uint32_t count, ICommandListContext*& ctx, const char friendlyName[]) override final;
     virtual ComputeStatus destroyCommandListContext(ICommandListContext* ctx) override final;
 
-    virtual ComputeStatus createCommandQueue(CommandQueueType type, CommandQueue& queue, const char friendlyName[]) override final;
+    virtual ComputeStatus createCommandQueue(CommandQueueType type, CommandQueue& queue, const char friendlyName[], uint32_t index) override final;
     virtual ComputeStatus destroyCommandQueue(CommandQueue& queue) override final;
 
     virtual ComputeStatus setFullscreenState(SwapChain chain, bool fullscreen, Output out) override final;
@@ -340,6 +334,9 @@ public:
     virtual ComputeStatus cloneResource(Resource InResource, Resource &OutResource, const char friendlyName[], ResourceState InitialState, unsigned int InCreationMask, unsigned int InVisibilityMask) override final;
     virtual ComputeStatus copyBufferToReadbackBuffer(CommandList cmdList, Resource InResource, Resource OutResource, unsigned int InBytesToCopy) override final;
     virtual ComputeStatus getResourceDescription(Resource InResource, ResourceDescription &OutDesc) override final;
+
+    virtual ComputeStatus copyHostToDeviceBuffer(CommandList InCmdList, uint64_t InSize, const void* InData, Resource InUploadResource, Resource InTargetResource, unsigned long long InUploadOffset, unsigned long long InDstOffset) override final;
+    virtual ComputeStatus copyHostToDeviceTexture(CommandList InCmdList, uint64_t InSize, uint64_t RowPitch, const void* InData, Resource InTargetResource, Resource& InUploadResource) override final;
 
     ComputeStatus setResourceState(Resource resource, ResourceState state, uint32_t subresource = kAllSubResources)  override final;
     ComputeStatus getResourceState(Resource resource, ResourceState& state) override final;

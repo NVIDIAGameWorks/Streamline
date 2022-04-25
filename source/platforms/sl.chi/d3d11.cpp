@@ -22,6 +22,7 @@
 
 #include "source/core/sl.log/log.h"
 #include "source/platforms/sl.chi/d3d11.h"
+#include "external/nvapi/nvapi.h"
 
 namespace sl
 {
@@ -251,9 +252,22 @@ ComputeStatus D3D11::getPlatformType(PlatformType &OutType)
 
 ComputeStatus D3D11::createKernel(void *blobData, unsigned int blobSize, const char* fileName, const char *entryPoint, Kernel &kernel)
 {
-    if (!blobData) return eComputeStatusInvalidArgument;
+    if (!blobData || !fileName || !entryPoint)
+    {
+        return eComputeStatusInvalidArgument;
+    }
 
     size_t hash = 0;
+    const char* p = fileName;
+    while (*p)
+    {
+        hash_combine(hash, *p++);
+    }
+    p = entryPoint;
+    while (*p)
+    {
+        hash_combine(hash, *p++);
+    }
     auto i = blobSize;
     while (i--)
     {
@@ -332,6 +346,8 @@ ComputeStatus D3D11::destroyKernel(Kernel& InKernel)
 
 ComputeStatus D3D11::pushState(CommandList cmdList)
 {
+    if (!cmdList) return eComputeStatusOk;
+
     auto& threadD3D11 = *(chi::D3D11ThreadContext*)m_getThreadContext();
     auto context = (ID3D11DeviceContext*)cmdList;
 
@@ -356,6 +372,8 @@ ComputeStatus D3D11::pushState(CommandList cmdList)
 
 ComputeStatus D3D11::popState(CommandList cmdList)
 {
+    if (!cmdList) return eComputeStatusOk;
+
     auto& threadD3D11 = *(chi::D3D11ThreadContext*)m_getThreadContext();
     auto context = (ID3D11DeviceContext*)cmdList;
 
@@ -392,7 +410,7 @@ ComputeStatus D3D11::destroyCommandListContext(ICommandListContext* ctx)
     return eComputeStatusNoImplementation;
 }
 
-ComputeStatus D3D11::createCommandQueue(CommandQueueType type, CommandQueue& queue, const char friendlyName[])
+ComputeStatus D3D11::createCommandQueue(CommandQueueType type, CommandQueue& queue, const char friendlyName[], uint32_t index)
 {    
     return eComputeStatusNoImplementation;
 }
@@ -782,7 +800,7 @@ ComputeStatus D3D11::createTexture2DResourceSharedImpl(ResourceDescription &InOu
     if (m_allocateCallback)
     {
         ResourceDesc desc = { ResourceType::eResourceTypeTex2d, &desc, 0, nullptr, nullptr };
-        auto result = m_allocateCallback(&desc);
+        auto result = m_allocateCallback(&desc, m_device);
         pResource = (ID3D11Texture2D*)result.native;
     }
     else
@@ -843,7 +861,7 @@ ComputeStatus D3D11::createBufferResourceImpl(ResourceDescription &InOutResource
     if (m_allocateCallback)
     {
         ResourceDesc desc = { ResourceType::eResourceTypeBuffer, &bufdesc, 0, nullptr };
-        auto result = m_allocateCallback(&desc);
+        auto result = m_allocateCallback(&desc, m_device);
         pResource = (ID3D11Buffer*)result.native;
     }
     else
@@ -867,7 +885,7 @@ ComputeStatus D3D11::setDebugName(Resource res, const char name[])
     return eComputeStatusOk;
 }
 
-ComputeStatus D3D11::copyHostToDeviceBufferImpl(CommandList InCmdList, uint64_t InSize, const void *InData, Resource InUploadResource, Resource InTargetResource, unsigned long long InUploadOffset, unsigned long long InDstOffset)
+ComputeStatus D3D11::copyHostToDeviceBuffer(CommandList InCmdList, uint64_t InSize, const void *InData, Resource InUploadResource, Resource InTargetResource, unsigned long long InUploadOffset, unsigned long long InDstOffset)
 {
     UINT8* StagingPtr = nullptr;
 
@@ -891,7 +909,7 @@ ComputeStatus D3D11::copyHostToDeviceBufferImpl(CommandList InCmdList, uint64_t 
     return eComputeStatusOk;
 }
 
-ComputeStatus D3D11::writeTextureImpl(CommandList InCmdList, uint64_t InSize, uint64_t RowPitch, const void* InData, Resource InTargetResource, Resource& InUploadResource)
+ComputeStatus D3D11::copyHostToDeviceTexture(CommandList InCmdList, uint64_t InSize, uint64_t RowPitch, const void* InData, Resource InTargetResource, Resource& InUploadResource)
 {
     ((ID3D11DeviceContext*)InCmdList)->UpdateSubresource((ID3D11Resource*)InTargetResource, 0, nullptr, InData, UINT(RowPitch), UINT(InSize));
     return eComputeStatusOk;
@@ -972,7 +990,7 @@ ComputeStatus D3D11::cloneResource(Resource resource, Resource &clone, const cha
         if (m_allocateCallback)
         {
             ResourceDesc desc = { ResourceType::eResourceTypeBuffer, &desc1, (uint32_t)initialState, nullptr };
-            auto result = m_allocateCallback(&desc);
+            auto result = m_allocateCallback(&desc, m_device);
             res = (ID3D11Resource*)result.native;
         }
         else
@@ -989,7 +1007,7 @@ ComputeStatus D3D11::cloneResource(Resource resource, Resource &clone, const cha
         if (m_allocateCallback)
         {
             ResourceDesc desc = { ResourceType::eResourceTypeTex2d, &desc1, (uint32_t)initialState, nullptr };
-            auto result = m_allocateCallback(&desc);
+            auto result = m_allocateCallback(&desc, m_device);
             res = (ID3D11Resource*)result.native;
         }
         else
@@ -1276,7 +1294,6 @@ DXGI_FORMAT D3D11::getCorrectFormat(DXGI_FORMAT Format)
         return Format;
     };
 }
-
 
 }
 }

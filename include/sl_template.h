@@ -18,8 +18,54 @@
 * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 * SOFTWARE.
-*/
+*/ 
 
-#define VERSION_MAJOR 1
-#define VERSION_MINOR 0
-#define VERSION_PATCH 2
+#pragma once
+
+namespace sl
+{
+
+//! Each feature must have a unique id, please see sl.h enum Feature
+//! 
+constexpr uint32_t eFeatureTemplate = 0xffff;
+
+//! If your plugin does not have any constants then the code below can be removed
+//! 
+enum TemplateMode
+{
+    eOff,
+    eOn
+};
+
+struct TemplateConstants
+{
+    TemplateMode mode = eOff;
+    // Points to TemplateConstants1 or nullptr
+    void* ext = {};
+};
+
+struct TemplateConstants1
+{
+    // New parameters included in new version of your plugin go here
+    // 
+    // Points to TemplateConstants2 or nullptr
+    void* ext = {};
+};
+
+struct TemplateConstants2
+{
+    // New parameters included in new version of your plugin go here
+    //     
+    // Always allow for the option to extend this in the future
+    void* ext{};
+};
+
+//! IMPORTANT: If your plugin does not have any settings then the code below can be removed
+//! 
+struct TemplateSettings
+{
+    // Always allow for the option to extend this in the future
+    void* ext = {};
+};
+
+}

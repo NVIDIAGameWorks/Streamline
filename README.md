@@ -1,4 +1,4 @@
-# Streamline (SL) - Version 1.0.1
+# Streamline (SL) - Version 1.0.2
 This is where all the components of SL are being developed.
 
 ## Prerequisites

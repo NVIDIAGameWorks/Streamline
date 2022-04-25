@@ -20,6 +20,16 @@ EXPORTS
 	CreateDXGIFactory2
 	DXGIGetDebugInterface1
 
-	; vk
-	vkGetInstanceProcAddr
-	vkGetDeviceProcAddr	
+	; vk layer
+	slLayerGetInstanceProcAddr
+	slLayerGetDeviceProcAddr
+	; SL
+	slInit
+    slShutdown
+    slIsFeatureSupported
+	slSetFeatureEnabled
+	slSetTag
+	slSetConstants
+	slSetFeatureConstants
+	slGetFeatureSettings
+	slEvaluateFeature

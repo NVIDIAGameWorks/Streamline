@@ -3,13 +3,17 @@
 Streamline - NRD
 =======================
 
-Version 1.0.1
+Version 1.0.2
 ------
 ### 1.0 INITIALIZE AND SHUTDOWN
 
-Call `sl::init` as early as possible (before any d3d11/d3d12/vk APIs are invoked)
+Call `slInit` as early as possible (before any d3d11/d3d12/vk APIs are invoked)
 
 ```cpp
+#include <sl.h>
+#include <sl_consts.h>
+#include <sl_nrd.h>
+
 sl::Preferences pref;
 pref.showConsole = true;                        // for debugging, set to false in production
 pref.logLevel = sl::eLogLevelDefault;
@@ -17,7 +21,7 @@ pref.pathsToPlugins = {}; // change this if Streamline plugins are not located n
 pref.numPathsToPlugins = 0; // change this if Streamline plugins are not located next to the executable
 pref.pathToLogsAndData = {};                    // change this to enable logging to a file
 pref.logMessageCallback = myLogMessageCallback; // highly recommended to track warning/error messages in your callback
-if(!sl::init(pred, myApplicationId))           // !!! Make sure to obtain your app Id from NVIDIA !!!
+if(!slInit(pref, myApplicationId))
 {
     // Handle error, check the logs
 }
@@ -25,10 +29,10 @@ if(!sl::init(pred, myApplicationId))           // !!! Make sure to obtain your a
 
 For more details please see [preferences](ProgrammingGuide.md#221-preferences)
 
-Call `sl::shutdown()` before destroying dxgi/d3d11/d3d12/vk instances, devices and other components in your engine.
+Call `slShutdown()` before destroying dxgi/d3d11/d3d12/vk instances, devices and other components in your engine.
 
 ```cpp
-if(!sl::shutdown())
+if(!slShutdown())
 {
     // Handle error, check the logs
 }
@@ -40,7 +44,7 @@ As soon as SL is initialized, you can check if NRD is available for the specific
 
 ```cpp
 uint32_t adapterBitMask = 0;
-if(!isFeatureSupported(sl::Feature::eFeatureNRD, &adapterBitMask))
+if(!slIsFeatureSupported(sl::Feature::eFeatureNRD, &adapterBitMask))
 {
     // NRD is not supported on the system, fallback to the default upscaling method
 }
@@ -49,7 +53,6 @@ if((adapterBitMask & (1 << myAdapterIndex)) != 0)
 {
     // It is ok to create a device on this adapter since feature we need is supported
 }
-```
 ```
 
 ### 3.0 PREPARE RESOURCES FOR DENOISING
@@ -112,14 +115,14 @@ diffuseSettings = {};
 
 // Note that we use method mask as a unique id
 // This allows us to evaluate different NRD denoisers in the same or different viewports but at the different stages with the same frame
-if(!sl::setFeatureConstants(sl::eFeatureNRD, &nrdConsts, myFrameIndex, nrdConsts.methodMask))
+if(!slSetFeatureConstants(sl::eFeatureNRD, &nrdConsts, myFrameIndex, nrdConsts.methodMask))
 {
     // Handle error here, check the logs
 }
 ```
 
 > **NOTE:**
-> To disable NRD, set `sl::NRDConstants.methodMask` to `sl::NRDMode::eNRDMethodOff` or simply stop calling `sl::evaluateFeature`
+> To disable NRD, set `sl::NRDConstants.methodMask` to `sl::NRDMode::eNRDMethodOff` or simply stop calling `slEvaluateFeature`
 
 ### 5.0 TAG ALL REQUIRED RESOURCES
 
@@ -150,7 +153,7 @@ setTag(&specularOut, sl::BufferType::eBufferTypeSpecularHitDenoised, nrdConsts.m
 
 ### 6.0 PROVIDE COMMON CONSTANTS
 
-Various per frame camera related constants are required by all Streamline features and must be provided ***as early in the frame as possible***. Please keep in mind the following: 
+Various per frame camera related constants are required by all Streamline features and must be provided ***if any SL feature is active as early in the frame as possible***. Please keep in mind the following: 
 
 * All SL matrices are row-major and should not contain any jitter offsets
 * If motion vector values in your buffer are in {-1,1} range then motion vector scale factor in common constants should be {1,1}
@@ -177,14 +180,14 @@ On your rendering thread, call `evaluateFeature` at the appropriate location whe
 
 ```cpp
 // Make sure NRD is available and user selected this option in the UI
-bool useNRD = sl::isFeatureSupported(sl::eFeatureNRD) && userSelectedNRDInUI;
+bool useNRD = slIsFeatureSupported(sl::eFeatureNRD) && userSelectedNRDInUI;
 if(useNRD) 
 {
     // Inform SL that NRD should be injected at this point.
     // Note that we are passing the specific id which needs to match the id used when setting constants.
     // This can be method mask or something different (like for example viewport id | method mask etc.)
     auto myId = nrdConsts.methodMask;
-    if(!sl::evaluateFeature(myCmdList, sl::Feature::eFeatureNRD, myFrameIndex, myId)) 
+    if(!slEvaluateFeature(myCmdList, sl::Feature::eFeatureNRD, myFrameIndex, myId)) 
     {
         // Handle error
     }

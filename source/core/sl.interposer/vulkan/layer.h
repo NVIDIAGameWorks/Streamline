@@ -22,11 +22,11 @@
 
 #include <mutex>
 
-#include "external/vulkan/1.2.141.0/include/vulkan/vulkan.h"
-#include "external/vulkan/1.2.141.0/include/vulkan/vk_layer.h"
-#include "external/vulkan/1.2.141.0/include/vulkan/vk_layer_dispatch_table.h"
+#include "external/vulkan/1.3.204.1/include/vulkan/vulkan.h"
+#include "external/vulkan/1.3.204.1/include/vulkan/vk_layer.h"
+#include "external/vulkan/1.3.204.1/include/vulkan/vk_layer_dispatch_table.h"
 
-#include "vulkannv.h"
+//#include "vulkannv.h"
 
 namespace sl
 {
@@ -62,6 +62,9 @@ struct VkTable
     PFN_vkGetImageViewAddressNVX vkGetImageViewAddressNVX;
     PFN_vkGetImageViewHandleNVX vkGetImageViewHandleNVX;
 };
+
+#define SL_GIPR(F) dt.##F = (PFN_vk##F)getInstanceProcAddr(instance, "vk" #F)
+#define SL_GDPR(F) dt.##F = (PFN_vk##F)getDeviceProcAddr(device, "vk" #F)
 
 inline void VkTable::mapVulkanInstanceAPI(VkInstance instance)
 {
@@ -331,6 +334,56 @@ inline void VkTable::mapVulkanDeviceAPI(VkDevice device)
 #if defined(VK_KHR_push_descriptor)
     dt.CmdPushDescriptorSetKHR = (PFN_vkCmdPushDescriptorSetKHR)getDeviceProcAddr(device, "vkCmdPushDescriptorSetKHR");
 #endif /* defined(VK_KHR_push_descriptor) */
+
+#if defined(VK_EXT_debug_utils)
+    SL_GDPR(SetDebugUtilsObjectNameEXT);
+    SL_GDPR(SetDebugUtilsObjectTagEXT);
+    SL_GDPR(QueueBeginDebugUtilsLabelEXT);
+    SL_GDPR(QueueEndDebugUtilsLabelEXT);
+    SL_GDPR(QueueInsertDebugUtilsLabelEXT);
+    SL_GDPR(CmdBeginDebugUtilsLabelEXT);
+    SL_GDPR(CmdEndDebugUtilsLabelEXT);
+    SL_GDPR(CmdInsertDebugUtilsLabelEXT);
+#endif /* defined(VK_EXT_debug_utils) */
+
+#if defined(VK_VERSION_1_3)
+    SL_GDPR(CreatePrivateDataSlot);
+    SL_GDPR(DestroyPrivateDataSlot);
+    SL_GDPR(SetPrivateData);
+    SL_GDPR(GetPrivateData);
+    SL_GDPR(CmdSetEvent2);
+    SL_GDPR(CmdResetEvent2);
+    SL_GDPR(CmdWaitEvents2);
+    SL_GDPR(CmdPipelineBarrier2);
+    SL_GDPR(CmdWriteTimestamp2);
+    SL_GDPR(QueueSubmit2);
+    SL_GDPR(CmdCopyBuffer2);
+    SL_GDPR(CmdCopyImage2);
+    SL_GDPR(CmdCopyBufferToImage2);
+    SL_GDPR(CmdCopyImageToBuffer2);
+    SL_GDPR(CmdBlitImage2);
+    SL_GDPR(CmdResolveImage2);
+    SL_GDPR(CmdBeginRendering);
+    SL_GDPR(CmdEndRendering);
+    SL_GDPR(CmdSetCullMode);
+    SL_GDPR(CmdSetFrontFace);
+    SL_GDPR(CmdSetPrimitiveTopology);
+    SL_GDPR(CmdSetViewportWithCount);
+    SL_GDPR(CmdSetScissorWithCount);
+    SL_GDPR(CmdBindVertexBuffers2);
+    SL_GDPR(CmdSetDepthTestEnable);
+    SL_GDPR(CmdSetDepthWriteEnable);
+    SL_GDPR(CmdSetDepthCompareOp);
+    SL_GDPR(CmdSetDepthBoundsTestEnable);
+    SL_GDPR(CmdSetStencilTestEnable);
+    SL_GDPR(CmdSetStencilOp);
+    SL_GDPR(CmdSetRasterizerDiscardEnable);
+    SL_GDPR(CmdSetDepthBiasEnable);
+    SL_GDPR(CmdSetPrimitiveRestartEnable);
+    SL_GDPR(GetDeviceBufferMemoryRequirements);
+    SL_GDPR(GetDeviceImageMemoryRequirements);
+    SL_GDPR(GetDeviceImageSparseMemoryRequirements);
+#endif
 
     std::lock_guard<std::mutex> lock(mutex);
     dispatchDeviceMap[device] = dt;

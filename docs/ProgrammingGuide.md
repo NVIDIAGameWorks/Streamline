@@ -3,7 +3,7 @@
 Streamline - SL
 =======================
 
-Version 1.0.1
+Version 1.0.2
 ------
 
 1 SETTING UP
@@ -23,11 +23,13 @@ The following is needed to use SL features:
 
 ### 2.1 ADDING SL TO YOUR APPLICATION
 
-The SL SDK comes with two header files, `sl.h` and `sl_consts.h`, which are located in the ./include folder. In addition to including SL header files, your project should link against the export library `sl.interposer.lib` (which is provided in the ./lib/x64 folder) and if using Vulkan distribute the included `VkLayer_streamline.json` with your application. Since SL is an interposer, there are several ways it can be integrated into your application:
+The SL SDK comes with several header files, `sl.h` and `sl_*.h`, which are located in the `./include` folder. Two main header files are `sl.h`and `sl_consts.h` and they should be included always. Depending on which SL feature is used by your application the additional header(s) should be included (see bellow for more details). Your project should link against the export library `sl.interposer.lib` (which is provided in the ./lib/x64 folder) and if using Vulkan distribute the included `VkLayer_streamline.json` with your application. Since SL is an interposer, there are several ways it can be integrated into your application:
 
-* If you are statically linking `d3d11.lib`, `d3d12.lib` and `dxgi.lib` **make sure to remove them** and link `sl.interposer.lib` instead
+* If you are statically linking `d3d11.lib`, `d3d12.lib` and `dxgi.lib` there are two options:
+    * remove standard libraries from the linking stage and and link `sl.interposer.lib` instead, SL will automatically intercept API it requires to function correctly
+    * keep linking the standard libraries, load `sl.interposer.dll` dynamically and redirect DXGI/D3D API calls as required (code sample can be found below)
 * If you are dynamically loading `d3d11.dll`, `d3d12.dll` and `dxgi.dll` dynamically load `sl.interposer.dll` instead 
-* If you are using Vulkan simply enable `VK_LAYER_Streamline` and include `VkLayer_streamline.json` with your distribution
+* If you are using Vulkan enable `VK_LAYER_Streamline` and include `VkLayer_streamline.json` with your distribution
 
 > **IMPORTANT:**
 > Vulkan support is under development and does not function correctly in the current release.
@@ -37,6 +39,60 @@ If you want full control, simply incorporate SL source code into your engine and
 > **IMPORTANT:**
 > When running on hardware which does not support SL, `sl.interposer.dll` serves as a simple pass-through layer with negligible impact on performance. 
 
+Here is how SL library can be loaded dynamically and used instead of standard DXGI/D3D API while continuing to link standard `d3d11.lib`, `d3d12.lib` and `dxgi.lib` libraries (if needed or desired to simplify build process):
+
+```cpp
+
+// IMPORTANT: Always securely load SL library, see source/core/sl.security/secureLoadLibrary for more details
+auto mod = sl::security::loadLibrary(PATH_TO_SL_IN_YOUR_BUILD + "/sl.interposer.dll");
+if(!mod)
+{
+    // Disable SL, handle error
+}
+
+// These are the exports from SL library
+typedef HRESULT(WINAPI* PFunCreateDXGIFactory)(REFIID, void**);
+typedef HRESULT(WINAPI* PFunCreateDXGIFactory1)(REFIID, void**);
+typedef HRESULT(WINAPI* PFunCreateDXGIFactory2)(UINT, REFIID, void**);
+typedef HRESULT(WINAPI* PFunDXGIGetDebugInterface1)(UINT, REFIID, void**);
+typedef HRESULT(WINAPI* PFunD3D12CreateDevice)(IUnknown* , D3D_FEATURE_LEVEL, REFIID , void**);
+
+// Map functions from SL and use them instead of standard DXGI/D3D12 API
+auto slCreateDXGIFactory = reinterpret_cast<PFunCreateDXGIFactory>(GetProcAddress(mod, "CreateDXGIFactory"));
+auto slCreateDXGIFactory1 = reinterpret_cast<PFunCreateDXGIFactory1>(GetProcAddress(mod, "CreateDXGIFactory1"));
+auto slCreateDXGIFactory2 = reinterpret_cast<PFunCreateDXGIFactory2>(GetProcAddress(mod, "CreateDXGIFactory2"));
+auto slDXGIGetDebugInterface1 = reinterpret_cast<PFunDXGIGetDebugInterface1>(GetProcAddress(mod, "DXGIGetDebugInterface1"));
+auto slD3D12CreateDevice = reinterpret_cast<PFunD3D12CreateDevice>(GetProcAddress(mod, "D3D12CreateDevice"));
+
+// For example to create DXGI factory and D3D12 device we could do something like this:
+
+IDXGIFactory1* DXGIFactory{};
+if(s_useStreamline)
+{
+    // Interposed factory
+    slCreateDXGIFactory1(IID_PPV_ARGS(&DXGIFactory));
+}    
+else    
+{
+    // Regular factory
+    CreateDXGIFactory1(IID_PPV_ARGS(&DXGIFactory));
+}
+
+ID3D12Device* device{};
+if(s_useStreamline)
+{
+    // Interposed device
+    slD3D12CreateDevice(targetAdapter, deviceParams.featureLevel,IID_PPV_ARGS(&device));
+}
+else 
+{
+    // Regular device
+    D3D12CreateDevice(targetAdapter, deviceParams.featureLevel,IID_PPV_ARGS(&device));
+}
+
+// IMPORTANT: When SL is enabled from this point onwards any new swap-chains or command lists will be managed by SL automatically
+
+```
 #### 2.1.1 SECURITY
 
 All modules provided in the `./bin/x64` SDK folder are digitally signed by NVIDIA. There are two digital signatures on each SL module, one is standard Windows store certificate and can be validated using `WinVerifyTrust` while the other is custom NVIDIA certificate used to handle scenarios where OS is compromised and Windows store certificate cannot be trusted. To secure your application from potentially malicious replacement modules please do the following:
@@ -73,15 +129,41 @@ struct Preferences
     pfunResourceReleaseCallback* releaseCallback = {};
     //! Optional - Allows log message tracking including critical errors if they occur
     pfunLogMessageCallback* logMessageCallback = {};
+    //! Pointer to Preferences1 or null if not needed
+    void* ext = {};
+};
+
+struct Preferences1
+{
+    //! Optional - Features to enable, if not specified all features are enabled by default (assuming appropriate plugins are found)
+    const Feature* featuresToEnable = {};
+    //! Optional - Number of features to enable
+    unsigned int numFeaturesToEnable = Feature::eFeatureCount;
     //! Reserved for future expansion, must be set to null
     void* ext = {};
 };
+
+```
+
+##### 2.2.1.1 MANAGING FEATURES
+
+By default, SL will try to enable all features which are supported on the user's system. If your application is using a smaller subset of features, you can
+instruct SL to only enable features specified with the `Preferences::featuresToEnable` field. For example, to enable only DLSS one can do the following:
+
+```cpp
+Preferences1 pref1;
+Feature myFeatures[] = { eFeatureDLSS };
+pref1.featuresToEnable = myFeatures;
+pref1.numFeaturesToEnable = _countof(myFeatures);
+Preferences pref;
+// Set preferences here ...
+pref.ext = &pref1; // Provide link to Preferences1
 ```
 
 > **IMPORTANT:**
 > If SL plugins are not located next to the host executable then the absolute paths to locations where to look for them must be specified by setting the `pathsToPlugins` field in the `Preferences` structure. Plugins will be loaded from the first path where they can be found.
 
-##### 2.2.1.1 LOGGING AND DEBUG CONSOLE WINDOW
+##### 2.2.1.2 LOGGING AND DEBUG CONSOLE WINDOW
 
 SL provides different levels of logging and can also show a debug console window if requested via the `Preferences` structure. The host can also specify the
 location where logs should be saved and track all messages via special `logMessagesCallback` including any errors or warnings.
@@ -123,7 +205,7 @@ using pfunLogMessageCallback = void(LogType type, const char *msg);
 > **NOTE:**
 > If logging callback is specified then SL will not use `OutputDebugString` debug API.
 
-##### 2.2.1.2 MEMORY MANAGEMENT
+##### 2.2.1.3 MEMORY MANAGEMENT
 
 SL can hand over the control over resource allocation and de-allocation, if requested. When specified, the following callbacks on the host
 side will be **fully responsible for the resource allocation and destruction**.
@@ -170,8 +252,8 @@ struct Resource
 //!
 //! IMPORTANT: All resources must be able to be bound as UAV input/output.
 //! In addition, all textures are also sampled as NON pixel shader resources.
-using pfunResourceAllocateCallback = Resource(const ResourceDesc *desc);
-using pfunResourceReleaseCallback = void(Resource *resource);
+using pfunResourceAllocateCallback = Resource(const ResourceDesc *desc, void* device);
+using pfunResourceReleaseCallback = void(Resource *resource, void* device);
 ```
 
 > **NOTE:**
@@ -198,11 +280,11 @@ constexpr int kUniqueApplicationId = 0;
 //! @return false if SL is not supported on the system; true otherwise.
 //!
 //! This method is NOT thread safe.
-SL_API bool init(const Preferences &pref, int applicationId = kUniqueApplicationId);
+SL_API bool slInit(const Preferences &pref, int applicationId = kUniqueApplicationId);
 ```
 
 > **IMPORTANT:**
-> Please make sure to call `sl::init` very early, before any DirectX/DXGI/Vulkan API calls are made and check verbose logging for any warnings or errors.
+> Please make sure to call `slInit` very early, before any DirectX/DXGI/Vulkan API calls are made and check verbose logging for any warnings or errors.
 
 #### 2.2.3 ERROR HANDLING
 
@@ -222,6 +304,8 @@ enum Feature
     eFeatureDLSS,
     //! Real-Time Denoiser
     eFeatureNRD,
+    //! NVIDIA Image Scaling SDK
+    eFeatureNIS,
     //! Total count
     eFeatureCount
 };
@@ -242,14 +326,14 @@ To check if a specific feature is available on the specific display adapter(s), 
 //! for which you are planning to create a device. For the adapter at index N you can check the bit 1 << N.
 //!
 //! This method is NOT thread safe.
-SL_API bool isFeatureSupported(Feature feature, uint32_t* adapterBitMask = nullptr);
+SL_API bool slIsFeatureSupported(Feature feature, uint32_t* adapterBitMask = nullptr);
 ```
 
 Here is some sample showing how to use the adapter bit-mask to determine on which adapter a device should be created in order for DLSS feature to work correctly:
 
 ```cpp
 uint32_t adapterBitMask = 0;
-if(!isFeatureSupported(sl::Feature::eFeatureDLSS, &adapterBitMask))
+if(!slIsFeatureSupported(sl::Feature::eFeatureDLSS, &adapterBitMask))
 {
     // DLSS is not supported on the system, fallback to the default up-scaling method
 }
@@ -260,11 +344,32 @@ if((adapterBitMask & (1 << myAdapterIndex)) != 0)
 }
 ```
 > **NOTE:**
-> If `isFeatureSupported` returns false, you can enable the console window or use `logMessagesCallback` to find out why the specific feature is not supported.
+> If `slIsFeatureSupported` returns false, you can enable the console window or use `logMessagesCallback` to find out why the specific feature is not supported.
 
-### 2.4 TAGGING RESOURCES
+### 2.4 ENABLING OR DISABLING FEATURE
 
-The appropriate D3D12/VK resources should be tagged using the `sl::setTag` API and the corresponding `BufferType` enum. 
+All supported features are enabled by default. To explicitly enable or disable a specific feature use the following method:
+
+```cpp
+//! Sets the specified feature to either enabled or disabled state.
+//!
+//! Call this method to enable or disable certain eFeature*. 
+//!
+//! NOTE: All supported features are enabled by default and have to be disabled explicitly if needed.
+//!
+//! @param feature Specifies which feature to check
+//! @param enabled Value specifying if feature should be enabled or disabled.
+//! @return false if feature is not supported on the system true otherwise.
+//!
+//! This method is NOT thread safe.
+SL_API bool slSetFeatureEnabled(sl::Feature feature, bool enabled);
+```
+> **NOTE:**
+> Please make sure to flush your pipeline and do not invoke DXGI/D3D/VULKAN API while this method is running.
+
+### 2.5 TAGGING RESOURCES
+
+The appropriate D3D12/VK resources should be tagged using the `slSetTag` API and the corresponding `BufferType` enum. 
 
 ```cpp
 //! Buffer types used for tagging
@@ -276,10 +381,10 @@ enum BufferType
     eBufferTypeMVec,
     //! Color buffer with all post-processing effects applied but without any UI/HUD elements
     eBufferTypeHUDLessColor,
-    //! Color buffer containing jittered input data for DLSS pass (same as input for the default TAAU pass)
-    eBufferTypeDLSSInputColor,
-    //! Color buffer containing results from the DLSS pass (same as the output for the default TAAU pass)
-    eBufferTypeDLSSOutputColor,
+    //! Color buffer containing jittered input data for the image scaling pass
+    eBufferTypeScalingInputColor,
+    //! Color buffer containing results from the image scaling pass
+    eBufferTypeScalingOutputColor,
     //! Normals
     eBufferTypeNormals,
     //! Roughness
@@ -316,7 +421,7 @@ enum BufferType
     eBufferTypeAmbientOcclusionNoisy,
     //! AO denoised
     eBufferTypeAmbientOcclusionDenoised,
-    
+
     //! Optional - UI/HUD pixels hint (set to 1 if a pixel belongs to the UI/HUD elements, 0 otherwise)
     eBufferTypeUIHint,
     //! Optional - Shadow pixels hint (set to 1 if a pixel belongs to the shadow area, 0 otherwise)
@@ -327,7 +432,7 @@ enum BufferType
     eBufferTypeParticleHint,
     //! Optional - Transparency pixels hint (set to 1 if a pixel belongs to the transparent area, 0 otherwise)
     eBufferTypeTransparencyHint,
-     //! Optional - Animated texture pixels hint (set to 1 if a pixel belongs to the animated texture area, 0 otherwise)
+    //! Optional - Animated texture pixels hint (set to 1 if a pixel belongs to the animated texture area, 0 otherwise)
     eBufferTypeAnimatedTextureHint,
     //! Optional - Bias for current color vs history hint - lerp(history, current, bias) (set to 1 to completely reject history)
     eBufferTypeBiasCurrentColorHint,
@@ -335,9 +440,6 @@ enum BufferType
     eBufferTypeRaytracingDistance,
     //! Optional - Motion vectors for reflections
     eBufferTypeReflectionMotionVectors,
-
-    //! Total count
-    eBufferTypeCount
 };
 
 //! Tags resource
@@ -351,7 +453,7 @@ enum BufferType
 //! @return false if resource cannot be tagged true otherwise.
 //!
 //! This method is thread safe.
-SL_API bool setTag(Resource* resource, BufferType tag, uint32_t id = 0, const Extent* extent = nullptr);
+SL_API bool slSetTag(Resource* resource, BufferType tag, uint32_t id = 0, const Extent* extent = nullptr);
 ```
 
 > **NOTE:**
@@ -372,8 +474,8 @@ The following resources are required by NRD:
 
 The following resources are required by DLSS:
 
-* `eBufferTypeDLSSInputColor` (render resolution jittered color as input)
-* `eBufferTypeDLSSOutputColor` (final/post-process resolution render target where the upscaled AA result is stored)
+* `eBufferTypeScalingInputColor` (render resolution jittered color as input)
+* `eBufferTypeScalingOutputColor` (final/post-process resolution render target where the upscaled AA result is stored)
 
 The following resources are required by DLSS next:
 
@@ -385,6 +487,11 @@ The following resources are required by DLSS next:
 * `eBufferTypeEmissive`
 * `eBufferTypeDisocclusionMask`
 * `eBufferTypeSpecularMVec`
+
+The following resources are required by NIS:
+
+* `eBufferTypeScalingInputColor`
+* `eBufferTypeScalingOutputColor`
 
 The following hints are optional but should be provided if they are easy to obtain:
 
@@ -398,11 +505,11 @@ The following hints are optional but should be provided if they are easy to obta
 > **NOTE:**
 > Tagged buffers should not be used for other purposes within a frame execution because SL plugins might need them at different stages. If that cannot be guaranteed, please make a copy and tag it instead of the original buffer.
 
-### 2.5 PROVIDING ADDITIONAL INFORMATION
+### 2.6 PROVIDING ADDITIONAL INFORMATION
 
-#### 2.5.1 COMMON CONSTANTS
+#### 2.6.1 COMMON CONSTANTS
 
-Some additional information should be provided so that SL features can operate correctly. Please use `sl::setConstants` to provide the required data ***as early in the frame as possible*** and make sure to set values for all fields in the following structure:
+Some additional information should be provided so that SL features can operate correctly. Please use `slSetConstants` to provide the required data ***as early in the frame as possible*** and make sure to set values for all fields in the following structure:
 
 ```cpp
 struct Constants
@@ -483,12 +590,12 @@ struct Constants
 //! @return false if constants cannot be set; true otherwise.
 //! 
 //! This method is NOT thread safe.
-SL_API bool setConstants(const Constants& values, uint32_t frameIndex, uint32_t id = 0);
+SL_API bool slSetConstants(const Constants& values, uint32_t frameIndex, uint32_t id = 0);
 ```
 > **NOTE:**
 > Provided projection related matrices `should not` contain any clip space jitter offset. Jitter offset (if any) should be specified as a separate `float2` constant.
 
-#### 2.5.2 FEATURE SPECIFIC CONSTANTS
+#### 2.6.2 FEATURE SPECIFIC CONSTANTS
 
 Each feature requires specific data which is defined in the `sl_consts.h` header file. To provide per feature specific data, use the following method:
 
@@ -505,13 +612,13 @@ Each feature requires specific data which is defined in the `sl_consts.h` header
 //! @return false if constants cannot be set; true otherwise.
 //!
 //! This method is NOT thread safe.
-SL_API bool setFeatureConstants(Feature feature, const void *consts, uint32_t frameIndex, uint32_t id = 0);
+SL_API bool slSetFeatureConstants(Feature feature, const void *consts, uint32_t frameIndex, uint32_t id = 0);
 ```
 
 > **NOTE:**
 > To disable any given feature, simply set its mode to the `off` state. This will also unload any resources used by this feature (if it was ever invoked before). For example, to disable DLSS one would set `DLSSConstants::mode = eDLSSModeOff`.
 
-### 2.6 FEATURE SETTINGS
+### 2.7 FEATURE SETTINGS
 
 Some features provide feedback to the host application specifying which rendering settings are optimal or preferred. To check if a certain feature has specific settings, you can call:
 
@@ -526,7 +633,7 @@ Some features provide feedback to the host application specifying which renderin
 //! @return false if constants cannot be set; true otherwise.
 //!
 //! This method is NOT thread safe.
-SL_API bool getFeatureSettings(Feature feature, const void* consts, void* settings);
+SL_API bool slGetFeatureSettings(Feature feature, const void* consts, void* settings);
 ```
 
 For example, when using DLSS, it is mandatory to call `getFeatureSettings` to find out at which resolution we should render our game:
@@ -539,7 +646,7 @@ dlssConsts.mode = myUI->getDLSSMode(); // e.g. sl::eDLSSModeBalanced;
 dlssConsts.outputWidth = myUI->getOutputWidth();    // e.g 1920;
 dlssConsts.outputHeight = myUI->getOutputHeight(); // e.g. 1080;
 // Now let's check what should our rendering resolution be
-if(!sl::getFeatureSettings(sl::eFeatureDLSS, &dlssConsts, &dlssSettings))
+if(!slGetFeatureSettings(sl::eFeatureDLSS, &dlssConsts, &dlssSettings))
 {
     // Handle error here
 }
@@ -550,7 +657,7 @@ myViewport->setSize(dlssSettings.renderWidth, dlssSettings.renderHeight);
 > **NOTE:**
 > Not all features provide specific/optimal settings. Please refer to the `sl_consts.h` header for more details.
 
-### 2.7 MARKING EVENTS IN THE PIPELINE
+### 2.8 MARKING EVENTS IN THE PIPELINE
 
 By design, SL SDK enables `host assisted replacement or injection of specific rendering features`. In order for SL features to work, specific sections in the rendering pipeline need to be marked with the following method:
 
@@ -561,30 +668,30 @@ By design, SL SDK enables `host assisted replacement or injection of specific re
 //! in your rendering pipeline where a specific feature
 //! should be injected.
 //!
-//! @param cmdBuffer Command buffer to use - must be created on device where feature is supported
+//! @param cmdBuffer Command buffer to use - must be created on device where feature is supported but can be null if not needed
 //! @param feature Feature we are working with
-//! @param frameIndex Current frame index (must match the corresponding value in the sl::Constants)
+//! @param frameIndex Current frame index (must match the corresponding value in the sl::Constants, can be 0 if not needed)
 //! @param id Unique id (can be viewport id | instance id etc.)
 //! @return false if feature event cannot be injected in the command buffer; true otherwise.
 //!
 //! IMPORTANT: Unique id must match whatever is used to set constants
 //!
 //! This method is NOT thread safe.
-SL_API bool evaluateFeature(CommandBuffer* cmdBuffer, Feature feature, uint32_t frameIndex, uint32_t id = 0);
+SL_API bool slEvaluateFeature(CommandBuffer* cmdBuffer, Feature feature, uint32_t frameIndex, uint32_t id = 0);
 ```
 
 Here is some pseudo code showing how the host application can replace the default up-scaling method with DLSS on hardware which supports it:
 
 ```cpp
 // Make sure DLSS is available and user selected this option in the UI
-bool useDLSS = sl::isFeatureSupported(sl::eFeatureDLSS) && userSelectedDLSSInUI;
+bool useDLSS = slIsFeatureSupported(sl::eFeatureDLSS) && userSelectedDLSSInUI;
 if(useDLSS) 
 {
     // For example, here we assume user selected DLSS balanced mode and 4K resolution with no sharpening
     DLSSConstants consts = {eDLSSModeBalanced, 3840, 2160, 0.0}; 
-    sl::setFeatureConstants(sl::Feature::eFeatureDLSS, &consts, myFrameIndex);    
+    slSetFeatureConstants(sl::Feature::eFeatureDLSS, &consts, myFrameIndex);    
     // Inform SL that DLSS should be injected at this point
-    if(!sl::evaluateFeature(myCmdList, sl::Feature::eFeatureDLSS, myFrameIndex)) 
+    if(!slEvaluateFeature(myCmdList, sl::Feature::eFeatureDLSS, myFrameIndex)) 
     {
         // Handle error
     }
@@ -594,7 +701,7 @@ else
     // Default up-scaling pass like, for example, TAAU goes here
 }
 ```
-### 2.8 SHUTDOWN
+### 2.9 SHUTDOWN
 
 To release the SDK instance and all resources allocated with it, use the following method:
 ```cpp
@@ -605,11 +712,11 @@ To release the SDK instance and all resources allocated with it, use the followi
 //! @return false if SL did not shutdown correctly; true otherwise.
 //!
 //! This method is NOT thread safe.
-SL_API bool shutdown();
+SL_API bool slShutdown();
 ```
 > **NOTE:**
 > If shutdown is called too early, any SL features which are enabled and running will stop functioning and the host application will fallback to the
-default implementation. For example, if DLSS is enabled and running and shutdown is called, the `sl.dlss` plugin will be unloaded, hence any `evaluateFeature` or `isFeatureSupported` calls will return an error and the host application should fallback to the default implementation (for example TAAU)
+default implementation. For example, if DLSS is enabled and running and shutdown is called, the `sl.dlss` plugin will be unloaded, hence any `evaluateFeature` or `slIsFeatureSupported` calls will return an error and the host application should fallback to the default implementation (for example TAAU)
 
 3 VALIDATING SL INTEGRATION
 -----------------------------
@@ -639,7 +746,8 @@ The remaining modules are optional depending on which features are enabled in yo
 5 COMMON ISSUES AND HOW TO RESOLVE THEM
 ------------------------------------------------
 
-* If you get a crash in Swapchain::Present or some similar unexpected behavior please double check that you are NOT linking dxgi.lib/d3d12.lib together with the sl.interposer.dll
+* If you get a crash in Swapchain::Present or some similar unexpected behavior please double check that you are NOT linking dxgi.lib/d3d12.lib together with the sl.interposer.dll. See [section 3](#3-validating-sl-integration) in this guide.
+* If SL does not work correctly make sure that some other library which includes `dxgi` or `d3d11/12` is not linked in your application (like for example `WindowsApp.lib`)
 * Make sure that all matrices are multiplied in the correct order and provided in row-major order **without any jitter**
 * Motion vector scaling factors in `sl::Constants` transform values from `eBufferTypeMvec` to the {-1,1} range
 * Jitter offset should be provided in pixel space
