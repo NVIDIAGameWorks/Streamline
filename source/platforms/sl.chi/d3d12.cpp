@@ -2198,6 +2198,7 @@ ComputeStatus D3D12::getResourceState(Resource resource, ResourceState& state)
         uint32_t size = sizeof(state);
         if (FAILED(pageable->GetPrivateData(sResourceStateGUID, &size, &state)))
         {
+            pageable->Release();
             SL_LOG_ERROR("resource 0x%llx does not have a state", resource);
             return eComputeStatusInvalidArgument;
         }
@@ -2244,6 +2245,7 @@ ComputeStatus D3D12::getResourceDescription(Resource resource, ResourceDescripti
     uint32_t size = sizeof(outDesc.state);
     if (FAILED(pageable->GetPrivateData(sResourceStateGUID, &size, &outDesc.state)))
     {
+        pageable->Release();
         std::wstring name = getDebugName(resource);
         SL_LOG_ERROR("resource 0x%llx(%S) does not have a state", resource, name.c_str());
         return eComputeStatusInvalidArgument;
