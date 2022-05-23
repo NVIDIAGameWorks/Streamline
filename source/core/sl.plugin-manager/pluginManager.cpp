@@ -47,7 +47,6 @@ namespace sl
 
 namespace plugin_manager
 {
-using FeatureParametersMap = std::map<uint32_t, FeatureParameters>;
 
 class PluginManager : public IPluginManager
 {
@@ -76,6 +75,15 @@ public:
         {
             m_pathsToPlugins[i] = m_pref.pathsToPlugins[i];
         }
+        if (pref.ext)
+        {
+            auto* ext = (Preferences1*)pref.ext;
+            m_featuresToEnable.resize(ext->numFeaturesToEnable);
+            for (uint32_t i = 0; i < ext->numFeaturesToEnable; i++)
+            {
+                m_featuresToEnable[i] = ext->featuresToEnable[i];
+            }
+        }
         // These are not safe to touch after we exit here
         m_pref.pathsToPlugins = {};
         m_pref.pathToLogsAndData = {};
@@ -90,6 +98,7 @@ public:
         m_vkDevice = device;
         m_vkInstance = instance;
     }
+    
     virtual bool setFeatureEnabled(Feature feature, bool value) override final;
 
     virtual bool isSupportedOnThisMachine() const override final;
@@ -99,18 +108,32 @@ public:
     virtual bool isInitialized() const  override final { return m_initialized; }
     virtual bool arePluginsLoaded() const  override final { return !m_plugins.empty(); }
 
-    virtual const FeatureParameters* getFeatureParameters(Feature feature) const override final
+    virtual const FeatureContext* getFeatureContext(Feature feature) override final
     {
+        if (!m_initialized)
         {
-            auto it = m_featurePluginsMap.find(feature);
-            if (it == m_featurePluginsMap.end() || !(*it).second->enabled)
-            {
-                return nullptr;
-            }
+            initializePlugins();
         }
-        auto it = m_featureParamsMap.find(feature);
-        return it == m_featureParamsMap.end() ? nullptr : &(*it).second;
+        auto it = m_featurePluginsMap.find(feature);
+        if (it != m_featurePluginsMap.end())
+        {
+            if (!(*it).second->context.enabled)
+            {
+                SL_LOG_WARN("Feature '%s' is disabled", (*it).second->name.c_str());
+            }
+            if (!(*it).second->context.supportedAdapters)
+            {
+                SL_LOG_WARN("Feature '%s' is not supported", (*it).second->name.c_str());
+            }
+            return &(*it).second->context;
+        }
+        else
+        {
+            SL_LOG_ERROR("Feature %u either missing or unloaded because it is NOT supported on this system.", feature);
+        }
+        return nullptr;
     }
+
     inline static PluginManager* s_manager = {};
 
 private:
@@ -118,34 +141,32 @@ private:
     std::wstring getExecutablePath() const;
     bool mapPlugins(const std::wstring& path, std::vector<std::wstring>& files);
     bool findPlugins(const std::wstring& path, std::vector<std::wstring>& files);
+    
 
     struct Plugin
     {
         Plugin() {}
         Plugin(const Plugin& rhs) = delete;
-
         Plugin& operator=(const Plugin& rhs) = delete;
 
-        bool enabled = true;
         uint32_t id{};
-        uint32_t supportedAdapters{};
-
         int priority{};
         Version version{};
         Version api{};
         HMODULE lib{};
         json config{};
         std::string name{};
+        std::string paramNamespace{};
         api::PFuncGetPluginJSONConfig* getConfig{};
         api::PFuncOnPluginStartup* onStartup{};
         api::PFuncOnPluginShutdown* onShutdown{};
         api::PFuncGetPluginFunction* getFunction{};
         api::PFuncSetParameters* setParameters{};
-
+        FeatureContext context{};
     };
 
     void processPluginHooks(const Plugin* plugin);
-    bool mapPluginParameters(const Plugin* plugin);
+    void mapPluginCallbacks(Plugin* plugin);
     uint32_t getFunctionHookID(const std::string& name);
 
     Version m_version = { 0,0,1 };
@@ -164,17 +185,18 @@ private:
 
     using PluginList = std::vector<Plugin*>;
     using PluginMap = std::map<uint32_t,Plugin*>;
+    
     PluginList m_plugins;
     PluginMap m_featurePluginsMap;
+
     int m_appId = 0;
-    bool m_initialized = false;
+    Boolean m_initialized = Boolean::eFalse;
     bool m_triedToLoadPlugins = false;
+
     std::wstring m_pluginPath = {};
-
     std::vector<std::wstring> m_pathsToPlugins;
-
-    FeatureParametersMap m_featureParamsMap;
-
+    std::vector<Feature> m_featuresToEnable;
+ 
     Preferences m_pref{};
 };
 
@@ -192,20 +214,33 @@ void destroyInterface()
     delete PluginManager::s_manager;
     PluginManager::s_manager = {};
 }
+
 bool PluginManager::setFeatureEnabled(Feature feature, bool value)
 {
+    // This is clearly not thread safe so the assumption is that
+    // host will not invoke any hooks while we are running as it is
+    // documented in the programming guide.
+
     auto it = m_featurePluginsMap.find(feature);
-    if (it == m_featurePluginsMap.end() || (*it).second->enabled == value)
+    if (it == m_featurePluginsMap.end() || (*it).second->context.enabled == value)
     {
+        // Feature either not loaded or enabled flag does not change, nothing to do
         SL_LOG_WARN("Feature either not present or already in the requested 'enabled' state");
         return false;
     }
     auto featurePlugin = (*it).second;
-    featurePlugin->enabled = value;
+    featurePlugin->context.enabled = value;
     SL_LOG_INFO("Feature with id:%u %s", feature, value ? "enabled" : "disabled");
     auto hooks = featurePlugin->config.at("hooks");
     if (!hooks.empty())
     {
+        // Plugin has registered hooks, need to redo our prioritized hook lists
+        // 
+        // We do this to minimize the CPU overhead when accessing hooks i.e. 
+        // we could leave the lists intact and check for each hook if plugin 
+        // is enabled or not but that is very expensive when hooks are accessed 
+        // hundreds of times per frame.
+
         for (auto& hooks : m_afterHooks)
         {
             hooks.clear();
@@ -214,6 +249,8 @@ bool PluginManager::setFeatureEnabled(Feature feature, bool value)
         {
             hooks.clear();
         }
+
+        // Sorted by priority so processing hooks by priority
         for (auto plugin : m_plugins)
         {
             processPluginHooks(plugin);
@@ -273,6 +310,41 @@ bool PluginManager::mapPlugins(const std::wstring& path, std::vector<std::wstrin
 
     param::IParameters* parameters = param::getInterface();
 
+    // In production we explicitly enable features
+#ifndef SL_PRODUCTION
+    auto interposerConfig = sl::interposer::getInterface()->getConfig();
+
+    // Build inclusion list based on preferences
+    std::vector<Feature> features =
+    {
+        Feature::eFeatureDLSS,
+        Feature::eFeatureNRD,
+        Feature::eFeatureNIS,
+        Feature::eFeatureLatency,
+    };
+
+    // Enable all features if not specified and not in production
+    if (m_featuresToEnable.empty())
+    {
+        m_featuresToEnable = features;
+    }
+
+    // Allow override via JSON config file
+    if (interposerConfig.contains("enableAllFeatures"))
+    {
+        bool value = false;
+        interposerConfig.at("enableAllFeatures").get_to(value);
+        if (value)
+        {
+            m_featuresToEnable = features;
+        }
+    }
+
+#endif
+
+    // sl.common is always enabled
+    m_featuresToEnable.push_back((Feature)-1);
+
     auto freePlugin = [](Plugin** plugin)->void
     {
         FreeLibrary((*plugin)->lib);
@@ -282,6 +354,7 @@ bool PluginManager::mapPlugins(const std::wstring& path, std::vector<std::wstrin
 
     for (auto fileName : files)
     {
+
         // From this point any error is fatal since user requested specific set of features
         auto pluginFullPath = path + L"/" + fileName;
         HMODULE mod = security::loadLibrary(pluginFullPath.c_str());
@@ -312,17 +385,45 @@ bool PluginManager::mapPlugins(const std::wstring& path, std::vector<std::wstrin
                 std::istringstream stream(plugin->getConfig());
                 stream >> plugin->config;
 
-                // Now we check if plugin is supported on this system
-                plugin->config.at("supportedAdapters").get_to(plugin->supportedAdapters);
-                if (!plugin->supportedAdapters)
+#ifdef SL_PRODUCTION
+                // Check if plugin's id (SL feature) is requested by the host
+                plugin->config.at("id").get_to(plugin->id);
+                bool requested = false;
+                for (auto f : m_featuresToEnable)
                 {
-                    SL_LOG_ERROR("Ignoring plugin '%s' since it is not supported on this platform", plugin->name.c_str());
+                    if (f == plugin->id)
+                    {
+                        requested = true;
+                        break;
+                    }
+                }
+                if (!requested)
+                {
+
+                }
+#else
+                bool requested = true;
+#endif
+
+                // Now we check if plugin is supported on this system
+                plugin->config.at("supportedAdapters").get_to(plugin->context.supportedAdapters);
+                if (!requested || !plugin->context.supportedAdapters)
+                {
+                    if (!requested)
+                    {
+                        SL_LOG_WARN("Ignoring plugin '%s' since it is was not requested by the host", plugin->name.c_str());
+                    }
+                    else if (!plugin->context.supportedAdapters)
+                    {
+                        SL_LOG_ERROR("Ignoring plugin '%s' since it is not supported on this platform", plugin->name.c_str());
+                    }
                     freePlugin(&plugin);
                 }
                 else
                 {
                     // Next step, check if plugin's API is compatible
                     plugin->config.at("id").get_to(plugin->id);
+                    plugin->config.at("namespace").get_to(plugin->paramNamespace);
                     plugin->config.at("priority").get_to(plugin->priority);
                     plugin->config.at("version").at("major").get_to(plugin->version.major);
                     plugin->config.at("version").at("minor").get_to(plugin->version.minor);
@@ -348,16 +449,7 @@ bool PluginManager::mapPlugins(const std::wstring& path, std::vector<std::wstrin
 
                 if (plugin)
                 {
-                    // Plugin is supported so set the flag
-                    if (mapPluginParameters(plugin))
-                    {
-                        parameters->set(m_featureParamsMap[plugin->id].supportedAdapters.c_str(), plugin->supportedAdapters);
-                        SL_LOG_INFO("Loaded plugin '%s' - version %u.%u.%u - id %u - priority %u - adapter mask 0x%x", plugin->name.c_str(), plugin->version.major, plugin->version.minor, plugin->version.build, plugin->id, plugin->priority, plugin->supportedAdapters);
-                    }
-                    else
-                    {
-                        freePlugin(&plugin);
-                    }
+                    SL_LOG_INFO("Loaded plugin '%s' - version %u.%u.%u - id %u - priority %u - adapter mask 0x%x - namespace '%s'", plugin->name.c_str(), plugin->version.major, plugin->version.minor, plugin->version.build, plugin->id, plugin->priority, plugin->context.supportedAdapters, plugin->paramNamespace.c_str());
                 }
             }
             catch (std::exception& e)
@@ -396,11 +488,15 @@ bool PluginManager::loadPlugins()
         return false;
     }
 
-#ifdef SL_PRODUCTION
-    if (!m_appId)
+#ifndef SL_PRODUCTION
+    auto interposerConfig = sl::interposer::getInterface()->getConfig();
+    if (interposerConfig.contains("pathToPlugins"))
     {
-        SL_LOG_ERROR("Application ID is not set - unable to proceed.");
-        return false;
+        std::string path;
+        interposerConfig.at("pathToPlugins").get_to(path);
+        SL_LOG_HINT("Overriding pathsToPlugins to %s", path.c_str());
+        m_pathsToPlugins.clear();
+        m_pathsToPlugins.push_back(extra::toWStr(path));
     }
 #endif
 
@@ -464,12 +560,11 @@ bool PluginManager::loadPlugins()
     return !m_plugins.empty();
 }
 
-
 void PluginManager::unloadPlugins()
 {
     SL_LOG_INFO("Unloading all plugins ...");
 
-    // IMPORTANT: Shut down in the oposite order lower priority to higher
+    // IMPORTANT: Shut down in the opposite order lower priority to higher
     for (auto plugin = m_plugins.rbegin(); plugin != m_plugins.rend(); plugin++)
     {
         (*plugin)->onShutdown();
@@ -478,25 +573,37 @@ void PluginManager::unloadPlugins()
     }
     m_plugins.clear();
     m_featurePluginsMap.clear();
-    m_featureParamsMap.clear();
+    for (auto& hooks : m_afterHooks)
+    {
+        hooks.clear();
+    }
+    for (auto& hooks : m_beforeHooks)
+    {
+        hooks.clear();
+    }
+    m_initialized = Boolean::eInvalid;
 }
 
 void PluginManager::processPluginHooks(const Plugin* plugin)
 {
+    // Make sure that whatever is requested by a plugin is actually supported by our interposer
     auto isHookSupported = [this](const std::string& requestedClass, const std::string& requestedTarget)->bool
     {
         return m_functionHookIDMap.find(requestedClass + "_" + requestedTarget) != m_functionHookIDMap.end();
     };
-    if (!plugin->enabled)
+
+    if (!plugin->context.enabled)
     {
         SL_LOG_INFO("Plugin '%s' is disabled, not mapping any hooks for it", plugin->name.c_str());
         return;
     }
+
     auto hooks = plugin->config.at("hooks");
     if (hooks.empty())
     {
         SL_LOG_INFO("Plugin '%s' has no registered hooks", plugin->name.c_str());
     }
+
     for (auto hook : hooks)
     {
         std::string cls, target, replacement, base;
@@ -504,34 +611,43 @@ void PluginManager::processPluginHooks(const Plugin* plugin)
         hook.at("target").get_to(target);
         hook.at("replacement").get_to(replacement);
         hook.at("base").get_to(base);
+
         if (!isHookSupported(cls, target))
         {
             SL_LOG_ERROR("Hook %s:%s:%s is NOT supported, plugin will not function properly", plugin->name.c_str(), cls.c_str(), target.c_str());
             continue;
         }
+
+        // Skip hooks for unused APIs
         bool clsVulkan = cls == "Vulkan";
         if ((isRunningVulkan() && !clsVulkan) || (!isRunningVulkan() && clsVulkan))
         {
-            SL_LOG_INFO("Plugin '%s' skipping unused hook %s:%s", plugin->name.c_str(), cls.c_str(), target.c_str());
+            SL_LOG_INFO("Hook %s:%s:%s - skipped", plugin->name.c_str(), replacement.c_str(), base.c_str());
             continue;
         }
+
         void* address = plugin->getFunction(replacement.c_str());
         if (!address)
         {
             SL_LOG_ERROR("Failed to obtain replacement address for %s in module %s", replacement.c_str(), plugin->name.c_str());
             continue;
         }
-        SL_LOG_INFO("Plugin '%s' mapped hook %s:%s", plugin->name.c_str(), replacement.c_str(), base.c_str());
+
+        SL_LOG_INFO("Hook %s:%s:%s - OK", plugin->name.c_str(), replacement.c_str(), base.c_str());
+
         if (base == "after")
         {
+            // After base call
             m_afterHooks[getFunctionHookID(cls + "_" + target)].push_back(address);
         }
         else
         {
+            // Before base call with an option to skip the base call
             m_beforeHooks[getFunctionHookID(cls + "_" + target)].push_back(address);
         }
     }
 }
+
 bool PluginManager::initializePlugins()
 {
     if (!m_triedToLoadPlugins)
@@ -544,7 +660,7 @@ bool PluginManager::initializePlugins()
     {
         if (!m_d3d12Device && !m_vkDevice && !m_d3d11Device)
         {
-            SL_LOG_ERROR_ONCE("Trying to initialize plugins but device is not set!");
+            SL_LOG_ERROR_ONCE("Trying to initialize plugins but DX/VK device has not been created!");
             return false;
         }
 
@@ -603,8 +719,6 @@ bool PluginManager::initializePlugins()
 
         param::IParameters* parameters = param::getInterface();
 
-        // Make sure that whatever is requested by a plugin is actually supported by our interposer
-
         auto plugins = m_plugins;
         for (auto plugin : plugins)
         {
@@ -616,70 +730,54 @@ bool PluginManager::initializePlugins()
                 unload = true;
                 SL_LOG_ERROR("onStartup/onShutdown missing for plugin %s", plugin->name.c_str());
             }
-            if (!plugin->onStartup(configStr.c_str(), device, parameters))
+            else if (!plugin->onStartup(configStr.c_str(), device, parameters))
             {
                 unload = true;
             }
             if (unload)
             {
-                // Reset flag back to false since onStartup failed
-                parameters->set(m_featureParamsMap[plugin->id].supportedAdapters.c_str(), 0);
                 m_featurePluginsMap.erase(plugin->id);
-
                 FreeLibrary(plugin->lib);
                 m_plugins.erase(std::remove(m_plugins.begin(), m_plugins.end(), plugin), m_plugins.end());
                 delete plugin;
+                
                 continue;
             }
-
+            else
+            {
+                // Plugin initialized correctly, let's map callbacks for the core API
+                mapPluginCallbacks(plugin);
+            }
             processPluginHooks(plugin);
-            }
+        }
 
-        m_initialized = true;
-            }
-
-
+        m_initialized = Boolean::eTrue;
+    }
     return true;
-                }
-
-bool PluginManager::mapPluginParameters(const Plugin* plugin)
-                {
-    if (plugin->name == "sl.common")
-
-                {
-        // Nothing to do here, common plugin
-        return true;
-                }
-    if (m_featureParamsMap.find(plugin->id) != m_featureParamsMap.end())
-
-                {
-        SL_LOG_ERROR("Plugin '%s' does not have a unique id - id %u is already used", plugin->name.c_str(), plugin->id);
-                    // Before base call with an option to skip the base call
-
-
-        return false;
 }
 
-    size_t lastdot = plugin->name.rfind(".");
-    if (lastdot != std::string::npos)
+void PluginManager::mapPluginCallbacks(Plugin* plugin)
+{
+    if (plugin->name == "sl.common")
     {
-        auto name = plugin->name.substr(lastdot + 1);
-        auto& data = m_featureParamsMap[plugin->id];
-        data.supportedAdapters = "sl.param." + name + ".supportedAdapters";
-        data.setConstants = "sl.param." + name + ".setConstsFunc";
-        data.getSettings = "sl.param." + name + ".getSettingsFunc";
+        // Nothing to do for common plugin
+        return;
     }
-    else
-    {
-        SL_LOG_ERROR("Plugin '%s' has invalid naming convention - must be in sl.*** format", plugin->name.c_str());
-    }
-    return lastdot != std::string::npos;
+    plugin->context.setConstants = (PFunSlSetConstantsInternal*)plugin->getFunction("slSetConstants");
+    plugin->context.getSettings = (PFunSlGetSettingsInternal*)plugin->getFunction("slGetSettings");
+    plugin->context.allocResources = (PFunSlAllocateResources*)plugin->getFunction("slAllocateResources");
+    plugin->context.freeResources = (PFunSlFreeResources*)plugin->getFunction("slFreeResources");
+
+    SL_LOG_INFO("Callback %s:slSetConstants:0x%llx", plugin->name.c_str(), plugin->context.setConstants);
+    SL_LOG_INFO("Callback %s:slGetSettings:0x%llx", plugin->name.c_str(), plugin->context.getSettings);
+    SL_LOG_INFO("Callback %s:slAllocateResources:0x%llx", plugin->name.c_str(), plugin->context.allocResources);
+    SL_LOG_INFO("Callback %s:slFreeResources:0x%llx", plugin->name.c_str(), plugin->context.freeResources);
 }
 
 const HookList& PluginManager::getBeforeHooks(FunctionHookID functionHookID)
 {
     // Lazy plugin initialization because of the late device initialization
-    if (!m_initialized)
+    if (m_initialized == Boolean::eFalse)
     {
         initializePlugins();
     }
@@ -690,7 +788,7 @@ const HookList& PluginManager::getBeforeHooks(FunctionHookID functionHookID)
 const HookList& PluginManager::getAfterHooks(FunctionHookID functionHookID)
 {
     // Lazy plugin initialization because of the late device initialization
-    if (!m_initialized)
+    if (m_initialized == Boolean::eFalse)
     {
         initializePlugins();
     }
@@ -716,6 +814,7 @@ bool PluginManager::isSupportedOnThisMachine() const
 PluginManager::PluginManager()
 {
     SL_LOG_INFO("Streamline v%u.%u.%u - built on %s - %s", VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH, __TIMESTAMP__, GIT_LAST_COMMIT);
+
 #define FUNCTION_HOOK_ID_MAP_ENTRY(id) (m_functionHookIDMap[#id] = FunctionHookID::e##id)
     FUNCTION_HOOK_ID_MAP_ENTRY(IDXGIFactory_CreateSwapChain);
     FUNCTION_HOOK_ID_MAP_ENTRY(IDXGIFactory2_CreateSwapChainForHwnd);

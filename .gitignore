@@ -5,3 +5,4 @@ external/*
 package.bat
 copy.bat
 **/*.aps
+tools/premake5/**

@@ -98,36 +98,11 @@ void onGetConfig(api::Context *ctx, const char *pluginJSON)
                 auto jsonText = file::read(extraJSONFile.c_str());
                 if (!jsonText.empty())
                 {
+                    // safety null in case the JSON string is not null-terminated (found by AppVerif)
+                    jsonText.push_back(0);
                     std::istringstream stream((const char*)jsonText.data());
                     json& extraConfig = *(json*)ctx->extConfig;
                     stream >> extraConfig;
-                    if (extraConfig.contains("showConsole"))
-                    {
-                        bool showConsole = false;
-                        extraConfig.at("showConsole").get_to(showConsole);
-                        log::getInterface()->enableConsole(showConsole);
-                    }
-                    if (extraConfig.contains("logPath"))
-                    {
-                        std::string path;
-                        extraConfig.at("logPath").get_to(path);
-                        log::getInterface()->setLogPath(extra::toWStr(path).c_str());
-                    }
-                    if (extraConfig.contains("logLevel"))
-                    {
-                        uint32_t level;
-                        extraConfig.at("logLevel").get_to(level);
-                        level = std::clamp(level, 0U, 2U);
-                        log::getInterface()->setLogLevel((LogLevel)level);
-                    }
-                    if (extraConfig.contains("swapChainBufferCount"))
-                    {
-                        uint32_t bufferCount = 2;
-                        extraConfig.at("swapChainBufferCount").get_to(bufferCount);
-                        // Make sure parameter is withing valid range
-                        bufferCount = std::clamp(bufferCount, 2U, 3U);
-                        ctx->parameters->set(param::global::kSwapchainBufferCount, bufferCount);
-                    }
                 }
             }
         }

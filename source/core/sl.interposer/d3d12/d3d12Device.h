@@ -28,7 +28,7 @@ namespace sl
 {
 namespace interposer
 {
-struct DECLSPEC_UUID("10B90151-4435-4004-9FAD-19361488899A") D3D12Device : ID3D12Device6
+struct DECLSPEC_UUID("10B90151-4435-4004-9FAD-19361488899A") D3D12Device : ID3D12Device9
 {
     D3D12Device(ID3D12Device * original);
 
@@ -117,6 +117,22 @@ struct DECLSPEC_UUID("10B90151-4435-4004-9FAD-19361488899A") D3D12Device : ID3D1
 #pragma endregion
 #pragma region ID3D12Device6
     HRESULT STDMETHODCALLTYPE SetBackgroundProcessingMode(D3D12_BACKGROUND_PROCESSING_MODE Mode, D3D12_MEASUREMENTS_ACTION MeasurementsAction, HANDLE hEventToSignalUponCompletion, BOOL * pbFurtherMeasurementsDesired) override final;
+#pragma endregion
+#pragma region ID3D12Device7
+    HRESULT STDMETHODCALLTYPE AddToStateObject(const D3D12_STATE_OBJECT_DESC * pAddition, ID3D12StateObject * pStateObjectToGrowFrom, REFIID riid, void** ppNewStateObject) override final;
+    HRESULT STDMETHODCALLTYPE CreateProtectedResourceSession1(const D3D12_PROTECTED_RESOURCE_SESSION_DESC1 * pDesc, REFIID riid, void** ppSession) override final;
+#pragma endregion
+#pragma region ID3D12Device8
+    D3D12_RESOURCE_ALLOCATION_INFO STDMETHODCALLTYPE GetResourceAllocationInfo2(UINT visibleMask, UINT numResourceDescs, const D3D12_RESOURCE_DESC1 * pResourceDescs, D3D12_RESOURCE_ALLOCATION_INFO1 * pResourceAllocationInfo1) override final;
+    HRESULT STDMETHODCALLTYPE CreateCommittedResource2(const D3D12_HEAP_PROPERTIES * pHeapProperties, D3D12_HEAP_FLAGS HeapFlags, const D3D12_RESOURCE_DESC1 * pDesc, D3D12_RESOURCE_STATES InitialResourceState, const D3D12_CLEAR_VALUE * pOptimizedClearValue, ID3D12ProtectedResourceSession * pProtectedSession, REFIID riidResource, void** ppvResource) override final;
+    HRESULT STDMETHODCALLTYPE CreatePlacedResource1(ID3D12Heap * pHeap, UINT64 HeapOffset, const D3D12_RESOURCE_DESC1 * pDesc, D3D12_RESOURCE_STATES InitialState, const D3D12_CLEAR_VALUE * pOptimizedClearValue, REFIID riid, void** ppvResource) override final;
+    void    STDMETHODCALLTYPE CreateSamplerFeedbackUnorderedAccessView(ID3D12Resource * pTargetedResource, ID3D12Resource * pFeedbackResource, D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor) override final;
+    void    STDMETHODCALLTYPE GetCopyableFootprints1(const D3D12_RESOURCE_DESC1 * pResourceDesc, UINT FirstSubresource, UINT NumSubresources, UINT64 BaseOffset, D3D12_PLACED_SUBRESOURCE_FOOTPRINT * pLayouts, UINT * pNumRows, UINT64 * pRowSizeInBytes, UINT64 * pTotalBytes) override final;
+#pragma endregion
+#pragma region ID3D12Device9
+    HRESULT STDMETHODCALLTYPE CreateShaderCacheSession(const D3D12_SHADER_CACHE_SESSION_DESC * pDesc, REFIID riid, void** ppvSession) override final;
+    HRESULT STDMETHODCALLTYPE ShaderCacheControl(D3D12_SHADER_CACHE_KIND_FLAGS Kinds, D3D12_SHADER_CACHE_CONTROL_FLAGS Control) override final;
+    HRESULT STDMETHODCALLTYPE CreateCommandQueue1(const D3D12_COMMAND_QUEUE_DESC * pDesc, REFIID CreatorID, REFIID riid, void** ppCommandQueue) override final;
 #pragma endregion
 
     bool checkAndUpgradeInterface(REFIID riid);

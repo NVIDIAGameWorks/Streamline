@@ -25,6 +25,7 @@
 #include <vector>
 #include <map>
 
+#include "include/sl.h"
 #include "external/json/include/nlohmann/json.hpp"
 using json = nlohmann::json;
 
@@ -62,6 +63,8 @@ namespace sl
 
 struct Preferences;
 
+using CommandBuffer = void;
+
 namespace param
 {
     struct Parameters;
@@ -77,11 +80,18 @@ namespace plugin_manager
 {
 
 using HookList = std::vector<interposer::VirtualAddress>;
-struct FeatureParameters
+
+using PFunSlSetConstantsInternal = bool(const void* consts, uint32_t frameIndex, uint32_t id);
+using PFunSlGetSettingsInternal = bool(const void* consts, void* settings);
+
+struct FeatureContext
 {
-    std::string supportedAdapters;
-    std::string setConstants;
-    std::string getSettings;
+    bool enabled = true;
+    uint32_t supportedAdapters = 0;
+    PFunSlSetConstantsInternal* setConstants{};
+    PFunSlGetSettingsInternal* getSettings{};
+    PFunSlAllocateResources* allocResources{};
+    PFunSlFreeResources* freeResources{};
 };
 
 struct IPluginManager
@@ -108,7 +118,8 @@ struct IPluginManager
     virtual bool isRunningVulkan() const = 0;
     virtual bool isInitialized() const = 0;
     virtual bool arePluginsLoaded() const = 0;
-    virtual const FeatureParameters* getFeatureParameters(Feature feature) const = 0;
+
+    virtual const FeatureContext* getFeatureContext(Feature feature) = 0;
 };
 
 IPluginManager* getInterface();

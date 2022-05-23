@@ -27,6 +27,7 @@
 
 #include "source/core/sl.thread/thread.h"
 #include "source/platforms/sl.chi/generic.h"
+#include "source/core/sl.extra/extra.h"
 
 namespace sl
 {
@@ -63,13 +64,6 @@ struct ResourceDriverDataD3D11
     ID3D11ShaderResourceView* SRV = nullptr;
 };
 
-struct ResourceReadbackQueueD3D11
-{
-    Resource target;
-    Resource readback[SL_READBACK_QUEUE_SIZE];
-    uint32_t index = 0;
-};
-
 struct DispatchDataD3D11
 {
     KernelDataD3D11* kernel;
@@ -79,19 +73,15 @@ class D3D11 : public Generic
 {
     struct PerfData
     {
-        ID3D11Query *queryBegin = {};
-        ID3D11Query* queryEnd = {};
-        ID3D11Query* queryDisjoint = {};
-        std::vector<float> values;
-        float accumulatedTimeMS = 0;
+        ID3D11Query *queryBegin{};
+        ID3D11Query* queryEnd{};
+        ID3D11Query* queryDisjoint{};
+        extra::AverageValueMeter meter{};
     };
     using MapSectionPerf = std::map<std::string, PerfData>;
     MapSectionPerf m_sectionPerfMap[MAX_NUM_NODES] = {};
 
     ID3D11Device         *m_device     = nullptr;
-
-    std::map<Resource, ResourceReadbackQueueD3D11> m_readbackMap;
-    std::vector<std::future<bool>> m_readbackThreads;
 
     bool m_dbgSupportRs2RelaxedConversionRules = false;
 
@@ -121,6 +111,7 @@ public:
 
     virtual ComputeStatus init(Device InDevice, param::IParameters* params) override final;
     virtual ComputeStatus shutdown() override final;
+    virtual ComputeStatus clearCache() override final;
 
     virtual ComputeStatus getPlatformType(PlatformType &OutType) override final;
 
@@ -161,19 +152,18 @@ public:
     virtual ComputeStatus copyBufferToReadbackBuffer(CommandList cmdList, Resource InResource, Resource OutResource, unsigned int InBytesToCopy) override final;
     virtual ComputeStatus getResourceDescription(Resource InResource, ResourceDescription &OutDesc) override final;
 
+    virtual ComputeStatus mapResource(CommandList cmdList, Resource resource, void*& data, uint32_t subResource = 0, uint64_t offset = 0, uint64_t totalBytes = UINT64_MAX) override final;
+    virtual ComputeStatus unmapResource(CommandList cmdList, Resource resource, uint32_t subResource) override final;
+
     virtual ComputeStatus copyHostToDeviceBuffer(CommandList InCmdList, uint64_t InSize, const void* InData, Resource InUploadResource, Resource InTargetResource, unsigned long long InUploadOffset, unsigned long long InDstOffset) override final;
     virtual ComputeStatus copyHostToDeviceTexture(CommandList InCmdList, uint64_t InSize, uint64_t RowPitch, const void* InData, Resource InTargetResource, Resource& InUploadResource) override final;
-
-    virtual ComputeStatus dumpResource(CommandList cmdList, Resource src, const char *path) override final;
 
     virtual ComputeStatus setDebugName(Resource res, const char friendlyName[]) override final;
 
     virtual ComputeStatus beginPerfSection(CommandList cmdList, const char *key, unsigned int node, bool InReset = false) override final;
     virtual ComputeStatus endPerfSection(CommandList cmdList, const char *key, float &OutAvgTimeMS, unsigned int node) override final;
-#if SL_ENABLE_PERF_TIMING
-    virtual ComputeStatus beginProfiling(CommandList cmdList, UINT Metadata, const void *pData, UINT Size) override final;
+    virtual ComputeStatus beginProfiling(CommandList cmdList, UINT metadata, const char* marker) override final;
     virtual ComputeStatus endProfiling(CommandList cmdList) override final;
-#endif
 };
 
 }

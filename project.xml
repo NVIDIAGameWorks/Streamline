@@ -5,7 +5,7 @@
     <package name="premake" version="5.0.0.13-53e4f813-linux-aarch64" platforms="linux-aarch64" />  
   </dependency>  
   <dependency name="nvapi" linkPath="external/nvapi">
-    <package name="nvapi" version="r470-developer-windows-x86_64" platforms="windows-x86_64"/>
+    <package name="nvapi" version="r510-dev-windows-x86_64" platforms="windows-x86_64"/>
   </dependency>    
   <dependency name="VulkanSDK" linkPath="external/vulkan/1.3.204.1">
     <package name="VulkanSDK" version="1.3.204.1-ext-windows-x86_64" platforms="windows-x86_64"/>
@@ -16,4 +16,7 @@
   <dependency name="dlss" linkPath="external/ngx">
     <package name="dlss" version="2.4.0" platforms="windows-x86_64"/>
   </dependency>    
+ <dependency name="nrd" linkPath="external/nrd">
+    <package name="nrd" version="windows-x86_64-3.1.0" platforms="windows-x86_64" />
+  </dependency>
 </project>

@@ -23,6 +23,7 @@
 #pragma once
 
 #include "include/sl.h"
+#include "include/sl_latency.h"
 #include "source/core/sl.extra/extra.h"
 
 namespace sl
@@ -53,13 +54,6 @@ constexpr uint32_t kAllSubResources = 0xffffffff;
 
 #define SL_SAFE_RELEASE(a) if(a) { a->Release(); a = nullptr;}
 #define MAX_NUM_NODES 2
-
-// Do not enable this in production
-#ifdef SL_PRODUCTION
-#define SL_ENABLE_PERF_TIMING 0
-#else
-#define SL_ENABLE_PERF_TIMING 1
-#endif
 
 #define SL_READBACK_QUEUE_SIZE 3
 
@@ -321,6 +315,19 @@ struct ResourceInfo
     void* memory{};
 };
 
+struct ResourceFootprint
+{
+    Format format{};
+    uint32_t width{};
+    uint32_t height{};
+    uint32_t depth{};
+    uint32_t rowPitch{};
+    uint64_t offset{};
+    uint32_t numRows{};
+    uint64_t rowSizeInBytes{};
+    uint64_t totalBytes{};
+};
+
 struct Coordinates
 {
     int x;
@@ -402,6 +409,8 @@ public:
     virtual ComputeStatus init(Device device, param::IParameters* params) = 0;
     virtual ComputeStatus shutdown() = 0;
 
+    virtual ComputeStatus clearCache() = 0;
+
     virtual ComputeStatus getPlatformType(PlatformType &type) = 0;
 
     //! To trigger immediate resource release call pass UINT_MAX
@@ -436,6 +445,7 @@ public:
 
     virtual ComputeStatus getNativeFormat(Format format, NativeFormat& native) = 0;
     virtual ComputeStatus getFormat(NativeFormat native, Format& format) = 0;
+    virtual ComputeStatus getBytesPerPixel(Format format, size_t& size) = 0;
 
     //! NOTE: SL compute interface uses implicit dispatch for simplicity.
     //! 
@@ -467,17 +477,20 @@ public:
     virtual ComputeStatus copyResource(CommandList cmdList, Resource dstResource, Resource srcResource) = 0;
     virtual ComputeStatus cloneResource(Resource resource, Resource &outResource, const char friendlyName[] = "", ResourceState initialState = ResourceState::eCopyDestination, uint32_t creationMask = 0, uint32_t visibilityMask = 0) = 0;
     virtual ComputeStatus copyBufferToReadbackBuffer(CommandList cmdList, Resource source, Resource destination, uint32_t bytesToCopy) = 0;
-    virtual ComputeStatus copyHostToDeviceBuffer(CommandList cmdList, uint64_t size, const void *data, Resource uploadResource, Resource targetResource, unsigned long long uploadOffset = 0, unsigned long long dstOffset = 0) = 0;
+    virtual ComputeStatus copyHostToDeviceBuffer(CommandList cmdList, uint64_t size, const void *data, Resource uploadResource, Resource targetResource, uint64_t uploadOffset = 0, uint64_t dstOffset = 0) = 0;
     virtual ComputeStatus copyHostToDeviceTexture(CommandList cmdList, uint64_t size, uint64_t rowPitch, const void* data, Resource targetResource, Resource& uploadResource) = 0;
+    virtual ComputeStatus copyDeviceTextureToDeviceBuffer(CommandList cmdList, Resource srcTexture, Resource dstBuffer) = 0;
+
+    virtual ComputeStatus mapResource(CommandList cmdList, Resource resource, void*& data, uint32_t subResource = 0, uint64_t offset = 0, uint64_t totalBytes = UINT64_MAX) = 0;
+    virtual ComputeStatus unmapResource(CommandList cmdList, Resource resource, uint32_t subResource = 0) = 0;
 
     virtual ComputeStatus getResourceDescription(Resource resource, ResourceDescription &OutDesc) = 0;
+    virtual ComputeStatus getResourceFootprint(Resource resoruce, ResourceFootprint& footprint) = 0;
 
     virtual ComputeStatus clearView(CommandList cmdList, Resource resource, const float4 Color, const RECT * pRect, uint32_t NumRects, CLEAR_TYPE &outType) = 0;    
     virtual ComputeStatus renderText(CommandList cmdList, int x, int y, const char *text, const ResourceArea &area, const float4& color = { 1.0f, 1.0f, 1.0f, 0.0f }, int reverseX = 0, int reverseY = 0) = 0;
     
-    virtual ComputeStatus getAllocatedBytes(unsigned long long &bytes) const = 0;
-
-    virtual ComputeStatus dumpResource(CommandList cmdList, Resource src, const char *path) = 0;
+    virtual ComputeStatus getAllocatedBytes(uint64_t &bytes) const = 0;
 
     virtual ComputeStatus setDebugName(Resource res, const char friendlyName[]) = 0;
     virtual ComputeStatus getDebugName(Resource res, std::wstring& name) = 0;
@@ -488,14 +501,22 @@ public:
         
     virtual ComputeStatus beginPerfSection(CommandList cmdList, const char *section, uint32_t node = 0, bool reset = false) = 0;
     virtual ComputeStatus endPerfSection(CommandList cmdList, const char *section, float &avgTimeMS, uint32_t node = 0) = 0;
-#if SL_ENABLE_PERF_TIMING
-    virtual ComputeStatus beginProfiling(CommandList cmdList, uint32_t metadata, const void *data, uint32_t size) = 0;
+    virtual ComputeStatus beginProfiling(CommandList cmdList, uint32_t metadata, const char* marker) = 0;
     virtual ComputeStatus endProfiling(CommandList cmdList) = 0;
-#endif
+    virtual ComputeStatus beginProfilingQueue(CommandQueue cmdQueue, uint32_t metadata, const char* marker) = 0;
+    virtual ComputeStatus endProfilingQueue(CommandQueue cmdQueue) = 0;
+
+    // Latency API
+    virtual ComputeStatus setSleepMode(const LatencyConstants& consts) = 0;
+    virtual ComputeStatus getSleepStatus(LatencySettings& settings) = 0;
+    virtual ComputeStatus getLatencyReport(LatencySettings& settings) = 0;
+    virtual ComputeStatus sleep() = 0;
+    virtual ComputeStatus setLatencyMarker(LatencyMarker marker, uint64_t frameId) = 0;
 };
 
 ICompute* getD3D11();
 ICompute *getD3D12();
+ICompute *getVulkan();
 
 }
 }

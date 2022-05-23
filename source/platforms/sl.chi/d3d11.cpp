@@ -205,17 +205,8 @@ ComputeStatus D3D11::shutdown()
         SL_SAFE_RELEASE(m_samplers[i]);
     }
 
-    for (auto& rb : m_readbackMap)
-    {
-        CHI_CHECK(destroyResource(rb.second.target));
-        for (int i = 0; i < SL_READBACK_QUEUE_SIZE; i++)
-        {
-            CHI_CHECK(destroyResource(rb.second.readback[i]));
-        }
-    }
     for (UINT node = 0; node < MAX_NUM_NODES; node++)
     {
-#if SL_ENABLE_PERF_TIMING
         for (auto section : m_sectionPerfMap[node])
         {
             SL_SAFE_RELEASE(section.second.queryBegin);
@@ -223,8 +214,9 @@ ComputeStatus D3D11::shutdown()
             SL_SAFE_RELEASE(section.second.queryDisjoint);
         }
         m_sectionPerfMap[node].clear();
-#endif
     }
+
+    clearCache();
 
     ComputeStatus Res = eComputeStatusOk;
     for (auto& k : m_kernels)
@@ -242,6 +234,35 @@ ComputeStatus D3D11::shutdown()
     }
 
     return Generic::shutdown();
+}
+
+ComputeStatus D3D11::clearCache()
+{
+    for (auto& resources : m_resourceData)
+    {
+        for (auto& data : resources.second)
+        {
+            if (data.second.UAV)
+            {
+                auto refCount = data.second.UAV->Release();
+                SL_LOG_VERBOSE("Clearing cached UAV 0x%llx for resource 0x%llx - ref count %u", data.second.UAV, resources.first, refCount);
+            }
+            if (data.second.SRV)
+            {
+                auto refCount = data.second.SRV->Release();
+                SL_LOG_VERBOSE("Clearing cached SRV 0x%llx for resource 0x%llx - ref count %u", data.second.SRV, resources.first, refCount);
+            }
+        }
+        resources.second.clear();
+    }
+    m_resourceData.clear();
+
+    if (m_context)
+    {
+        m_context->ClearState();
+    }
+
+    return eComputeStatusOk;
 }
 
 ComputeStatus D3D11::getPlatformType(PlatformType &OutType)
@@ -385,6 +406,8 @@ ComputeStatus D3D11::popState(CommandList cmdList)
     context->CSSetConstantBuffers(0, chi::kMaxD3D11Items, threadD3D11.engineConstBuffers);
 
     SL_SAFE_RELEASE(threadD3D11.engineCS);
+    SL_SAFE_RELEASE(threadD3D11.engineDSV);
+
     int n = chi::kMaxD3D11Items;
     while (n--)
     {
@@ -392,6 +415,7 @@ ComputeStatus D3D11::popState(CommandList cmdList)
         SL_SAFE_RELEASE(threadD3D11.engineConstBuffers[n]);
         SL_SAFE_RELEASE(threadD3D11.engineUAVs[n]);
         SL_SAFE_RELEASE(threadD3D11.engineSRVs[n]);
+        SL_SAFE_RELEASE(threadD3D11.engineRTVs[n]);
     }
 
     threadD3D11 = {};
@@ -649,14 +673,16 @@ ComputeStatus D3D11::getTextureDriverData(Resource res, ResourceDriverDataD3D11&
         SRVDesc.Format = getCorrectFormat((DXGI_FORMAT)Desc.nativeFormat);
         SRVDesc.Texture2D.MipLevels = Desc.mips;
         SRVDesc.Texture2D.MostDetailedMip = 0;
-        auto res = m_device->CreateShaderResourceView(Resource, &SRVDesc, &data.SRV);
-        if (FAILED(res)) 
+        auto status = m_device->CreateShaderResourceView(Resource, &SRVDesc, &data.SRV);
+        if (FAILED(status))
         { 
-            SL_LOG_ERROR("CreateShaderResourceView failed - status %d", res); 
+            SL_LOG_ERROR("CreateShaderResourceView failed - status %d", status);
             return eComputeStatusError;
         }
         constexpr char SRVFriendlyName[] = "sl.compute.textureCachedSRV";
         data.SRV->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(SRVFriendlyName), SRVFriendlyName); // Narrow character type debug object name
+
+        SL_LOG_VERBOSE("Cached SRV resource 0x%llx node %u fmt %s size (%u,%u)", res, 0, getDXGIFormatStr(Desc.nativeFormat), (UINT)Desc.width, (UINT)Desc.height);
 
         m_resourceData[resource][hash] = data;
     }
@@ -706,7 +732,7 @@ ComputeStatus D3D11::getSurfaceDriverData(Resource res, ResourceDriverDataD3D11&
             UAVDesc.Texture2D.MipSlice = mipOffset;
             UAVDesc.Format = getCorrectFormat((DXGI_FORMAT)Desc.nativeFormat);
         }
-        
+
         auto status = m_device->CreateUnorderedAccessView(Resource, &UAVDesc, &data.UAV);
         if (FAILED(status))
         { 
@@ -718,7 +744,7 @@ ComputeStatus D3D11::getSurfaceDriverData(Resource res, ResourceDriverDataD3D11&
         data.UAV->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(UAVFriendlyName), UAVFriendlyName); // Narrow character type debug object name
 
         SL_LOG_VERBOSE("Cached UAV resource 0x%llx node %u fmt %s size (%u,%u)", res, 0, getDXGIFormatStr(Desc.nativeFormat), (UINT)Desc.width, (UINT)Desc.height);
-        
+
         m_resourceData[resource][hash] = data;
     }
     else
@@ -1046,6 +1072,34 @@ ComputeStatus D3D11::copyBufferToReadbackBuffer(CommandList InCmdList, Resource 
     return eComputeStatusOk;
 }
 
+ComputeStatus D3D11::mapResource(CommandList cmdList, Resource resource, void*& data, uint32_t subResource, uint64_t offset, uint64_t totalBytes)
+{
+    auto src = (ID3D11Resource*)resource;
+    if (!src) return eComputeStatusInvalidPointer;
+
+    ID3D11DeviceContext* dc = reinterpret_cast<ID3D11DeviceContext*>(cmdList);
+
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (FAILED(dc->Map(src, subResource, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
+    {
+        SL_LOG_ERROR("Failed to map buffer");
+        return eComputeStatusError;
+    }
+    data = ((uint8_t*)mapped.pData) + offset;
+    return eComputeStatusOk;
+}
+
+ComputeStatus D3D11::unmapResource(CommandList cmdList, Resource resource, uint32_t subResource)
+{
+    auto src = (ID3D11Resource*)resource;
+    if (!src) return eComputeStatusInvalidPointer;
+
+    ID3D11DeviceContext* dc = reinterpret_cast<ID3D11DeviceContext*>(cmdList);
+    dc->Unmap(src,subResource);
+
+    return eComputeStatusOk;
+}
+
 ComputeStatus D3D11::getResourceDescription(Resource resource, ResourceDescription &outDesc)
 {
     if (!resource) return eComputeStatusInvalidArgument;
@@ -1117,7 +1171,7 @@ ComputeStatus D3D11::getLUIDFromDevice(NVSDK_NGX_LUID *OutId)
 
 ComputeStatus D3D11::beginPerfSection(CommandList cmdList, const char *key, unsigned int node, bool reset)
 {
-#ifndef SL_PRODUCTION
+#if SL_ENABLE_TIMING
     PerfData* data = {};
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -1132,7 +1186,7 @@ ComputeStatus D3D11::beginPerfSection(CommandList cmdList, const char *key, unsi
     
     if (reset)
     {
-        data->values.clear();
+        data->meter.reset();
     }
     
     if (!data->queryBegin)
@@ -1159,7 +1213,7 @@ ComputeStatus D3D11::beginPerfSection(CommandList cmdList, const char *key, unsi
 
 ComputeStatus D3D11::endPerfSection(CommandList cmdList, const char* key, float &avgTimeMS, unsigned int node)
 {
-#ifndef SL_PRODUCTION
+#if SL_ENABLE_TIMING
     PerfData* data = {};
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -1195,39 +1249,30 @@ ComputeStatus D3D11::endPerfSection(CommandList cmdList, const char* key, float 
     if (!timestampData.Disjoint)
     {
         float delta = (float)((endTimeStamp - beginTimeStamp) / (double)timestampData.Frequency * 1000);
-        // Average over last N executions
-        if (data->values.size() == 100)
-        {
-            data->accumulatedTimeMS -= data->values.front();
-            data->values.erase(data->values.begin());
-        }
-        data->accumulatedTimeMS += delta;
-        data->values.push_back(delta);
+        data->meter.add(delta);
     }
 
-    avgTimeMS = data->values.size() ? data->accumulatedTimeMS / (float)data->values.size() : 0;
+    avgTimeMS = data->meter.median;
 #else
     avgTimeMS = 0;
 #endif
     return eComputeStatusOk;
 }
 
-#if SL_ENABLE_PERF_TIMING
-ComputeStatus D3D11::beginProfiling(CommandList cmdList, unsigned int Metadata, const void *pData, unsigned int Size)
+ComputeStatus D3D11::beginProfiling(CommandList cmdList, unsigned int Metadata, const char* marker)
 {
+#if SL_ENABLE_PROFILING
+#endif
     return eComputeStatusError;
 }
 
 ComputeStatus D3D11::endProfiling(CommandList cmdList)
 {
-    return eComputeStatusError;
-}
+#if SL_ENABLE_PROFILING
 #endif
-
-ComputeStatus D3D11::dumpResource(CommandList cmdList, Resource src, const char *path)
-{
     return eComputeStatusError;
 }
+
 
 void D3D11::destroyResourceDeferredImpl(const Resource resource)
 {   

@@ -18,7 +18,7 @@
 * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 * SOFTWARE.
-*/
+*/ 
 
 #pragma once
 
@@ -34,7 +34,7 @@ namespace interposer
 constexpr int kMaxHeapCount = 4;
 constexpr int kMaxComputeRoot32BitConstCount = 64;
 
-struct DECLSPEC_UUID("5B2662FB-EB28-4AEC-819E-1C1B4DE060F6") D3D12GraphicsCommandList : ID3D12GraphicsCommandList4
+struct DECLSPEC_UUID("5B2662FB-EB28-4AEC-819E-1C1B4DE060F6") D3D12GraphicsCommandList : ID3D12GraphicsCommandList6
 {
     D3D12GraphicsCommandList(D3D12Device * device, ID3D12GraphicsCommandList * original);
 
@@ -134,6 +134,13 @@ struct DECLSPEC_UUID("5B2662FB-EB28-4AEC-819E-1C1B4DE060F6") D3D12GraphicsComman
     void    STDMETHODCALLTYPE CopyRaytracingAccelerationStructure(D3D12_GPU_VIRTUAL_ADDRESS DestAccelerationStructureData, D3D12_GPU_VIRTUAL_ADDRESS SourceAccelerationStructureData, D3D12_RAYTRACING_ACCELERATION_STRUCTURE_COPY_MODE Mode) override final;
     void    STDMETHODCALLTYPE SetPipelineState1(ID3D12StateObject * pStateObject) override final;
     void    STDMETHODCALLTYPE DispatchRays(const D3D12_DISPATCH_RAYS_DESC * pDesc) override final;
+#pragma endregion
+#pragma region ID3D12GraphicsCommandList5
+    void   STDMETHODCALLTYPE RSSetShadingRate(D3D12_SHADING_RATE baseShadingRate, const D3D12_SHADING_RATE_COMBINER* combiners) override final;
+    void   STDMETHODCALLTYPE RSSetShadingRateImage(ID3D12Resource* shadingRateImage) override final;
+#pragma endregion
+#pragma region ID3D12GraphicsCommandList6
+    void   STDMETHODCALLTYPE DispatchMesh(UINT ThreadGroupCountX, UINT ThreadGroupCountY, UINT ThreadGroupCountZ) override final;
 #pragma endregion
 
     bool checkAndUpgradeInterface(REFIID riid);

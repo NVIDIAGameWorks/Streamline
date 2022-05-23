@@ -77,6 +77,9 @@ struct TemplateContext
     sl::Extent mvecExt{};
     sl::Extent depthExt{};
 
+    // Resource states provided by the host (optional)
+    uint32_t mvecState{}, depthState{}, outputState{}, inputState{};
+
     // Compute API
     chi::PlatformType platform = chi::ePlatformTypeD3D12;
     chi::ICompute* compute{};
@@ -84,7 +87,7 @@ struct TemplateContext
 static TemplateContext s_ctx = {};
 
 //! Set constants for our plugin (if any, this is optional and should be thread safe)
-bool setTemplateConstants(const void* data, uint32_t frameIndex, uint32_t id)
+bool slSetConstants(const void* data, uint32_t frameIndex, uint32_t id)
 {
     // For example, we can set out constants like this
     // 
@@ -137,11 +140,11 @@ void templateBeginEvaluation(chi::CommandList pCmdList, const common::EventData&
     // 
     // For example, here we fetch depth and mvec with their extents
     // 
-    getTaggedResource(eBufferTypeDepth, s_ctx.depth, evd.id, &s_ctx.depthExt);
-    getTaggedResource(eBufferTypeMVec, s_ctx.mvec, evd.id, &s_ctx.mvecExt);
+    getTaggedResource(eBufferTypeDepth, s_ctx.depth, evd.id, &s_ctx.depthExt, &s_ctx.depthState);
+    getTaggedResource(eBufferTypeMVec, s_ctx.mvec, evd.id, &s_ctx.mvecExt, &s_ctx.mvecState);
     // Now we fetch shadow in/out, assuming our plugin does some sort of denoising
-    getTaggedResource(eBufferTypeShadowNoisy, s_ctx.input, evd.id);
-    getTaggedResource(eBufferTypeShadowDenoised, s_ctx.output, evd.id);
+    getTaggedResource(eBufferTypeShadowNoisy, s_ctx.input, evd.id, nullptr, &s_ctx.inputState);
+    getTaggedResource(eBufferTypeShadowDenoised, s_ctx.output, evd.id, nullptr, &s_ctx.outputState);
 
     // If tagged resources are mandatory check if they are provided or not
     if (!s_ctx.depth || !s_ctx.mvec || !s_ctx.input || !s_ctx.output)
@@ -171,7 +174,18 @@ void templateEndEvaluation(chi::CommandList cmdList)
     // For example, dispatch compute shader work
 
     chi::ResourceState mvecState{}, depthState{}, outputState{}, inputState{};
-    CHI_VALIDATE(s_ctx.compute->getResourceState(s_ctx.mvec, mvecState));
+
+    // Check if state was give to us or not
+    if (s_ctx.mvecState)
+    {
+        // Convert native to SL state
+        CHI_VALIDATE(s_ctx.compute->getResourceState(s_ctx.mvecState, mvecState));
+    }
+    else
+    {
+        // Use internal resource tracking
+        CHI_VALIDATE(s_ctx.compute->getResourceState(s_ctx.mvec, mvecState));
+    }
     CHI_VALIDATE(s_ctx.compute->getResourceState(s_ctx.depth, depthState));
     CHI_VALIDATE(s_ctx.compute->getResourceState(s_ctx.input, inputState));
     CHI_VALIDATE(s_ctx.compute->getResourceState(s_ctx.output, outputState));
@@ -231,7 +245,7 @@ void templateEndEvaluation(chi::CommandList cmdList)
 }
 
 //! Get settings for our plugin (optional and depending on if we need to provide any settings back to the host)
-bool getTemplateSettings(const void* cdata, void* sdata)
+bool slGetSettings(const void* cdata, void* sdata)
 {
     // For example, we can set out constants like this
     // 
@@ -239,6 +253,18 @@ bool getTemplateSettings(const void* cdata, void* sdata)
     // 
     auto consts = (const TemplateConstants*)cdata;
     auto settings = (TemplateSettings*)sdata;
+    return true;
+}
+
+//! Explicit allocation of resources
+bool slAllocateResources(sl::CommandBuffer* cmdBuffer, sl::Feature feature, uint32_t id)
+{
+    return true;
+}
+
+//! Explicit de-allocation of resources
+bool slFreeResources(sl::Feature feature, uint32_t id)
+{
     return true;
 }
 
@@ -252,13 +278,6 @@ bool slOnPluginStartup(const char* jsonConfig, void* device, param::IParameters*
     //! Common startup and setup
     //!     
     SL_PLUGIN_COMMON_STARTUP();
-
-    //! Register constants and settings callbacks
-    //!
-    //! Note that parameters can be defined in parameters.h or 
-    //! in your plugin specific header as needed.
-    parameters->set(param::template_plugin::kSetConstsFunc, setTemplateConstants);
-    parameters->set(param::template_plugin::kGetSettingsFunc, getTemplateSettings);
 
     //! Register our evaluate callbacks
     //!
@@ -353,9 +372,11 @@ void slOnPluginShutdown()
 //!
 static const char* JSON = R"json(
 {
-    "_comment_id" : "id must match the sl::Feature enum in sl.h or sl_template.h, for example sl.dlss has id 0 hence eFeatureDLSS = 0",
+    "comment_id" : "id must match the sl::Feature enum in sl.h or sl_template.h, for example sl.dlss has id 0 hence eFeatureDLSS = 0",
     "id" : 65535,
     "priority" : 1,
+    "comment_namespace" : "rename this to the namespace used for parameters used by your plugin",
+    "namespace" : "template",
     "hooks" :
     [
         {
@@ -429,6 +450,10 @@ SL_EXPORT void* slGetPluginFunction(const char* functionName)
     SL_EXPORT_FUNCTION(slOnPluginShutdown);
     SL_EXPORT_FUNCTION(slOnPluginStartup);
     SL_EXPORT_FUNCTION(slGetPluginJSONConfig);
+    SL_EXPORT_FUNCTION(slSetConstants);
+    SL_EXPORT_FUNCTION(slGetSettings);
+    SL_EXPORT_FUNCTION(slAllocateResources);
+    SL_EXPORT_FUNCTION(slFreeResources);
 
     //! Hooks defined in the JSON config above
 

@@ -1,4 +1,4 @@
-# Streamline (SL) - Version 1.0.2
+# Streamline (SL) - Version 1.0.3
 This is where all the components of SL are being developed.
 
 ## Prerequisites
@@ -18,8 +18,7 @@ This is where all the components of SL are being developed.
 The make/solution files will be found in the generated `_project` directory. 
 
 ## Building
-- Open Visual Studio command prompt
-- Run `msbuild _project\{vs2017|vs2019}\streamline.sln /t:Clean,Build /property:Configuration=Production`
+- Execute `./build.bat` with `-{debug|release|production}` (`debug` is default) or use VS IDE and load solution from the `_project` directory
 > **IMPORTANT:**
 > Only use `production` builds when releasing your software otherwise SL plugins could be replaced with potentially malicious modules.
 
@@ -38,6 +37,10 @@ Please read [ProgrammingGuide.md](docs/ProgrammingGuide.md) to learn about the i
 Please read [ProgrammingGuideDLSS.md](docs/ProgrammingGuideDLSS.md) to learn about DLSS specific integration in games.
 ## Programming Guide - NRD
 Please read [ProgrammingGuideNRD.md](docs/ProgrammingGuideNRD.md) to learn about NRD specific integration in games.
+## Programming Guide - Latency
+Please read [ProgrammingGuideLatency.md](docs/ProgrammingGuideLatency.md) to learn about low-latency (Reflex) specific integration in games.
+## Programming Guide - NIS
+Please read [ProgrammingGuideNIS.md](docs/ProgrammingGuideNIS.md) to learn about NIS specific integration in games.
 
 ## Sample Plugin Source Code
 A sample Streamline plugin source code is located [here](source/plugins/sl.template/templateEntry.cpp)

@@ -67,9 +67,9 @@ struct VkDevices
 
 namespace param
 {
-  struct IParameters;
-  IParameters *getInterface();
-  void destroyInterface();
+struct IParameters;
+IParameters* getInterface();
+void destroyInterface();
 }
 
 struct Version
@@ -77,7 +77,7 @@ struct Version
     Version() : major(0), minor(0), build(0) {};
     Version(int v1, int v2, int v3) : major(v1), minor(v2), build(v3) {};
 
-    inline operator bool() const { return major != 0 || minor != 0 || build != 0;}
+    inline operator bool() const { return major != 0 || minor != 0 || build != 0; }
 
     inline bool fromStr(const std::string& str)
     {
@@ -99,11 +99,11 @@ struct Version
     {
         return std::to_wstring((major << 16) | (minor << 8) | build);
     }
-    inline bool operator==(const Version &rhs) const
+    inline bool operator==(const Version& rhs) const
     {
         return major == rhs.major && minor == rhs.minor && build == rhs.build;
     }
-    inline bool operator>(const Version &rhs) const
+    inline bool operator>(const Version& rhs) const
     {
         if (major < rhs.major) return false;
         else if (major > rhs.major) return true;
@@ -116,11 +116,11 @@ struct Version
         // build version the same
         return false;
     };
-    inline bool operator>=(const Version &rhs) const
+    inline bool operator>=(const Version& rhs) const
     {
         return operator>(rhs) || operator==(rhs);
     };
-    inline bool operator<(const Version &rhs) const
+    inline bool operator<(const Version& rhs) const
     {
         if (major > rhs.major) return false;
         else if (major < rhs.major) return true;
@@ -133,7 +133,7 @@ struct Version
         // build version the same
         return false;
     };
-    inline bool operator<=(const Version &rhs) const
+    inline bool operator<=(const Version& rhs) const
     {
         return operator<(rhs) || operator==(rhs);
     };
@@ -148,10 +148,10 @@ namespace api
 
 // Core API, each plugin must implement these
 using PFuncSetParameters = void(sl::param::IParameters*);
-using PFuncGetPluginJSONConfig = const char *(void);
-using PFuncOnPluginStartup = bool(const char *jsonConfig, void* device, sl::param::IParameters *);
+using PFuncGetPluginJSONConfig = const char* (void);
+using PFuncOnPluginStartup = bool(const char* jsonConfig, void* device, sl::param::IParameters*);
 using PFuncOnPluginShutdown = void(void);
-using PFuncGetPluginFunction = void*(const char*name);
+using PFuncGetPluginFunction = void* (const char* name);
 
 } // namespace api
 } // namespace sl

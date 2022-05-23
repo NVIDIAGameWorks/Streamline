@@ -3,7 +3,9 @@
 Streamline - DLSS
 =======================
 
-Version 1.0.2
+>The focus of this guide is on using Streamline to integrate DLSS into an application.  For more information about DLSS itself, please visit the [NVIDIA Developer DLSS Page](https://developer.nvidia.com/rtx/dlss)
+
+Version 1.0.3
 ------
 
 ### 1.0 INITIALIZE AND SHUTDOWN
@@ -122,7 +124,7 @@ dlssConsts.outputWidth = myUI->getOutputWidth();    // e.g 1920;
 dlssConsts.outputHeight = myUI->getOutputHeight(); // e.g. 1080;
 dlssConsts.sharpness = dlssSettings.sharpness; // optimal sharpness
 dlssConsts.colorBuffersHDR = sl::Boolean::eTrue; // assuming HDR pipeline
-if(!slSetFeatureSettings(sl::eFeatureDLSS, &dlssConsts))
+if(!slSetFeatureConstants(sl::eFeatureDLSS, &dlssConsts))
 {
     // Handle error here, check the logs
 }
@@ -173,10 +175,73 @@ else
     // Default up-scaling pass like for example TAAU goes here
 }
 ```
-### 8.0 TROUBLESHOOTING
+### 8.0 MULTIPLE VIEWPORTS
+
+Here is a code snippet showing one way of handling two viewports with explicit resource allocation and de-allocation:
+
+```cpp
+// Viewport1
+{
+    // We need to setup our constants first so sl.dlss plugin has enough information
+    sl::DLSSConstants dlssConsts = {};
+    dlssConsts.mode = viewport1->getDLSSMode(); // e.g. sl::eDLSSModeBalanced;
+    dlssConsts.outputWidth = viewport1->getOutputWidth();    // e.g 1920;
+    dlssConsts.outputHeight = viewport1->getOutputHeight(); // e.g. 1080;
+    // Note that we are passing viewport id
+    slSetFeatureConstants(sl::eFeatureDLSS, &dlssConsts, 0, viewport1->id);
+    
+    // Set our tags, note that we are passing viewport id
+    sl::Resource colorIn = {sl::ResourceType::eResourceTypeTex2d, viwport1->lowResInput};    
+    setTag(&colorIn, sl::BufferType::eBufferTypeScalingInputColor, viewport1->id);
+    // and so on ...
+
+    // Now we can allocate our feature explicitly, again passing viewport id
+    slAllocateResources(sl::eFeatureDLSS, viewport1->id);
+
+    // Evaluate DLSS on viewport1, again passing viewport id so we can map tags, constants correctly
+    //
+    // NOTE: If slAllocateResources is not called DLSS resources would be initialized at this point
+    slEvaluateFeature(myCmdList, sl::Feature::eFeatureDLSS, myFrameIndex, viewport1->id)
+
+    // When we no longer need this viewport
+    slFreeResources(sl::eFeatureDLSS, viewport1->id);
+}
+
+// Viewport2
+{
+    // We need to setup our constants first so sl.dlss plugin has enough information
+    sl::DLSSConstants dlssConsts = {};
+    dlssConsts.mode = viewport2->getDLSSMode(); // e.g. sl::eDLSSModeBalanced;
+    dlssConsts.outputWidth = viewport2->getOutputWidth();    // e.g 1920;
+    dlssConsts.outputHeight = viewport2->getOutputHeight(); // e.g. 1080;
+    slSetFeatureConstants(sl::eFeatureDLSS, &dlssConsts, 0, viewport2->id);
+
+    // Set our tags
+    sl::Resource colorIn = {sl::ResourceType::eResourceTypeTex2d, viwport2->lowResInput};
+    // Note that we are passing viewport id
+    setTag(&colorIn, sl::BufferType::eBufferTypeScalingInputColor, viewport2->id);
+    // and so on ...
+
+    // Now we can allocate our feature explicitly, again passing viewport id
+    slAllocateResources(sl::eFeatureDLSS, viewport2->id);
+    
+    // Evaluate DLSS on viewport2, again passing viewport id so we can map tags, constants correctly
+    //
+    // NOTE: If slAllocateResources is not called DLSS resources would be initialized at this point
+    slEvaluateFeature(myCmdList, sl::Feature::eFeatureDLSS, myFrameIndex, viewport2->id)
+
+    // When we no longer need this viewport
+    slFreeResources(sl::eFeatureDLSS, viewport2->id);
+}
+
+```
+
+### 9.0 TROUBLESHOOTING
 
 If the DLSS output does not look right please check the following:
 
 * If your motion vectors are in pixel space then scaling factors `sl::Constants::mvecScale` should be {1 / render width, 1 / render height}
 * If your motion vectors are in normalized -1,1 space then scaling factors `sl::Constants::mvecScale` should be {1, 1}
 * Make sure that jitter offset values are in pixel space
+* `NVSDK_NGX_Parameter_FreeMemOnReleaseFeature` is replaced with `slFreeResources`
+* `NVSDK_NGX_DLSS_Feature_Flags_MVLowRes` is handled automatically based on tagged motion vector buffer's size and extent.

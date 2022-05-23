@@ -3,7 +3,7 @@
 Streamline - SL
 =======================
 
-Version 1.0.2
+Version 1.0.3
 ------
 
 1 SETTING UP
@@ -135,9 +135,9 @@ struct Preferences
 
 struct Preferences1
 {
-    //! Optional - Features to enable, if not specified all features are enabled by default (assuming appropriate plugins are found)
+    //! Required - Features to enable (assuming appropriate plugins are found); if not specified, all features are DISABLED by default
     const Feature* featuresToEnable = {};
-    //! Optional - Number of features to enable
+    //! Required - Number of features to enable
     unsigned int numFeaturesToEnable = Feature::eFeatureCount;
     //! Reserved for future expansion, must be set to null
     void* ext = {};
@@ -147,8 +147,7 @@ struct Preferences1
 
 ##### 2.2.1.1 MANAGING FEATURES
 
-By default, SL will try to enable all features which are supported on the user's system. If your application is using a smaller subset of features, you can
-instruct SL to only enable features specified with the `Preferences::featuresToEnable` field. For example, to enable only DLSS one can do the following:
+SL will only enable features specified via the `Preferences1::featuresToEnable` (assuming they are supported on the user's system). For example, to enable only DLSS one can do the following:
 
 ```cpp
 Preferences1 pref1;
@@ -215,34 +214,39 @@ side will be **fully responsible for the resource allocation and destruction**.
 struct ResourceDesc
 {
     //! Indicates the type of resource
-    ResourceType type;
+    ResourceType type{};
     //! Indicates if resource is a buffer or not
-    bool buffer;
+    bool buffer{};
     //! D3D12_RESOURCE_DESC/VkImageCreateInfo/VkBufferCreateInfo
-    void *desc;
+    void *desc{};
     //! D3D12_RESOURCE_STATES or VkMemoryPropertyFlags
-    unsigned int state;
+    unsigned int state{};
     //! CD3DX12_HEAP_PROPERTIES or nullptr
-    void *heap;
+    void *heap{};
     //! Reserved for future expansion, must be set to null
-    void* ext = {};
+    void* ext{};
 };
 
 //! Native resource
 struct Resource
 {
     //! Indicates the type of resource
-    ResourceType type;
+    ResourceType type{};
     //! Indicates if resource is a buffer or not
-    bool buffer;
+    bool buffer{};
     //! ID3D12Resource/VkBuffer/VkImage
-    void *native;
+    void *native{};
     //! vkDeviceMemory or nullptr
-    void *memory;
+    void *memory{};
     //! VkImageView or nullptr
-    void *view;    
+    void *view{};    
+    //! State as D3D12_RESOURCE_STATES or VkImageLayout
+    //! 
+    //! IMPORTANT: State needs to be correct when tagged resources are actually used.
+    //! 
+    uint32_t state{};
     //! Reserved for future expansion, must be set to null
-    void* ext = {};
+    void* ext{};
 };
 
 //! Resource allocation/de-allocation callbacks
@@ -258,6 +262,96 @@ using pfunResourceReleaseCallback = void(Resource *resource, void* device);
 
 > **NOTE:**
 > Memory management done by the host is an optional feature and it is NOT required for the SL to work properly. If used, proper care needs to be taken to avoid releasing resources which are still used by the GPU.
+
+##### 2.2.1.4 RESOURCE ALLOCATION AND DE-ALLOCATION
+
+By default SL performs the so called `lazy` initialization and destruction of all resources - in other words resources are created only when used and destroyed when plugins are unloaded. If required an explicit allocation or de-allocation of internal SL resources is also possible using the following methods:
+
+```cpp
+//! Allocates resources for the specified feature.
+//!
+//! Call this method to explicitly allocate resources
+//! for an instance of the specified feature.
+//! 
+//! @param cmdBuffer Command buffer to use (must be created on device where feature is supported but can be null if not needed)
+//! @param feature Feature we are working with
+//! @param id Unique id (instance handle)
+//! @return false if resources cannot be allocated true otherwise.
+//!
+//! This method is NOT thread safe.
+SL_API bool slAllocateResources(sl::CommandBuffer* cmdBuffer, sl::Feature feature, uint32_t id);
+
+//! Frees resources for the specified feature.
+//!
+//! Call this method to explicitly free resources
+//! for an instance of the specified feature.
+//! 
+//! @param feature Feature we are working with
+//! @param id Unique id (instance handle)
+//! @return false if resources cannot be freed true otherwise.
+//!
+//! This method is NOT thread safe.
+SL_API bool slFreeResources(sl::Feature feature, uint32_t id);
+```
+
+For example, let's assume we have two viewports using `sl::eFeatureDLSS` and we want to manage SL resource allocation explicitly - here is some sample code:
+
+```cpp
+// Viewport1
+{
+    // We need to setup our constants first so sl.dlss plugin has enough information
+    sl::DLSSConstants dlssConsts = {};
+    dlssConsts.mode = viewport1->getDLSSMode(); // e.g. sl::eDLSSModeBalanced;
+    dlssConsts.outputWidth = viewport1->getOutputWidth();    // e.g 1920;
+    dlssConsts.outputHeight = viewport1->getOutputHeight(); // e.g. 1080;
+    // Note that we are passing viewport id
+    slSetFeatureConstants(sl::eFeatureDLSS, &dlssConsts, 0, viewport1->id);
+    
+    // Set our tags, note that we are passing viewport id
+    sl::Resource colorIn = {sl::ResourceType::eResourceTypeTex2d, viwport1->lowResInput};    
+    setTag(&colorIn, sl::BufferType::eBufferTypeScalingInputColor, viewport1->id);
+    // and so on ...
+
+    // Now we can allocate our feature explicitly, again passing viewport id
+    slAllocateResources(sl::eFeatureDLSS, viewport1->id);
+
+    // Evaluate DLSS on viewport1, again passing viewport id so we can map tags, constants correctly
+    //
+    // NOTE: If slAllocateResources is not called DLSS resources would be initialized at this point
+    slEvaluateFeature(myCmdList, sl::Feature::eFeatureDLSS, myFrameIndex, viewport1->id)
+
+    // When we no longer need this viewport
+    slFreeResources(sl::eFeatureDLSS, viewport1->id);
+}
+
+// Viewport2
+{
+    // We need to setup our constants first so sl.dlss plugin has enough information
+    sl::DLSSConstants dlssConsts = {};
+    dlssConsts.mode = viewport2->getDLSSMode(); // e.g. sl::eDLSSModeBalanced;
+    dlssConsts.outputWidth = viewport2->getOutputWidth();    // e.g 1920;
+    dlssConsts.outputHeight = viewport2->getOutputHeight(); // e.g. 1080;
+    slSetFeatureConstants(sl::eFeatureDLSS, &dlssConsts, 0, viewport2->id);
+
+    // Set our tags
+    sl::Resource colorIn = {sl::ResourceType::eResourceTypeTex2d, viwport2->lowResInput};
+    // Note that we are passing viewport id
+    setTag(&colorIn, sl::BufferType::eBufferTypeScalingInputColor, viewport2->id);
+    // and so on ...
+
+    // Now we can allocate our feature explicitly, again passing viewport id
+    slAllocateResources(sl::eFeatureDLSS, viewport2->id);
+    
+    // Evaluate DLSS on viewport2, again passing viewport id so we can map tags, constants correctly
+    //
+    // NOTE: If slAllocateResources is not called DLSS resources would be initialized at this point
+    slEvaluateFeature(myCmdList, sl::Feature::eFeatureDLSS, myFrameIndex, viewport2->id)
+
+    // When we no longer need this viewport
+    slFreeResources(sl::eFeatureDLSS, viewport2->id);
+}
+
+```
 
 #### 2.2.2 INITIALIZATION
 
@@ -421,6 +515,10 @@ enum BufferType
     eBufferTypeAmbientOcclusionNoisy,
     //! AO denoised
     eBufferTypeAmbientOcclusionDenoised,
+    //! Color buffer containing jittered input data for NIS pass (after TAA and tone-mapping)
+    eBufferTypeScalingInputColor,
+    //! Color buffer containing results from the NIS pass
+    eBufferTypeScalingOutputColor,
 
     //! Optional - UI/HUD pixels hint (set to 1 if a pixel belongs to the UI/HUD elements, 0 otherwise)
     eBufferTypeUIHint,
@@ -456,8 +554,22 @@ enum BufferType
 SL_API bool slSetTag(Resource* resource, BufferType tag, uint32_t id = 0, const Extent* extent = nullptr);
 ```
 
+Resource state can be provided by the host or if not SL will use internal tracking. Here is an example:
+
+```cpp
+// Host providing native D3D12 resource state
+//
+// IMPORTANT: State needs to be correct when tagged resource is used by SL and not necessarily at this point when it is tagged.
+//
+sl::Resource mvec = { sl::ResourceType::eResourceTypeTex2d, mvecResource, nullptr, nullptr, D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr };
+// Host NOT providing native resource state
+sl::Resource depth = { sl::ResourceType::eResourceTypeTex2d, depthResource};
+slSetTag(&mvec, sl::eBufferTypeMVec);
+slSetTag(&depth, sl::eBufferTypeDepth);
+```
+
 > **NOTE:**
-> SL manages resource states so there is no need to transition tagged resources. When used by your application resources will always be in the state you left them before invoking any SL APIs.
+> There is no need to transition tagged resources to any specific state. When used by your application resources will always be in the state you left them before invoking any SL APIs.
 
 All SL plugins require access to the following resources:
 
@@ -474,8 +586,8 @@ The following resources are required by NRD:
 
 The following resources are required by DLSS:
 
-* `eBufferTypeScalingInputColor` (render resolution jittered color as input)
-* `eBufferTypeScalingOutputColor` (final/post-process resolution render target where the upscaled AA result is stored)
+* `eBufferTypeTAAUInputColor` (render resolution jittered color as input)
+* `eBufferTypeTAAUOutputColor` (final/post-process resolution render target where the upscaled AA result is stored)
 
 The following resources are required by DLSS next:
 

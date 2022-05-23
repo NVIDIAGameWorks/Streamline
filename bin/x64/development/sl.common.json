@@ -1,0 +1,19 @@
+{
+	"logLevelNGX": 0,
+	"keys": [
+		{
+			"alt": false,
+			"ctrl": true,
+			"shift": true,
+			"key": 36,
+			"id": "stats"
+		},
+		{
+			"alt": false,
+			"ctrl": true,
+			"shift": true,
+			"key": 45,
+			"id": "debug"
+		}
+	]
+}

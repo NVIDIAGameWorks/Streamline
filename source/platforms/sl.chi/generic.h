@@ -129,7 +129,6 @@ protected:
     ComputeStatus createTexture2DResourceShared(const ResourceDescription& CreateResourceDesc, Resource& OutResource, bool UseNativeFormat, const char InFriendlyName[]);
     ComputeStatus genericPostInit();
 
-    size_t getFormatBytesPerPixel(Format InFormat);
     bool savePFM(const std::string &path, const char* srcBuffer, const int width, const int height);
     uint64_t getResourceSize(Resource res);
 
@@ -138,8 +137,11 @@ public:
     virtual ComputeStatus init(Device InDevice, param::IParameters* params);
     virtual ComputeStatus shutdown();
 
+    virtual ComputeStatus clearCache() override { return eComputeStatusNoImplementation; };
+
     virtual ComputeStatus getNativeResourceState(ResourceState state, uint32_t& nativeState) override { return eComputeStatusNoImplementation; };
     virtual ComputeStatus getResourceState(uint32_t nativeState, ResourceState& state) override { return eComputeStatusNoImplementation; };
+    virtual ComputeStatus getResourceFootprint(Resource resoruce, ResourceFootprint& footprint) override { return eComputeStatusNoImplementation; };
 
     virtual ComputeStatus getFinishedFrameIndex(uint32_t& index) final override { index = m_finishedFrame; return eComputeStatusOk; };
 
@@ -160,10 +162,10 @@ public:
 
     virtual ComputeStatus getNativeFormat(Format format, NativeFormat& native) override;
     virtual ComputeStatus getFormat(NativeFormat native, Format& format) override;
-
+    virtual ComputeStatus getBytesPerPixel(Format format, size_t& size) override;
     virtual ComputeStatus destroyResource(Resource& InResource) override final;
     virtual ComputeStatus destroy(std::function<void(void)> task) override final;
-
+        
     virtual ComputeStatus collectGarbage(uint32_t frame);
 
     ComputeStatus renderText(CommandList cmdList, int x, int y, const char *text, const ResourceArea &area, const float4& color = { 1.0f, 1.0f, 1.0f, 0.0f }, int reverseX = 0, int reverseY = 0) override;
@@ -190,17 +192,22 @@ public:
     ComputeStatus getResourceState(Resource resource, ResourceState& state) override;
     ComputeStatus copyResource(CommandList cmdList, Resource dstResource, Resource srcResource) override { return eComputeStatusNoImplementation; }
     ComputeStatus cloneResource(Resource inResource, Resource &outResource, const char friendlyName[], ResourceState initialState, unsigned int creationMask, unsigned int visibilityMask) override { return eComputeStatusNoImplementation; }
+    ComputeStatus copyDeviceTextureToDeviceBuffer(CommandList cmdList, Resource srcTexture, Resource dstBuffer) override { return eComputeStatusNoImplementation; }
 
     ComputeStatus getResourceDescription(Resource InResource, ResourceDescription &OutDesc) override { return eComputeStatusNoImplementation; }
     
     ComputeStatus setFullscreenState(SwapChain chain, bool fullscreen, Output out = nullptr) override { return eComputeStatusNoImplementation; }
 
-    ComputeStatus dumpResource(CommandList cmdList, Resource src, const char *path) override { return eComputeStatusNoImplementation; }
+    ComputeStatus beginProfiling(CommandList cmdList, unsigned int Metadata, const char* marker) override { return eComputeStatusOk;  }
+    ComputeStatus endProfiling(CommandList cmdList)  override { return eComputeStatusOk; }
+    ComputeStatus beginProfilingQueue(CommandQueue cmdList, uint32_t metadata, const char* marker)  override { return eComputeStatusOk; }
+    ComputeStatus endProfilingQueue(CommandQueue cmdList)  override { return eComputeStatusOk; }
 
-#if SL_ENABLE_PERF_TIMING
-    ComputeStatus beginProfiling(CommandList cmdList, unsigned int Metadata, const void *pData, unsigned int Size) { return eComputeStatusOk;  }
-    ComputeStatus endProfiling(CommandList cmdList) { return eComputeStatusOk; }
-#endif
+    virtual ComputeStatus setSleepMode(const LatencyConstants& consts) override;
+    virtual ComputeStatus getSleepStatus(LatencySettings& settings) override;
+    virtual ComputeStatus getLatencyReport(LatencySettings& settings) override;
+    virtual ComputeStatus sleep() override;
+    virtual ComputeStatus setLatencyMarker(LatencyMarker marker, uint64_t frameId) override;
 };
 
 }

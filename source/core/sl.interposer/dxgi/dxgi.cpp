@@ -58,15 +58,14 @@ UINT queryDevice(IUnknown*& device, Microsoft::WRL::ComPtr<IUnknown>& deviceProx
         deviceProxy = device;
         return 11;
     }
-    if (Microsoft::WRL::ComPtr<D3D12CommandQueue> command_queue_d3d12; SUCCEEDED(device->QueryInterface(__uuidof(D3D12CommandQueue), &command_queue_d3d12)))
+    if (Microsoft::WRL::ComPtr<D3D12CommandQueue> cmdQueueD3D12Proxy; SUCCEEDED(device->QueryInterface(__uuidof(D3D12CommandQueue), &cmdQueueD3D12Proxy)))
     {
-        device = command_queue_d3d12->m_base;
-        deviceProxy = std::move(reinterpret_cast<Microsoft::WRL::ComPtr<IUnknown> &>(command_queue_d3d12));
+        device = cmdQueueD3D12Proxy->m_base;
+        deviceProxy = std::move(reinterpret_cast<Microsoft::WRL::ComPtr<IUnknown> &>(cmdQueueD3D12Proxy));
         return 12;
     }
 
-    // This should never happen
-    assert(false);
+    // This can happen when we get called with standard interfaces like ID3D12CommandQueue - most likely another interposer is present
     return 0;
 }
 
@@ -109,6 +108,20 @@ HRESULT STDMETHODCALLTYPE IDXGIFactory_CreateSwapChain(IDXGIFactory* pFactory, I
 
     DXGI_SWAP_CHAIN_DESC desc = *pDesc;
 
+    Microsoft::WRL::ComPtr<IUnknown> deviceProxy;
+    const UINT d3dVersion = queryDevice(pDevice, deviceProxy);
+    if (!d3dVersion)
+    {
+        // We cannot resolve the provided device, this happens when another interposer is present
+        //
+        // Restore the original code at the target function so we can call the original method
+        sl::interposer::getInterface()->restoreOriginalCode(hookCreateSwapChain);
+        auto hr = sl::interposer::call(IDXGIFactory_CreateSwapChain, hookCreateSwapChain)(pFactory, pDevice, &desc, ppSwapChain);
+        // Now restore current code (jmp interposer.dll::hook_for_this_function)
+        sl::interposer::getInterface()->restoreCurrentCode(hookCreateSwapChain);
+        return hr;
+    }
+
     using CreateSwapChain_t = HRESULT(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI_SWAP_CHAIN_DESC* pDesc, IDXGISwapChain** ppSwapChain);
 
     {
@@ -116,13 +129,19 @@ HRESULT STDMETHODCALLTYPE IDXGIFactory_CreateSwapChain(IDXGIFactory* pFactory, I
         for (auto hook : hooks) ((CreateSwapChain_t*)hook)(pFactory, pDevice, &desc, ppSwapChain);
     }
 
-    Microsoft::WRL::ComPtr<IUnknown> deviceProxy;
-    const UINT d3dVersion = queryDevice(pDevice, deviceProxy);
-
-    auto hr = sl::interposer::call(IDXGIFactory_CreateSwapChain, hookCreateSwapChain)(pFactory, pDevice, &desc, ppSwapChain);
-    if (FAILED(hr))
+    HRESULT hr{};
+    if (*ppSwapChain)
     {
-        return hr;
+        // Handled by one of the plugins
+        hr = S_OK;
+    }
+    else
+    {
+        hr = sl::interposer::call(IDXGIFactory_CreateSwapChain, hookCreateSwapChain)(pFactory, pDevice, &desc, ppSwapChain);
+        if (FAILED(hr))
+        {
+            return hr;
+        }
     }
 
     {
@@ -138,29 +157,53 @@ HRESULT STDMETHODCALLTYPE IDXGIFactory_CreateSwapChain(IDXGIFactory* pFactory, I
 HRESULT STDMETHODCALLTYPE IDXGIFactory2_CreateSwapChainForHwnd(IDXGIFactory2* pFactory, IUnknown* pDevice, HWND hWnd, const DXGI_SWAP_CHAIN_DESC1* pDesc, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* pFullscreenDesc, IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain)
 {
     if (pDevice == nullptr || pDesc == nullptr || ppSwapChain == nullptr)
+    {
         return DXGI_ERROR_INVALID_CALL;
+    }
 
     DXGI_SWAP_CHAIN_DESC1 desc = *pDesc;
-    DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullscreen_desc = {};
+    DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullscreenDesc = {};
     if (pFullscreenDesc != nullptr)
-        fullscreen_desc = *pFullscreenDesc;
+    {
+        fullscreenDesc = *pFullscreenDesc;
+    }
     else
-        fullscreen_desc.Windowed = TRUE;
+    {
+        fullscreenDesc.Windowed = TRUE;
+    }
 
     Microsoft::WRL::ComPtr<IUnknown> deviceProxy;
     const UINT d3dVersion = queryDevice(pDevice, deviceProxy);
-
+    if (!d3dVersion)
+    {
+        // We cannot resolve the provided device, this happens when another interposer is present
+        //
+        // Restore the original code at the target function so we can call the original method
+        sl::interposer::getInterface()->restoreOriginalCode(hookCreateSwapChainForHwnd);
+        auto hr = sl::interposer::call(IDXGIFactory2_CreateSwapChainForHwnd, hookCreateSwapChainForHwnd)(pFactory, pDevice, hWnd, &desc, fullscreenDesc.Windowed ? nullptr : &fullscreenDesc, pRestrictToOutput, ppSwapChain);
+        // Now restore current code (jmp interposer.dll::hook_for_this_function)
+        sl::interposer::getInterface()->restoreCurrentCode(hookCreateSwapChainForHwnd);
+        return hr;
+    }
     using CreateSwapChainForHwnd_t = HRESULT(IDXGIFactory* pFactory, IUnknown* pDevice, HWND hWnd, const DXGI_SWAP_CHAIN_DESC1* pDesc, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC*, IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain);
-
     {
         const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eIDXGIFactory2_CreateSwapChainForHwnd);
         for (auto hook : hooks) ((CreateSwapChainForHwnd_t*)hook)(pFactory, pDevice, hWnd, &desc, pFullscreenDesc, pRestrictToOutput, ppSwapChain);
     }
 
-    auto hr = sl::interposer::call(IDXGIFactory2_CreateSwapChainForHwnd, hookCreateSwapChainForHwnd)(pFactory, pDevice, hWnd, &desc, fullscreen_desc.Windowed ? nullptr : &fullscreen_desc, pRestrictToOutput, ppSwapChain);
-    if (FAILED(hr))
+    HRESULT hr{};
+    if (*ppSwapChain)
     {
-        return hr;
+        // Handled by one of the plugins
+        hr = S_OK;
+    }
+    else
+    {
+        hr = sl::interposer::call(IDXGIFactory2_CreateSwapChainForHwnd, hookCreateSwapChainForHwnd)(pFactory, pDevice, hWnd, &desc, fullscreenDesc.Windowed ? nullptr : &fullscreenDesc, pRestrictToOutput, ppSwapChain);
+        if (FAILED(hr))
+        {
+            return hr;
+        }
     }
 
     {
@@ -174,9 +217,25 @@ HRESULT STDMETHODCALLTYPE IDXGIFactory2_CreateSwapChainForHwnd(IDXGIFactory2* pF
 HRESULT STDMETHODCALLTYPE IDXGIFactory2_CreateSwapChainForCoreWindow(IDXGIFactory2* pFactory, IUnknown* pDevice, IUnknown* pWindow, const DXGI_SWAP_CHAIN_DESC1* pDesc, IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain)
 {
     if (pDevice == nullptr || pDesc == nullptr || ppSwapChain == nullptr)
+    {
         return DXGI_ERROR_INVALID_CALL;
+    }
 
     DXGI_SWAP_CHAIN_DESC1 desc = *pDesc;
+
+    Microsoft::WRL::ComPtr<IUnknown> deviceProxy;
+    const UINT d3dVersion = queryDevice(pDevice, deviceProxy);
+    if (!d3dVersion)
+    {
+        // We cannot resolve the provided device, this happens when another interposer is present
+        //
+        // Restore the original code at the target function so we can call the original method
+        sl::interposer::getInterface()->restoreOriginalCode(hookCreateSwapChainForCoreWindow);
+        auto hr = sl::interposer::call(IDXGIFactory2_CreateSwapChainForCoreWindow, hookCreateSwapChainForCoreWindow)(pFactory, pDevice, pWindow, &desc, pRestrictToOutput, ppSwapChain);
+        // Now restore current code (jmp interposer.dll::hook_for_this_function)
+        sl::interposer::getInterface()->restoreCurrentCode(hookCreateSwapChainForCoreWindow);
+        return hr;
+    }
 
     using CreateSwapChainForCoreWindow_t = HRESULT(IDXGIFactory* pFactory, IUnknown* pDevice, IUnknown* pWindow, const DXGI_SWAP_CHAIN_DESC1* pDesc, IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain);
     {
@@ -184,13 +243,18 @@ HRESULT STDMETHODCALLTYPE IDXGIFactory2_CreateSwapChainForCoreWindow(IDXGIFactor
         for (auto hook : hooks) ((CreateSwapChainForCoreWindow_t*)hook)(pFactory, pDevice, pWindow, &desc, pRestrictToOutput, ppSwapChain);
     }
 
-    Microsoft::WRL::ComPtr<IUnknown> deviceProxy;
-    const UINT d3dVersion = queryDevice(pDevice, deviceProxy);
-
-    auto hr = sl::interposer::call(IDXGIFactory2_CreateSwapChainForCoreWindow, hookCreateSwapChainForCoreWindow)(pFactory, pDevice, pWindow, &desc, pRestrictToOutput, ppSwapChain);
-    if (FAILED(hr))
+    HRESULT hr{};
+    if (*ppSwapChain)
     {
-        return hr;
+        hr = S_OK;
+    }
+    else
+    {
+        hr = sl::interposer::call(IDXGIFactory2_CreateSwapChainForCoreWindow, hookCreateSwapChainForCoreWindow)(pFactory, pDevice, pWindow, &desc, pRestrictToOutput, ppSwapChain);
+        if (FAILED(hr) || !d3dVersion)
+        {
+            return hr;
+        }
     }
 
     {
@@ -211,6 +275,17 @@ HRESULT STDMETHODCALLTYPE IDXGIFactory2_CreateSwapChainForComposition(IDXGIFacto
 
     Microsoft::WRL::ComPtr<IUnknown> deviceProxy;
     const UINT d3dVersion = queryDevice(pDevice, deviceProxy);
+    if (!d3dVersion)
+    {
+        // We cannot resolve the provided device, this happens when another interposer is present
+        //
+        // Restore the original code at the target function so we can call the original method
+        sl::interposer::getInterface()->restoreOriginalCode(hookCreateSwapChainForComposition);
+        auto hr = sl::interposer::call(IDXGIFactory2_CreateSwapChainForComposition, hookCreateSwapChainForComposition)(pFactory, pDevice, &desc, pRestrictToOutput, ppSwapChain);
+        // Now restore current code (jmp interposer.dll::hook_for_this_function)
+        sl::interposer::getInterface()->restoreCurrentCode(hookCreateSwapChainForComposition);
+        return hr;
+    }
 
     auto hr = sl::interposer::call(IDXGIFactory2_CreateSwapChainForComposition, hookCreateSwapChainForComposition)(pFactory, pDevice, &desc, pRestrictToOutput, ppSwapChain);
     if (FAILED(hr))

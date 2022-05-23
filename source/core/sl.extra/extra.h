@@ -83,18 +83,18 @@ inline std::wstring toWStr(const char* s)
     return utf8ToUtf16(s);
 }
 
-inline std::string toStr(const std::wstring &s)
+inline std::string toStr(const std::wstring& s)
 {
     return utf16ToUtf8(s.c_str());
 }
 
-inline std::string toStr(const wchar_t *s)
+inline std::string toStr(const wchar_t* s)
 {
     return utf16ToUtf8(s);
 }
 
-template <typename I> 
-std::string toHexStr(I w, size_t hex_len = sizeof(I) << 1) 
+template <typename I>
+std::string toHexStr(I w, size_t hex_len = sizeof(I) << 1)
 {
     constexpr const char* digits = "0123456789ABCDEF";
     std::string rc(hex_len, '0');
@@ -113,7 +113,7 @@ struct ScopedTasks
     ScopedTasks() {};
     ~ScopedTasks()
     {
-        for (auto &task : tasks)
+        for (auto& task : tasks)
         {
             task();
         }
@@ -172,6 +172,24 @@ IKeyboard* getInterface();
 
 struct AverageValueMeter
 {
+    AverageValueMeter() {};
+    AverageValueMeter(const AverageValueMeter& rhs) { operator=(rhs); }
+    inline AverageValueMeter& operator=(const AverageValueMeter& rhs)
+    {
+        useWindow = rhs.useWindow.load();
+        n = rhs.n.load();
+        val = rhs.val.load();
+        sum = rhs.sum.load();
+        mean = rhs.mean.load();
+        std = rhs.std.load();
+        mean_old = rhs.mean_old.load();
+        m_s = rhs.m_s.load();
+        median = rhs.median.load();
+        window = rhs.window;
+        start = rhs.start;
+        return *this;
+    }
+
     std::atomic<bool> useWindow = true;
     std::atomic<float> n = 0;
     std::atomic<float> val = 0;
@@ -212,7 +230,7 @@ struct AverageValueMeter
             add(diff.count());
         }
     }
-    
+
     void timestamp()
     {
         end();
@@ -254,7 +272,7 @@ struct AverageValueMeter
 
 struct scopedCPUTimer
 {
-    scopedCPUTimer(AverageValueMeter *meter)
+    scopedCPUTimer(AverageValueMeter* meter)
     {
         m_meter = meter;
         meter->useWindow = false;

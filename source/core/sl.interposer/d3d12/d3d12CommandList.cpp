@@ -18,7 +18,7 @@
 * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 * SOFTWARE.
-*/
+*/ 
 
 #include <wrl/client.h>
 
@@ -55,6 +55,8 @@ bool D3D12GraphicsCommandList::checkAndUpgradeInterface(REFIID riid)
       __uuidof(ID3D12GraphicsCommandList2),
       __uuidof(ID3D12GraphicsCommandList3),
       __uuidof(ID3D12GraphicsCommandList4),
+      __uuidof(ID3D12GraphicsCommandList5),
+      __uuidof(ID3D12GraphicsCommandList6),
     };
 
     for (uint32_t version = 0; version < uint32_t(iidLookup.size()); ++version)
@@ -516,6 +518,20 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetPipelineState1(ID3D12StateOb
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::DispatchRays(const D3D12_DISPATCH_RAYS_DESC* pDesc)
 {
     static_cast<ID3D12GraphicsCommandList4*>(m_base)->DispatchRays(pDesc);
+}
+
+void STDMETHODCALLTYPE D3D12GraphicsCommandList::RSSetShadingRate(D3D12_SHADING_RATE baseShadingRate, const D3D12_SHADING_RATE_COMBINER* combiners)
+{
+    static_cast<ID3D12GraphicsCommandList5*>(m_base)->RSSetShadingRate(baseShadingRate, combiners);
+}
+void STDMETHODCALLTYPE D3D12GraphicsCommandList::RSSetShadingRateImage(ID3D12Resource* shadingRateImage)
+{
+    static_cast<ID3D12GraphicsCommandList5*>(m_base)->RSSetShadingRateImage(shadingRateImage);
+}
+
+void STDMETHODCALLTYPE D3D12GraphicsCommandList::DispatchMesh(UINT ThreadGroupCountX, UINT ThreadGroupCountY, UINT ThreadGroupCountZ)
+{
+    static_cast<ID3D12GraphicsCommandList6*>(m_base)->DispatchMesh(ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ);
 }
 
 }

@@ -1,0 +1,10 @@
+{
+  "enableInterposer": true,
+  "enableAllFeatures": true,
+  "showConsole": true,
+  "comment_logLevel": "Log levels are off, on, verbose",
+  "logLevel": 2,
+  "comment_paths": "To use set your paths and rename variables by removing leading underscore",
+  "_logPath": "N:/My/Log/Path",
+  "_pathToPlugins": "N:/My/Plugin/Path"
+}

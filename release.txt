@@ -1,11 +1,18 @@
--- Switch to export C style API (e.g. slInit instead of sl::init and so on).  This will require changing any calls to these methods in existing integrations to the new naming convention.
--- Renamed some buffer types to be more technique agnostic (e.g. eBufferTypeTAAUInputColor and eBufferTypeTAAUOutputColor have been renamed to eBufferTypeScalingInputColor and eBufferTypeScalingOutputColor, respectively).
--- The parameters for the Resource Allocation and Release callbacks have been changed to require a device pointer.  Existing integrations utilizing these callbacks will need to be modified to work with the new signatures.
--- NRD updated to v3.1
--- Tags and features have been decoupled from the interposer and common plugin (new plugins and new tags can be added without having to recompile interposer or common plugin)
--- Feature constants have been split into individual header files to simplify adding new features and modifying existing ones.
--- Added slSetFeatureEnabled() method to allow control over if supported feature is enabled or not.
--- Shaders are provided pre-compiled.  If you need to compile HLSL shaders for your own plugin, you will need to place slang in the .\external\slang_internal folder and xxd in the .\tools folder.  Then any *.hlsl files in the .\shaders folder will be compiled at build time.
--- Bug Fix: CreateD3D12Device now handles null device correctly
--- Bug Fix: Dynamic resize and subRects now work in DLSS plugin
--- Known Issue: Benign "error" message that gitVersion.h cannot be found upon first build 
+Streamline SDK 1.0.3 Release Notes
+-- Source code for the Streamline DLSS plugin has been added.
+-- Added support for DLSS NVSDK_NGX_Parameter_DLSS_Indicator_Invert_X_Axis, NVSDK_NGX_Parameter_DLSS_Indicator_Invert_Y_Axis and NVSDK_NGX_Parameter_FreeMemOnReleaseFeature parameters.
+-- The value of NVSDK_NGX_DLSS_Feature_Flags_MVLowRes is now inferred from the extents of the Motion Vector resource compared to the extents of the Color Input resource in the DLSS plugin. 
+-- Added support for DLSS GPU memory usage query via getDLSSSettings() in the Streamline DLSS plugin
+-- A new Plugin, sl.nis, and its source code has been added, which utilizes the NVIDIA Image Scaling SDK.
+-- A new Plugin, sl.latency, and its source code has been added, which enables PC Latency measurement.
+-- Added support to allow resource state tracking to be handled by the host application
+-- Modified the Streamline Interposer to properly handle the case where other interposers were already active
+-- Added slAlloc/FreeResources API to allow the host app to more explicitly control the lifetime of resources used by Streamline Plugins, if desired
+-- Upgraded D3D12 CommandList support to ID3D12GraphicsCommandList6 and Device support to ID3D12Device9
+-- Added per-plugin namespace to clarify the scope of parameters and functions
+-- Added a new "development" folder containing unsigned, non-production builds of Streamline with additional debugging functionality
+-- Added a Debugging.md document to the "docs" folder with details on using JSON files to configure options for the Development build of Streamline
+-- Clarified which parts of SL API can be used before device is created and which can only be used after device has been created
+-- Bug-Fix: Fixed a crash when resizing the swapchain in D3D11
+-- Bug-Fix: Fixed a crash when switching between monitors
+-- Bug-Fix: Fixed missing release of a reference when state could not be found in D3D12

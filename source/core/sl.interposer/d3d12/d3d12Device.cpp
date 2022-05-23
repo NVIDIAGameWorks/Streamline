@@ -18,7 +18,7 @@
 * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 * SOFTWARE.
-*/
+*/ 
 
 #include <wrl/client.h>
 #include "source/core/sl.interposer/d3d12/d3d12Device.h"
@@ -47,14 +47,18 @@ bool D3D12Device::checkAndUpgradeInterface(REFIID riid)
         return true;
     }
 
-    std::vector<IID> iidLookup = {
-    __uuidof(ID3D12Device),
-    __uuidof(ID3D12Device1),
-    __uuidof(ID3D12Device2),
-    __uuidof(ID3D12Device3),
-    __uuidof(ID3D12Device4),
-    __uuidof(ID3D12Device5),
-    __uuidof(ID3D12Device6),
+    std::vector<IID> iidLookup = 
+    {
+        __uuidof(ID3D12Device),
+        __uuidof(ID3D12Device1),
+        __uuidof(ID3D12Device2),
+        __uuidof(ID3D12Device3),
+        __uuidof(ID3D12Device4),
+        __uuidof(ID3D12Device5),
+        __uuidof(ID3D12Device6),
+        __uuidof(ID3D12Device7),
+        __uuidof(ID3D12Device8),
+        __uuidof(ID3D12Device9),
     };
 
     for (uint32_t version = 0; version < (uint32_t)iidLookup.size(); ++version)
@@ -463,5 +467,64 @@ HRESULT STDMETHODCALLTYPE D3D12Device::SetBackgroundProcessingMode(D3D12_BACKGRO
     return static_cast<ID3D12Device6*>(m_base)->SetBackgroundProcessingMode(Mode, MeasurementsAction, hEventToSignalUponCompletion, pbFurtherMeasurementsDesired);
 }
 
+HRESULT STDMETHODCALLTYPE D3D12Device::AddToStateObject(const D3D12_STATE_OBJECT_DESC* pAddition, ID3D12StateObject* pStateObjectToGrowFrom, REFIID riid, void** ppNewStateObject)
+{
+    return static_cast<ID3D12Device7*>(m_base)->AddToStateObject(pAddition, pStateObjectToGrowFrom, riid, ppNewStateObject);
+}
+HRESULT STDMETHODCALLTYPE D3D12Device::CreateProtectedResourceSession1(const D3D12_PROTECTED_RESOURCE_SESSION_DESC1* pDesc, REFIID riid, void** ppSession)
+{
+    return static_cast<ID3D12Device7*>(m_base)->CreateProtectedResourceSession1(pDesc, riid, ppSession);
+}
+
+D3D12_RESOURCE_ALLOCATION_INFO STDMETHODCALLTYPE D3D12Device::GetResourceAllocationInfo2(UINT visibleMask, UINT numResourceDescs, const D3D12_RESOURCE_DESC1* pResourceDescs, D3D12_RESOURCE_ALLOCATION_INFO1* pResourceAllocationInfo1)
+{
+    return static_cast<ID3D12Device8*>(m_base)->GetResourceAllocationInfo2(visibleMask, numResourceDescs, pResourceDescs, pResourceAllocationInfo1);
+}
+
+HRESULT STDMETHODCALLTYPE D3D12Device::CreateCommittedResource2(const D3D12_HEAP_PROPERTIES* pHeapProperties, D3D12_HEAP_FLAGS HeapFlags, const D3D12_RESOURCE_DESC1* pDesc, D3D12_RESOURCE_STATES InitialResourceState, const D3D12_CLEAR_VALUE* pOptimizedClearValue, ID3D12ProtectedResourceSession* pProtectedSession, REFIID riidResource, void** ppvResource)
+{
+    return static_cast<ID3D12Device8*>(m_base)->CreateCommittedResource2(pHeapProperties, HeapFlags, pDesc, InitialResourceState, pOptimizedClearValue, pProtectedSession, riidResource, ppvResource);
+}
+
+HRESULT STDMETHODCALLTYPE D3D12Device::CreatePlacedResource1(ID3D12Heap* pHeap, UINT64 HeapOffset, const D3D12_RESOURCE_DESC1* pDesc, D3D12_RESOURCE_STATES InitialState, const D3D12_CLEAR_VALUE* pOptimizedClearValue, REFIID riid, void** ppvResource)
+{
+    return static_cast<ID3D12Device8*>(m_base)->CreatePlacedResource1(pHeap, HeapOffset, pDesc, InitialState, pOptimizedClearValue, riid, ppvResource);
+}
+void    STDMETHODCALLTYPE D3D12Device::CreateSamplerFeedbackUnorderedAccessView(ID3D12Resource* pTargetedResource, ID3D12Resource* pFeedbackResource, D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor)
+{
+    static_cast<ID3D12Device8*>(m_base)->CreateSamplerFeedbackUnorderedAccessView(pTargetedResource, pFeedbackResource, DestDescriptor);
+}
+void    STDMETHODCALLTYPE D3D12Device::GetCopyableFootprints1(const D3D12_RESOURCE_DESC1* pResourceDesc, UINT FirstSubresource, UINT NumSubresources, UINT64 BaseOffset, D3D12_PLACED_SUBRESOURCE_FOOTPRINT* pLayouts, UINT* pNumRows, UINT64* pRowSizeInBytes, UINT64* pTotalBytes)
+{
+    static_cast<ID3D12Device8*>(m_base)->GetCopyableFootprints1(pResourceDesc, FirstSubresource, NumSubresources, BaseOffset, pLayouts, pNumRows, pRowSizeInBytes, pTotalBytes);
+}
+
+HRESULT STDMETHODCALLTYPE D3D12Device::CreateShaderCacheSession(const D3D12_SHADER_CACHE_SESSION_DESC* pDesc, REFIID riid, void** ppvSession)
+{
+    return static_cast<ID3D12Device9*>(m_base)->CreateShaderCacheSession(pDesc, riid, ppvSession);
+}
+HRESULT STDMETHODCALLTYPE D3D12Device::ShaderCacheControl(D3D12_SHADER_CACHE_KIND_FLAGS Kinds, D3D12_SHADER_CACHE_CONTROL_FLAGS Control)
+{
+    return static_cast<ID3D12Device9*>(m_base)->ShaderCacheControl(Kinds, Control);
+}
+HRESULT STDMETHODCALLTYPE D3D12Device::CreateCommandQueue1(const D3D12_COMMAND_QUEUE_DESC* pDesc, REFIID CreatorID, REFIID riid, void** ppCommandQueue)
+{
+    const HRESULT hr = static_cast<ID3D12Device9*>(m_base)->CreateCommandQueue1(pDesc, CreatorID, riid, ppCommandQueue);
+    if (SUCCEEDED(hr))
+    {
+        const auto cmdQueueProxy = new D3D12CommandQueue(this, static_cast<ID3D12CommandQueue*>(*ppCommandQueue));
+
+        // Upgrade to the actual interface version requested here
+        if (cmdQueueProxy->checkAndUpgradeInterface(riid))
+        {
+            * ppCommandQueue = cmdQueueProxy;
+        }
+        else
+        {
+            delete cmdQueueProxy;
+        }
+    }
+    return hr;
+}
 }
 }

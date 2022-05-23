@@ -54,137 +54,137 @@ namespace sl
 namespace file
 {
 
-inline bool exists(const wchar_t*src)
+inline bool exists(const wchar_t* src)
 {
-  return fs::exists(src);
+    return fs::exists(src);
 }
 
 inline bool copy(const wchar_t* dst, const wchar_t* src)
 {
-  return fs::copy_file(src, dst, fs::copy_options::overwrite_existing);
+    return fs::copy_file(src, dst, fs::copy_options::overwrite_existing);
 }
 
-inline void write(const wchar_t* fname, const std::vector<uint8_t> &data)
+inline void write(const wchar_t* fname, const std::vector<uint8_t>& data)
 {
-	fs::path p(fname);
+    fs::path p(fname);
 #ifdef SL_WINDOWS
-	std::fstream file(fname, std::ios::binary | std::ios::out);
+    std::fstream file(fname, std::ios::binary | std::ios::out);
 #else
     std::fstream file(extra::utf16ToUtf8(fname).c_str(), std::ios::binary | std::ios::out);
 #endif
-  file.write((char*)data.data(), data.size());  
+    file.write((char*)data.data(), data.size());
 }
 
 inline FILE* open(const wchar_t* path, const wchar_t* mode)
 {
 #if SL_WINDOWS    
-	FILE* file = _wfsopen(path, mode, _SH_DENYNO);
+    FILE* file = _wfsopen(path, mode, _SH_DENYNO);
 #else
-  FILE* file = fopen(extra::utf16ToUtf8(path).c_str(), extra::utf16ToUtf8(mode).c_str());
+    FILE* file = fopen(extra::utf16ToUtf8(path).c_str(), extra::utf16ToUtf8(mode).c_str());
 #endif
-  if (!file)
-  {
-    if (errno != ENOENT)
+    if (!file)
     {
-      SL_LOG_ERROR("Unable to open file %S - error = %d", path, errno);
+        if (errno != ENOENT)
+        {
+            SL_LOG_ERROR("Unable to open file %S - error = %d", path, errno);
+        }
+        else
+        {
+            SL_LOG_ERROR("File '%S' does not exist", path);
+        }
     }
-    else
-    {
-      SL_LOG_ERROR("File '%S' does not exist", path);
-    }
-  }
-  return file;
+    return file;
 }
 
 inline void flush(FILE* file)
 {
-  fflush(file);
+    fflush(file);
 }
 
 inline void close(FILE* file)
 {
-  fclose(file);
+    fclose(file);
 }
 
 inline size_t readChunk(FILE* file, void* chunk, size_t chunkSize)
 {
-  return fread(chunk, 1, chunkSize, file);
+    return fread(chunk, 1, chunkSize, file);
 }
 
 inline size_t writeChunk(FILE* file, const void* chunk, const size_t chunkSize)
 {
-  return fwrite(chunk, 1, chunkSize, file);
+    return fwrite(chunk, 1, chunkSize, file);
 }
 
 inline char* readLine(FILE* file, char* line, size_t maxLineSize)
 {
-  char* stringRead = fgets(line, int(maxLineSize), file);
-  if (stringRead)
-  {
-    // Remove line endings (Linux and Windows)
-    auto LF = '\n';
-    auto CR = '\r';
-    size_t end = strlen(stringRead) - 1;
-    if (stringRead[end] == LF)
+    char* stringRead = fgets(line, int(maxLineSize), file);
+    if (stringRead)
     {
-      stringRead[end] = '\0';
-      if (end > 0 && stringRead[end - 1] == CR)
-      {
-        stringRead[end - 1] = '\0';
-      }
+        // Remove line endings (Linux and Windows)
+        auto LF = '\n';
+        auto CR = '\r';
+        size_t end = strlen(stringRead) - 1;
+        if (stringRead[end] == LF)
+        {
+            stringRead[end] = '\0';
+            if (end > 0 && stringRead[end - 1] == CR)
+            {
+                stringRead[end - 1] = '\0';
+            }
+        }
     }
-  }
-  return stringRead;
+    return stringRead;
 }
 
 inline bool writeLine(FILE* file, const char* line)
 {
-  size_t lineLen = strlen(line);
-  size_t written = fwrite(line, 1, lineLen, file);
-  if (written != lineLen)
-  {
-    return false;
-  }
-  auto LF = '\n';
-  int ret = fputc(LF, file);
-  return ret == LF;
+    size_t lineLen = strlen(line);
+    size_t written = fwrite(line, 1, lineLen, file);
+    if (written != lineLen)
+    {
+        return false;
+    }
+    auto LF = '\n';
+    int ret = fputc(LF, file);
+    return ret == LF;
 }
 
 inline std::vector<uint8_t> read(const wchar_t* fname)
 {
-	fs::path p(fname);
-	size_t file_size = fs::file_size(p);
-	std::vector<uint8_t> ret_buffer(file_size);
+    fs::path p(fname);
+    size_t file_size = fs::file_size(p);
+    std::vector<uint8_t> ret_buffer(file_size);
 #ifdef SL_LINUX
     std::fstream file(extra::toStr(fname), std::ios::binary | std::ios::in);
 #else
-  std::fstream file(fname, std::ios::binary | std::ios::in);
+    std::fstream file(fname, std::ios::binary | std::ios::in);
 #endif
-  file.read((char*)ret_buffer.data(), file_size);
-  return ret_buffer;
+    file.read((char*)ret_buffer.data(), file_size);
+    return ret_buffer;
 }
 
-inline const char *getTmpFileName()
+inline const char* getTmpFileName()
 {
     static std::string g_result;
-  g_result = fs::temp_directory_path().string();
-  return g_result.c_str();
+    g_result = fs::temp_directory_path().string();
+    return g_result.c_str();
 }
 
 // Required when using symlinks
-inline std::string getRealPath(const char *filename)
+inline std::string getRealPath(const char* filename)
 {
 #ifdef SL_WINDOWS
     auto file = CreateFile(filename,   // file to open
-                GENERIC_READ,          // open for reading
-                FILE_SHARE_READ,       // share for reading
-                NULL,                  // default security
-                OPEN_EXISTING,         // existing file only
-                FILE_ATTRIBUTE_NORMAL, // normal file
-                NULL);                 // no attr. template  
-  char buffer[MAX_PATH] = {};
-  GetFinalPathNameByHandleA(file, buffer, MAX_PATH, FILE_NAME_OPENED);
-  CloseHandle(file);
+        GENERIC_READ,          // open for reading
+        FILE_SHARE_READ,       // share for reading
+        NULL,                  // default security
+        OPEN_EXISTING,         // existing file only
+        FILE_ATTRIBUTE_NORMAL, // normal file
+        NULL);                 // no attr. template  
+    char buffer[MAX_PATH] = {};
+    GetFinalPathNameByHandleA(file, buffer, MAX_PATH, FILE_NAME_OPENED);
+    CloseHandle(file);
 #else
     char buffer[PATH_MAX] = {};
     ::realpath(filename, buffer);
@@ -193,9 +193,9 @@ inline std::string getRealPath(const char *filename)
 }
 
 
-inline time_t getModTime(const std::string &pathAbs)
+inline time_t getModTime(const std::string& pathAbs)
 {
-  std::string path = getRealPath(pathAbs.c_str());
+    std::string path = getRealPath(pathAbs.c_str());
     auto t = fs::last_write_time(path);
     return t.time_since_epoch().count();
 }
@@ -214,11 +214,11 @@ inline bool setCurrentDirectoryPath(const wchar_t* path)
     return !ec;
 }
 
-inline std::string removeExtension(const std::string& filename) 
+inline std::string removeExtension(const std::string& filename)
 {
     size_t lastdot = filename.find_last_of(".");
     if (lastdot == std::string::npos) return filename;
-    return filename.substr(0, lastdot); 
+    return filename.substr(0, lastdot);
 }
 
 inline bool remove(const wchar_t* path)
@@ -269,7 +269,7 @@ inline bool move(const wchar_t* from, const wchar_t* to)
 inline bool createDirectoryRecursively(const wchar_t* path)
 {
     std::error_code ec;
-    fs::create_directories(path,ec);
+    fs::create_directories(path, ec);
     if (ec)
     {
         SL_LOG_ERROR("createDirectoryRecursively failed with %s", ec.message().c_str());
@@ -281,19 +281,19 @@ inline bool createDirectoryRecursively(const wchar_t* path)
 class scoped_dir_change
 {
 public:
-  scoped_dir_change(const wchar_t *newCurrentDir)
-  {
-    dir = getCurrentDirectoryPath();
-    setCurrentDirectoryPath(newCurrentDir);
-  }
+    scoped_dir_change(const wchar_t* newCurrentDir)
+    {
+        dir = getCurrentDirectoryPath();
+        setCurrentDirectoryPath(newCurrentDir);
+    }
 
-  ~scoped_dir_change()
-  {
-    setCurrentDirectoryPath(dir.c_str());
-  }
+    ~scoped_dir_change()
+    {
+        setCurrentDirectoryPath(dir.c_str());
+    }
 
 private:
-  std::wstring dir;
+    std::wstring dir;
 };
 
 }

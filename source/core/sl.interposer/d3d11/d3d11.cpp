@@ -18,7 +18,7 @@
 * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 * SOFTWARE.
-*/
+*/ 
 
 #include <Windows.h>
 #include <wrl/client.h>
@@ -74,14 +74,13 @@ extern "C" HRESULT WINAPI D3D11CreateDeviceAndSwapChain(IDXGIAdapter * pAdapter,
     }
 
     // It is OK for device to be nullptr as long as the above call did not fail
-    if (!ppDevice)
+    if (!ppDevice || !(*ppDevice))
     {
         return hr;
     }
 
     auto device = *ppDevice;
-    sl::plugin_manager::getInterface()->setD3D11Device(device);
-
+    
     // Now it is safe to create a swap chain
     if (pSwapChainDesc != nullptr)
     {
@@ -112,6 +111,8 @@ extern "C" HRESULT WINAPI D3D11CreateDeviceAndSwapChain(IDXGIAdapter * pAdapter,
         {
             device->GetImmediateContext(ppImmediateContext);
         }
+
+        sl::plugin_manager::getInterface()->setD3D11Device(device);
     }
     else
     {

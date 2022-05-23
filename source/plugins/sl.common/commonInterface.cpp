@@ -50,14 +50,19 @@ struct CommonInterfaceContext
 {
     chi::PlatformType platform;
     sl::chi::ICompute* compute;
+#ifdef SL_CAPTURE
+    sl::chi::ICapture* capture;
+#endif
     uint32_t frameIndex = 0;
 
     thread::ThreadContext<chi::D3D11ThreadContext>* threadsD3D11 = {};
     thread::ThreadContext<chi::D3D12ThreadContext>* threadsD3D12 = {};
 
     std::map<Feature, EvaluateCallbacks> evalCallbacks;
+
     NvPhysicalGpuHandle nvGPUHandle[NVAPI_MAX_PHYSICAL_GPUS] = { };
     NvU32 nvGPUCount = 0;
+
     common::GPUArch gpuInfo{};
 
     chi::CommonThreadContext& getThreadContext()
@@ -70,12 +75,14 @@ struct CommonInterfaceContext
             }
             return threadsD3D11->getContext();
         }
-
-        if (!threadsD3D12)
+        else
         {
-            threadsD3D12 = new thread::ThreadContext<chi::D3D12ThreadContext>();
+            if (!threadsD3D12)
+            {
+                threadsD3D12 = new thread::ThreadContext<chi::D3D12ThreadContext>();
+            }
+            return threadsD3D12->getContext();
         }
-        return threadsD3D12->getContext();
     }
 };
 
@@ -156,6 +163,12 @@ bool createCompute(void* device, uint32_t deviceType)
 
     api::getContext()->parameters->set(sl::param::common::kComputeAPI, ctx.compute);
 
+#ifdef SL_CAPTURE
+    ctx.capture = sl::chi::getCapture();
+    ctx.capture->init(ctx.compute);
+    api::getContext()->parameters->set(sl::param::common::kCaptureAPI, ctx.capture);
+#endif
+
     return true;
 }
 
@@ -200,17 +213,21 @@ bool evaluateFeature(CommandBuffer* cmdBuffer, Feature feature, uint32_t frameIn
 
     // First we need to get to the correct base interface we need to use
     CommandBuffer* cmdList = nullptr;
-    if (ctx.platform == chi::ePlatformTypeD3D11)
+    if (cmdBuffer)
     {
-        // No interposing for d3d11 
-        cmdList = cmdBuffer;
-    }
-    else if (ctx.platform == chi::ePlatformTypeD3D12)
-    {
-        // Streamline D3D12GraphicsCommandList -> ID3D12GraphicsCommandList
-        auto& thread = (chi::D3D12ThreadContext&)ctx.getThreadContext();
-        thread.cmdList = (interposer::D3D12GraphicsCommandList*)cmdBuffer;
-        cmdList = thread.cmdList->m_base;
+        if (ctx.platform == chi::ePlatformTypeD3D11)
+        {
+            // No interposing for d3d11 
+            cmdList = cmdBuffer;
+        }
+        else if (ctx.platform == chi::ePlatformTypeD3D12)
+        {
+            // Streamline D3D12GraphicsCommandList -> ID3D12GraphicsCommandList
+            auto& thread = (chi::D3D12ThreadContext&)ctx.getThreadContext();
+            thread.cmdList = (interposer::D3D12GraphicsCommandList*)cmdBuffer;
+            cmdList = thread.cmdList->m_base;
+        }
+
     }
 
     // This allows us to map correct constants and tags to this evaluate call
@@ -326,6 +343,12 @@ void presentCommon()
 HRESULT slHookPresent(IDXGISwapChain* swapChain, UINT SyncInterval, UINT Flags, bool& Skip)
 {
     presentCommon();
+    return S_OK;
+}
+
+HRESULT slHookResizeSwapChainPre(IDXGISwapChain* swapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags)
+{
+    CHI_VALIDATE(ctx.compute->clearCache());
     return S_OK;
 }
 

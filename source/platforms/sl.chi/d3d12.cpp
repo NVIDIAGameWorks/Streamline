@@ -20,7 +20,7 @@
 * SOFTWARE.
 */
 
-#include <dxgi1_4.h>
+#include <dxgi1_6.h>
 #include <algorithm>
 #include <cmath>
 #include <d3dcompiler.h>
@@ -30,6 +30,12 @@
 #include "source/platforms/sl.chi/d3d12.h"
 #include "shaders/copy_to_buffer_cs.h"
 #include "external/nvapi/nvapi.h"
+
+#if SL_ENABLE_PROFILING
+#pragma comment( lib, "WinPixEventRuntime.lib")
+#define USE_PIX
+#include "external/pix/Include/WinPixEventRuntime/pix3.h"
+#endif
 
 namespace sl
 {
@@ -366,8 +372,7 @@ struct CommandListContext : public ICommandListContext
 
     uint32_t acquireNextBufferIndex(SwapChain chain)
     {
-        // VK specific, nothing to do here
-        return index;
+        return ((IDXGISwapChain4*)chain)->GetCurrentBackBufferIndex();
     }
 
     bool didFrameFinish(uint32_t index)
@@ -526,17 +531,8 @@ ComputeStatus D3D12::shutdown()
     CHI_CHECK(destroyKernel(m_copyKernel));
     m_copyKernel = {};
 
-    for (auto& rb : m_readbackMap)
-    {
-        CHI_CHECK(destroyResource(rb.second.target));
-        for (int i = 0; i < SL_READBACK_QUEUE_SIZE; i++)
-        {
-            CHI_CHECK(destroyResource(rb.second.readback[i]));
-        }
-    }
     for (UINT node = 0; node < MAX_NUM_NODES; node++)
     {
-#if SL_ENABLE_PERF_TIMING
         for (auto section : m_sectionPerfMap[node])
         {
             for (int i = 0; i < SL_READBACK_QUEUE_SIZE; i++)
@@ -546,7 +542,6 @@ ComputeStatus D3D12::shutdown()
             }
         }
         m_sectionPerfMap[node].clear();
-#endif
         SL_SAFE_RELEASE(m_heap->descriptorHeap[node]);
         SL_SAFE_RELEASE(m_heap->descriptorHeapCPU[node]);
     }
@@ -577,6 +572,17 @@ ComputeStatus D3D12::shutdown()
     m_kernels.clear();
 
     return Generic::shutdown();
+}
+
+ComputeStatus D3D12::clearCache()
+{
+    for (auto& resources : m_resourceData)
+    {
+        resources.second.clear();
+    }
+    m_resourceData.clear();
+
+    return eComputeStatusOk;
 }
 
 ComputeStatus D3D12::getPlatformType(PlatformType &OutType)
@@ -1601,8 +1607,13 @@ ComputeStatus D3D12::copyHostToDeviceBuffer(CommandList InCmdList, uint64_t InSi
     return eComputeStatusOk;
 }
 
-ComputeStatus D3D12::copyHostToDeviceTexture(CommandList InCmdList, uint64_t InSize, uint64_t RowPitch, const void* InData, Resource InTargetResource, Resource& InUploadResource)
+ComputeStatus D3D12::copyHostToDeviceTexture(CommandList cmdList, uint64_t InSize, uint64_t RowPitch, const void* InData, Resource InTargetResource, Resource& InUploadResource)
 {
+    if (!cmdList || !InData || !InTargetResource)
+    {
+        return eComputeStatusInvalidArgument;
+    }
+
     uint64_t depthPitch = 1;
     uint64_t mipLevel = 0;
     uint64_t arraySlice = 0;
@@ -1635,7 +1646,32 @@ ComputeStatus D3D12::copyHostToDeviceTexture(CommandList InCmdList, uint64_t InS
     srcCopyLocation.PlacedFootprint = footprint;
     srcCopyLocation.pResource = uploadBuffer;
 
-    ((ID3D12GraphicsCommandList*)InCmdList)->CopyTextureRegion(&destCopyLocation, 0, 0, 0, &srcCopyLocation, nullptr);
+    ((ID3D12GraphicsCommandList*)cmdList)->CopyTextureRegion(&destCopyLocation, 0, 0, 0, &srcCopyLocation, nullptr);
+    return eComputeStatusOk;
+}
+
+ComputeStatus D3D12::copyDeviceTextureToDeviceBuffer(CommandList cmdList, Resource srcTexture, Resource dstBuffer)
+{
+    if (!cmdList || !srcTexture || !dstBuffer)
+    {
+        return eComputeStatusInvalidArgument;
+    }
+    ID3D12Resource* tex = (ID3D12Resource*)srcTexture;
+    D3D12_RESOURCE_DESC resourceDesc = tex->GetDesc();
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+    m_device->GetCopyableFootprints(&resourceDesc, 0, 1, 0, &footprint, nullptr, nullptr, nullptr);
+
+    D3D12_TEXTURE_COPY_LOCATION srcCopyLocation = {};
+    srcCopyLocation.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    srcCopyLocation.SubresourceIndex = 0;
+    srcCopyLocation.pResource = (ID3D12Resource*)srcTexture;
+
+    D3D12_TEXTURE_COPY_LOCATION destCopyLocation = {};
+    destCopyLocation.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    destCopyLocation.PlacedFootprint = footprint;
+    destCopyLocation.pResource = (ID3D12Resource*)dstBuffer;
+
+    ((ID3D12GraphicsCommandList*)cmdList)->CopyTextureRegion(&destCopyLocation, 0, 0, 0, &srcCopyLocation, nullptr);
     return eComputeStatusOk;
 }
 
@@ -1827,6 +1863,31 @@ ComputeStatus D3D12::copyBufferToReadbackBuffer(CommandList InCmdList, Resource 
     return eComputeStatusOk;
 }
 
+ComputeStatus D3D12::mapResource(CommandList cmdList, Resource resource, void*& data, uint32_t subResource, uint64_t offset, uint64_t totalBytes)
+{
+    auto src = (ID3D12Resource*)resource;
+    if (!src) return eComputeStatusInvalidPointer;
+
+    void* mapped{};
+    D3D12_RANGE range = { offset, offset + totalBytes };
+    if (FAILED(src->Map(subResource, &range, &mapped)))
+    {
+        SL_LOG_ERROR("Failed to map buffer");
+        return eComputeStatusError;
+    }
+    data = mapped;
+    return eComputeStatusOk;
+}
+
+ComputeStatus D3D12::unmapResource(CommandList cmdList, Resource resource, uint32_t subResource)
+{
+    auto src = (ID3D12Resource*)resource;
+    if (!src) return eComputeStatusInvalidPointer;
+
+    src->Unmap(0, nullptr);
+    return eComputeStatusOk;
+}
+
 ComputeStatus D3D12::getLUIDFromDevice(NVSDK_NGX_LUID *OutId)
 {
     memcpy(OutId, &(m_device->GetAdapterLuid()), sizeof(LUID));
@@ -1835,7 +1896,7 @@ ComputeStatus D3D12::getLUIDFromDevice(NVSDK_NGX_LUID *OutId)
 
 ComputeStatus D3D12::beginPerfSection(CommandList cmdList, const char *key, unsigned int node, bool reset)
 {
-#ifndef SL_PRODUCTION
+#if SL_ENABLE_TIMING
     PerfData* data = {};
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -1854,7 +1915,7 @@ ComputeStatus D3D12::beginPerfSection(CommandList cmdList, const char *key, unsi
         {
             data->reset[i] = true;
         }
-        data->values.clear();
+        data->meter.reset();
     }
     
     if (!data->queryHeap[data->queryIdx])
@@ -1896,28 +1957,17 @@ ComputeStatus D3D12::beginPerfSection(CommandList cmdList, const char *key, unsi
             {
                 if (delta > 0)
                 {
-                    // Average over last N executions
-                    if (data->values.size() == 100)
-                    {
-                        data->accumulatedTimeMS -= data->values.front();
-                        data->values.erase(data->values.begin());
-                    }
-                    data->accumulatedTimeMS += delta;
-                    data->values.push_back(delta);
+                    data->meter.add(delta);
                 }
             }
             else
             {
-                data->reset[data->queryIdx] = false;
-                data->accumulatedTimeMS = 0;
-                data->values.clear();
+                data->meter.reset();
             }
         }
         else
         {
             data->reset[data->queryIdx] = false;
-            data->accumulatedTimeMS = 0;
-            data->values.clear();
         }
     }
 
@@ -1928,7 +1978,7 @@ ComputeStatus D3D12::beginPerfSection(CommandList cmdList, const char *key, unsi
 
 ComputeStatus D3D12::endPerfSection(CommandList cmdList, const char* key, float &avgTimeMS, unsigned int node)
 {
-#ifndef SL_PRODUCTION
+#if SL_ENABLE_TIMING
     PerfData* data = {};
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -1942,131 +1992,42 @@ ComputeStatus D3D12::endPerfSection(CommandList cmdList, const char* key, float 
     ((ID3D12GraphicsCommandList*)cmdList)->EndQuery(data->queryHeap[data->queryIdx], D3D12_QUERY_TYPE_TIMESTAMP, 1);
     data->queryIdx = (data->queryIdx + 1) % SL_READBACK_QUEUE_SIZE;
 
-    avgTimeMS = data->values.size() ? data->accumulatedTimeMS / (float)data->values.size() : 0;
+    avgTimeMS = data->meter.median;
 #else
     avgTimeMS = 0;
 #endif
     return eComputeStatusOk;
 }
 
-#if SL_ENABLE_PERF_TIMING
-ComputeStatus D3D12::beginProfiling(CommandList cmdList, unsigned int Metadata, const void *pData, unsigned int Size)
+ComputeStatus D3D12::beginProfiling(CommandList cmdList, uint32_t metadata, const char* marker)
 {
-    std::string test(static_cast<const char*>(pData), Size);
-    //std::string test = "test";
-    ((ID3D12GraphicsCommandList*)cmdList)->BeginEvent(1, test.c_str(), (UINT)test.size());
+#if SL_ENABLE_PROFILING
+    PIXBeginEvent(((ID3D12GraphicsCommandList*)cmdList), metadata, marker);
+#endif    
     return eComputeStatusOk;
 }
 
 ComputeStatus D3D12::endProfiling(CommandList cmdList)
 {
-    ((ID3D12GraphicsCommandList*)cmdList)->EndEvent();
+#if SL_ENABLE_PROFILING
+    PIXEndEvent(((ID3D12GraphicsCommandList*)cmdList));
+#endif
     return eComputeStatusOk;
 }
 
-#endif
-
-ComputeStatus D3D12::dumpResource(CommandList cmdList, Resource src, const char *path)
+ComputeStatus D3D12::beginProfilingQueue(CommandQueue cmdQueue, uint32_t metadata, const char* marker)
 {
-    
+#if SL_ENABLE_PROFILING
+    PIXBeginEvent(((ID3D12CommandQueue*)cmdQueue), metadata, marker);
+#endif    
+    return eComputeStatusOk;
+}
 
-    ResourceDescription srcDesc;
-    CHI_CHECK(getResourceDescription(src, srcDesc));
-
-    ResourceReadbackQueue* rrq = {};
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        auto it = m_readbackMap.find(src);
-        if (it == m_readbackMap.end())
-        {
-            m_readbackMap[src] = {};
-            rrq = &m_readbackMap[src];
-        }
-        else
-        {
-            rrq = &(*it).second;
-        }
-    }
-
-    uint32_t bytes = 3 * sizeof(float) * srcDesc.width * srcDesc.height;
-
-    if (rrq->readback[rrq->index])
-    {
-        for (auto i = m_readbackThreads.begin(); i != m_readbackThreads.end(); i++)
-        {
-            if ((*i).wait_for(std::chrono::seconds(0)) == std::future_status::ready)
-            {
-                i = m_readbackThreads.erase(i);
-                if (i == m_readbackThreads.end()) break;
-            }
-        }
-
-        ID3D12Resource *res = (ID3D12Resource*)rrq->readback[rrq->index];
-        void *data;
-        D3D12_RANGE range{ 0, bytes };
-        res->Map(0, &range, &data);
-        if (!data)
-        {
-            SL_LOG_ERROR("Failed to map readback resource");
-        }
-        else
-        {
-            std::vector<char> pixels(bytes);
-            memcpy(pixels.data(), data, bytes);
-            res->Unmap(0, nullptr);
-            std::string fpath(path);
-            m_readbackThreads.push_back(std::async(std::launch::async, [this, srcDesc, pixels, fpath]()->bool
-            {
-                return savePFM(fpath, pixels.data(), srcDesc.width, srcDesc.height);
-            }));
-        }
-    }
-    else
-    {   
-        if(!rrq->target)
-        {
-            ResourceDescription desc(bytes, 1, chi::eFormatINVALID,HeapType::eHeapTypeDefault,ResourceState::eStorageRW,ResourceFlags::eRawOrStructuredBuffer);
-            CHI_CHECK(createBuffer(desc, rrq->target, (std::string("chi.target.") + std::to_string((size_t)src)).c_str()));
-        }
-        ResourceDescription desc(bytes, 1, chi::eFormatINVALID, chi::eHeapTypeReadback, chi::ResourceState::eCopyDestination);
-        CHI_CHECK(createBuffer(desc, rrq->readback[rrq->index], (std::string("chi.readback.") + std::to_string((size_t)src) + "." + std::to_string(rrq->index)).c_str()));
-    }
-    
-    {
-        extra::ScopedTasks revTransitions;
-        chi::ResourceTransition transitions[] =
-        {
-            {src, chi::ResourceState::eTextureRead, srcDesc.state},
-        };
-        CHI_CHECK(transitionResources(cmdList, transitions, (uint32_t)countof(transitions), &revTransitions));
-
-        struct alignas(16) CopyDataCB
-        {
-            sl::float4 sizeAndInvSize;
-        };
-        CopyDataCB cb;
-        cb.sizeAndInvSize = { (float)srcDesc.width, (float)srcDesc.height, 1.0f / (float)srcDesc.width, 1.0f / (float)srcDesc.height };
-        CHI_CHECK(bindKernel(m_copyKernel));
-        CHI_CHECK(bindConsts(0, 0, &cb, sizeof(CopyDataCB), 3));
-        CHI_CHECK(bindTexture(1, 0, src));
-        CHI_CHECK(bindRawBuffer(2, 0, rrq->target));
-        uint32_t grid[] = { (srcDesc.width + 16 - 1) / 16, (srcDesc.height + 16 - 1) / 16, 1 };
-        CHI_CHECK(dispatch(grid[0], grid[1], grid[2]));
-    }
-
-    {
-        extra::ScopedTasks revTransitions;
-        chi::ResourceTransition transitions[] =
-        {
-            {rrq->target, chi::ResourceState::eCopySource, chi::ResourceState::eStorageRW},
-            {rrq->readback[rrq->index], chi::ResourceState::eCopyDestination, chi::ResourceState::eStorageRW},
-        };
-        CHI_CHECK(transitionResources(cmdList, transitions, (uint32_t)countof(transitions), &revTransitions));
-        CHI_CHECK(copyResource(cmdList, rrq->readback[rrq->index], rrq->target));
-    }
-
-    rrq->index = (rrq->index + 1) % SL_READBACK_QUEUE_SIZE;
-        
+ComputeStatus D3D12::endProfilingQueue(CommandQueue cmdQueue)
+{
+#if SL_ENABLE_PROFILING
+    PIXEndEvent(((ID3D12CommandQueue*)cmdQueue));
+#endif
     return eComputeStatusOk;
 }
 
@@ -2183,33 +2144,62 @@ ComputeStatus D3D12::setResourceState(Resource resource, ResourceState state, ui
 
 ComputeStatus D3D12::getResourceState(Resource resource, ResourceState& state)
 {
+    state = ResourceState::eUnknown;
     if (!resource)
     {
-        state = ResourceState::eUnknown;
         return eComputeStatusOk;
     }
 
-    state = ResourceState::eGeneral;
-
+    HRESULT res{};
     ID3D12Pageable* pageable = {};
     ((IUnknown*)resource)->QueryInterface(&pageable);
     if (pageable)
     {
         uint32_t size = sizeof(state);
-        if (FAILED(pageable->GetPrivateData(sResourceStateGUID, &size, &state)))
+        res = pageable->GetPrivateData(sResourceStateGUID, &size, &state);
+        if (FAILED(res))
         {
             SL_LOG_ERROR("resource 0x%llx does not have a state", resource);
-            return eComputeStatusInvalidArgument;
         }
         pageable->Release();
     }
+
+    return FAILED(res) ? eComputeStatusError : eComputeStatusOk;
+}
+
+ComputeStatus D3D12::getResourceFootprint(Resource resource, ResourceFootprint& footprint)
+{
+    if (!resource) return eComputeStatusInvalidArgument;
+
+    ID3D12Resource* res = (ID3D12Resource*)resource;
+    D3D12_RESOURCE_DESC resourceDesc = res->GetDesc();
+
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT fpnt = {};
+    uint32_t numRows;
+    uint64_t rowSizeInBytes;
+    uint64_t totalBytes;
+
+    m_device->GetCopyableFootprints(&resourceDesc, 0, 1, 0, &fpnt, &numRows, &rowSizeInBytes, &totalBytes);
+    
+    footprint.depth = fpnt.Footprint.Depth;
+    footprint.width = fpnt.Footprint.Width;
+    footprint.height = fpnt.Footprint.Height;
+    footprint.offset = fpnt.Offset;
+    footprint.rowPitch = fpnt.Footprint.RowPitch;
+    footprint.numRows = numRows;
+    footprint.rowSizeInBytes = rowSizeInBytes;
+    footprint.totalBytes = totalBytes;
+    getFormat(fpnt.Footprint.Format, footprint.format);
 
     return eComputeStatusOk;
 }
 
 ComputeStatus D3D12::getResourceDescription(Resource resource, ResourceDescription& outDesc)
 {
-    if (!resource) return eComputeStatusInvalidArgument;
+    if (!resource)
+    {
+        return eComputeStatusInvalidArgument;
+    }
 
     // First make sure this is not an DXGI or some other resource
     auto unknown = (IUnknown*)resource;
@@ -2227,6 +2217,8 @@ ComputeStatus D3D12::getResourceDescription(Resource resource, ResourceDescripti
     outDesc.height = desc.Height;
     outDesc.nativeFormat = desc.Format;
     outDesc.mips = desc.MipLevels;
+    outDesc.state = ResourceState::eUnknown;
+
     if (desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
     {
         outDesc.gpuVirtualAddress = pageable->GetGPUVirtualAddress();
@@ -2242,15 +2234,15 @@ ComputeStatus D3D12::getResourceDescription(Resource resource, ResourceDescripti
     }
 
     uint32_t size = sizeof(outDesc.state);
-    if (FAILED(pageable->GetPrivateData(sResourceStateGUID, &size, &outDesc.state)))
+    auto res = pageable->GetPrivateData(sResourceStateGUID, &size, &outDesc.state);
+    if (FAILED(res))
     {
         std::wstring name = getDebugName(resource);
         SL_LOG_ERROR("resource 0x%llx(%S) does not have a state", resource, name.c_str());
-        return eComputeStatusInvalidArgument;
     }
     pageable->Release();
 
-    return eComputeStatusOk;
+    return FAILED(res) ? eComputeStatusError : eComputeStatusOk;
 }
 
 }

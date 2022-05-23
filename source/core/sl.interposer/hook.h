@@ -25,10 +25,16 @@
 #include <vector>
 #include <string>
 
+#include "external/json/include/nlohmann/json.hpp"
+using json = nlohmann::json;
+
 namespace sl
 {
 namespace interposer
 {
+
+// 8 bytes for 64bit address and 8 bytes for code
+constexpr uint32_t kCodePatchSize = 16;
 
 #ifdef SL_WINDOWS
 
@@ -46,12 +52,16 @@ struct ExportedFunction
         name = rhs.name;
         target = rhs.target;
         replacement = rhs.replacement;
+        memcpy(originalCode, rhs.originalCode, kCodePatchSize);
+        memcpy(currentCode, rhs.currentCode, kCodePatchSize);
         return *this; 
     }
 
-    const char* name = {};
-    VirtualAddress target = {};
-    VirtualAddress replacement = {};
+    uint8_t originalCode[kCodePatchSize]{};
+    uint8_t currentCode[kCodePatchSize]{};
+    const char* name{};
+    VirtualAddress target{};
+    VirtualAddress replacement{};
 };
 
 using ExportedFunctionList = std::vector<ExportedFunction>;
@@ -60,8 +70,11 @@ struct IHook
 {
     virtual void setEnabled(bool value) = 0;
     virtual bool isEnabled() const = 0;
+    virtual const json& getConfig() const = 0;
     virtual bool enumerateModuleExports(const wchar_t* systemModule, ExportedFunctionList& exportedFunctions) = 0;
     virtual bool registerHookForClassInstance(IUnknown* instance, uint32_t virtualTableOffset, ExportedFunction& f) = 0;
+    virtual bool restoreOriginalCode(ExportedFunction& f) = 0;
+    virtual bool restoreCurrentCode(const ExportedFunction& f) = 0;
 };
 
 template <typename T>
@@ -76,6 +89,7 @@ struct IHook
 {
     virtual void setEnabled(bool value) = 0;
     virtual bool isEnabled() const = 0;
+    virtual const json& getConfig() const = 0;
 };
 
 #endif

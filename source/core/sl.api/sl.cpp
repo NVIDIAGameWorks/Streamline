@@ -40,6 +40,18 @@ using namespace sl;
 
 //! API
 
+#define SL_VALIDATE_STATE                                                                                                                   \
+if (!interposer::getInterface()->isEnabled())                                                                                               \
+{                                                                                                                                           \
+    return false;                                                                                                                           \
+}                                                                                                                                           \
+                                                                                                                                            \
+if (!plugin_manager::getInterface()->arePluginsLoaded())                                                                                    \
+{                                                                                                                                           \
+    SL_LOG_ERROR_ONCE("SL not initialized or no plugins found - please make sure to include all required plugins including sl.common");     \
+    return false;                                                                                                                           \
+}
+
 bool slInit(const Preferences &pref, int applicationId)
 {
     if (!applicationId)
@@ -47,6 +59,14 @@ bool slInit(const Preferences &pref, int applicationId)
         // Use a generic Id for now
         applicationId = 100721531;
     }
+
+#ifdef SL_PRODUCTION
+    auto* pref1 = (Preferences1*)pref.ext;
+    if (!pref1 || !pref1->featuresToEnable || pref1->numFeaturesToEnable == 0)
+    {
+        SL_LOG_WARN("All features will be DISABLED - the explicit list of features to enable must be specified in production builds");
+    }
+#endif
 
     // Setup logging first
     auto log = log::getInterface();
@@ -58,6 +78,35 @@ bool slInit(const Preferences &pref, int applicationId)
     
     if (sl::interposer::getInterface()->isEnabled())
     {
+#ifndef SL_PRODUCTION
+        // Allow overrides via 'sl.interposer.json'
+        {
+            auto config = sl::interposer::getInterface()->getConfig();
+            if (config.contains("showConsole"))
+            {
+                bool showConsole = false;
+                config.at("showConsole").get_to(showConsole);
+                log->enableConsole(showConsole);
+                SL_LOG_HINT("Overriding show console to %u", showConsole);
+            }
+            if (config.contains("logPath"))
+            {
+                std::string path;
+                config.at("logPath").get_to(path);
+                log->setLogPath(extra::toWStr(path).c_str());
+                SL_LOG_HINT("Overriding log path to %s", path.c_str());
+            }
+            if (config.contains("logLevel"))
+            {
+                uint32_t level;
+                config.at("logLevel").get_to(level);
+                level = std::clamp(level, 0U, 2U);
+                log->setLogLevel((LogLevel)level);
+                SL_LOG_HINT("Overriding log level to %u", level);
+            }
+        }
+#endif
+
         auto manager = plugin_manager::getInterface();
         if (manager->isInitialized())
         {
@@ -107,64 +156,40 @@ bool slShutdown()
 
 bool slIsFeatureSupported(Feature feature, uint32_t* adapterBitMask)
 {
-    if (!interposer::getInterface()->isEnabled())
+    SL_VALIDATE_STATE
+
+    auto ctx = plugin_manager::getInterface()->getFeatureContext(feature);
+    if (!ctx)
     {
+        SL_LOG_ERROR_ONCE("Feature %u is not supported or missing", feature);
         return false;
     }
 
-    if (!plugin_manager::getInterface()->arePluginsLoaded())
-    {   
-        SL_LOG_ERROR_ONCE("SL not initialized or no plugins found - please make sure to include all required plugins including sl.common");
-        return false;
-    }
-
-    auto params = plugin_manager::getInterface()->getFeatureParameters(feature);
-    if (!params)
-    {
-        SL_LOG_ERROR_ONCE("Feature %u is not supported, missing or disabled", feature);
-        return false;
-    }
-
-    uint32_t supportedAdapters = 0;
-    param::getInterface()->get(params->supportedAdapters.c_str(), &supportedAdapters);
     if (adapterBitMask)
     {
-        *adapterBitMask = supportedAdapters;
+        *adapterBitMask = ctx->supportedAdapters;
     }
-    return supportedAdapters != 0;
+    return ctx->supportedAdapters != 0;
 }
 
 bool slSetFeatureEnabled(sl::Feature feature, bool enabled)
 {
-    if (!interposer::getInterface()->isEnabled())
-    {
-        return false;
-    }
-
-    if (!plugin_manager::getInterface()->arePluginsLoaded())
-    {
-        SL_LOG_ERROR_ONCE("SL not initialized or no plugins found - please make sure to include all required plugins including sl.common");
-        return false;
-    }
+    SL_VALIDATE_STATE
 
     return plugin_manager::getInterface()->setFeatureEnabled(feature, enabled);
 }
 
 bool slSetTag(const Resource *resource, BufferType tag, uint32_t id, const Extent* extent)
 {
-    if (!interposer::getInterface()->isEnabled())
+    SL_VALIDATE_STATE
+
+    auto ctx = plugin_manager::getInterface()->getFeatureContext(eFeatureCommon);
+    if (!ctx)
     {
         return false;
     }
 
-    if (!plugin_manager::getInterface()->arePluginsLoaded())
-    {
-        SL_LOG_ERROR_ONCE("SL not initialized or no plugins found - please make sure to include all required plugins including sl.common");
-        return false;
-    }
-
-    using PFunTagResource = bool(const Resource *, BufferType, uint32_t, const Extent*);
-    PFunTagResource* fun;
+    PFunSlSetTag* fun;
     if (!getPointerParam(param::getInterface(), param::global::kPFunSetTag, &fun))
     {
         SL_LOG_ERROR_ONCE("Unable to obtain 'setTag' callback, sl.common plugin missing or not initialized");
@@ -175,22 +200,18 @@ bool slSetTag(const Resource *resource, BufferType tag, uint32_t id, const Exten
 
 bool slSetConstants(const Constants &values, uint32_t frameIndex, uint32_t id)
 {   
-    if (!interposer::getInterface()->isEnabled())
+    SL_VALIDATE_STATE
+
+    auto ctx = plugin_manager::getInterface()->getFeatureContext(eFeatureCommon);
+    if (!ctx)
     {
         return false;
     }
-
-    if (!plugin_manager::getInterface()->arePluginsLoaded())    
-    {
-        SL_LOG_ERROR_ONCE("SL not initialized or no plugins found - please make sure to include all required plugins including sl.common");
-        return false;
-    }
-
-    using PFunSetConstants = bool(const Constants &, uint32_t, uint32_t);
-    PFunSetConstants*fun;
+    
+    PFunSlSetConstants*fun;
     if (!getPointerParam(param::getInterface(), param::global::kPFunSetConsts, &fun))
     {
-        SL_LOG_WARN_ONCE("Unable to obtain set common constants callback, sl.common plugin missing or not initialized");
+        SL_LOG_WARN_ONCE("Unable to obtain set common constants callback, sl.common plugin is either missing, failed to initialize or not initialized yet.");
         return false;
     }
     return fun(values, frameIndex, id);
@@ -198,91 +219,89 @@ bool slSetConstants(const Constants &values, uint32_t frameIndex, uint32_t id)
 
 bool slSetFeatureConstants(Feature feature, const void *consts, uint32_t frameIndex, uint32_t id)
 {
-    if (!interposer::getInterface()->isEnabled())
+    SL_VALIDATE_STATE
+
+    auto ctx = plugin_manager::getInterface()->getFeatureContext(feature);
+    if (!ctx)
     {
         return false;
     }
 
-    if (!plugin_manager::getInterface()->arePluginsLoaded())
+    if (!ctx->setConstants)
     {
-        SL_LOG_ERROR_ONCE("SL not initialized or no plugins found - please make sure to include all required plugins including sl.common");
+        SL_LOG_WARN_ONCE("Unable to obtain callback 'setConstants', feature might not have any constants, plugin could be missing, failed to initialize or not initialized yet.");
         return false;
     }
-
-    using PFunSetConstants = bool(const void*, uint32_t, uint32_t);
-    PFunSetConstants* fun{};
-
-    auto params = plugin_manager::getInterface()->getFeatureParameters(feature);
-    if (!params)
-    {
-        SL_LOG_ERROR_ONCE("Feature %u is not supported, missing or disabled", feature);
-        return false;
-    }
-
-    if (!getPointerParam(param::getInterface(), params->setConstants.c_str(), &fun))
-    {
-        SL_LOG_WARN_ONCE("Unable to obtain callback '%s', feature might not have any constants", params->setConstants.c_str());
-        return false;
-    }
-    return fun(consts, frameIndex, id);
+    return ctx->setConstants(consts, frameIndex, id);
 }
 
 bool slGetFeatureSettings(Feature feature, const void* consts, void* settings)
 {
-    if (!interposer::getInterface()->isEnabled())
+    SL_VALIDATE_STATE
+
+    auto ctx = plugin_manager::getInterface()->getFeatureContext(feature);
+    if (!ctx)
     {
         return false;
     }
 
-    if (!plugin_manager::getInterface()->arePluginsLoaded())
-    {
-        SL_LOG_ERROR_ONCE("SL not initialized or no plugins found - please make sure to include all required plugins including sl.common");
-        return false;
-    }
-
-    using PFuncGetSettings = bool(const void*,void*);
-    PFuncGetSettings* fun{};
-
-    auto params = plugin_manager::getInterface()->getFeatureParameters(feature);
-    if (!params)
-    {
-        SL_LOG_ERROR_ONCE("Feature %u is not supported, missing or disabled", feature);
-        return false;
-    }
-
-    if (!getPointerParam(param::getInterface(), params->getSettings.c_str(), &fun))
+    if (!ctx->getSettings)
     {
         // It is OK if there is no callback, some features don't have any settings
-        SL_LOG_WARN_ONCE("Unable to obtain callback '%s', feature does not have any settings", params->getSettings.c_str());
+        SL_LOG_WARN_ONCE("Unable to obtain callback 'getSettings', feature does not have any settings, plugin could be missing, failed to initialize or not initialized yet.");
         return false;
     }
-    return fun(consts, settings);
+    return ctx->getSettings(consts, settings);
+}
+
+bool slAllocateResources(sl::CommandBuffer* cmdBuffer, sl::Feature feature, uint32_t id)
+{
+    SL_VALIDATE_STATE
+
+    auto ctx = plugin_manager::getInterface()->getFeatureContext(feature);
+    if (!ctx)
+    {
+        return false;
+    }
+
+    if (!ctx->allocResources)
+    {
+        SL_LOG_WARN_ONCE("Unable to obtain callback 'allocateResource', plugin does not support explicit resource allocation.");
+        return false;
+    }
+    return ctx->allocResources(cmdBuffer, feature, id);
+}
+
+bool slFreeResources(sl::Feature feature, uint32_t id)
+{
+    SL_VALIDATE_STATE
+
+    auto ctx = plugin_manager::getInterface()->getFeatureContext(feature);
+    if (!ctx)
+    {
+        return false;
+    }
+
+    if (!ctx->freeResources)
+    {
+        SL_LOG_WARN_ONCE("Unable to obtain callback 'freeResources', plugin does not support explicit resource deallocation.");
+        return false;
+    }
+    return ctx->freeResources(feature, id);
 }
 
 bool slEvaluateFeature(CommandBuffer* cmdBuffer, Feature feature, uint32_t frameIndex, uint32_t id)
 {
-    if (!interposer::getInterface()->isEnabled())
+    SL_VALIDATE_STATE
+
+    auto ctx = plugin_manager::getInterface()->getFeatureContext(feature);
+    if (!ctx)
     {
         return false;
     }
 
-    if (!plugin_manager::getInterface()->arePluginsLoaded())
-    {
-        SL_LOG_ERROR_ONCE("SL not initialized or no plugins found - please make sure to include all required plugins including sl.common");
-        return false;
-    }
-
-    using PFuncEvaluateFeature = bool(CommandBuffer*, Feature, uint32_t, uint32_t);
-    PFuncEvaluateFeature* fun = {};
-
-    auto params = plugin_manager::getInterface()->getFeatureParameters(feature);
-    if (!params)
-    {
-        SL_LOG_ERROR_ONCE("Feature %u is not supported, missing or disabled", feature);
-        return false;
-    }
-
-    // Evaluate is always handled by the sl.common plugin first then distributed to target the plugin
+    PFunSlEvaluateFeature* fun = {};
+    // Evaluate is always handled by the sl.common plugin first then distributed to the appropriate plugin
     if (!getPointerParam(param::getInterface(), param::common::kPFunEvaluateFeature, &fun))
     {
         SL_LOG_ERROR_ONCE("Unable to obtain callback '%s', please make sure sl.common.dll is present and loaded correctly", param::common::kPFunEvaluateFeature);
@@ -292,50 +311,3 @@ bool slEvaluateFeature(CommandBuffer* cmdBuffer, Feature feature, uint32_t frame
     return fun(cmdBuffer, feature, frameIndex, id);
 }
 
-//! IMPORTANT: LEGACY API TO BE REMOVED SOON (AND NOT TO BE INCLUDED IN THE PUBLIC SDK)
-//! 
-namespace sl
-{
-
-SL_API bool init(const Preferences& pref, int applicationId)
-{
-    SL_LOG_WARN_ONCE("Deprecated API sl::FUNCTION, please switch to using slFUNCTION API");
-    return slInit(pref, applicationId);
-}
-SL_API bool shutdown()
-{
-    SL_LOG_WARN_ONCE("Deprecated API sl::FUNCTION, please switch to using slFUNCTION API");
-    return slShutdown();
-}
-SL_API bool isFeatureSupported(Feature feature, uint32_t* adapterBitMask)
-{
-    SL_LOG_WARN_ONCE("Deprecated API sl::FUNCTION, please switch to using slFUNCTION API");
-    return slIsFeatureSupported(feature, adapterBitMask);
-}
-SL_API bool setTag(const Resource* resource, BufferType tag, uint32_t id, const Extent* extent)
-{
-    SL_LOG_WARN_ONCE("Deprecated API sl::FUNCTION, please switch to using slFUNCTION API");
-    return slSetTag(resource, tag, id, extent);
-}
-SL_API bool setConstants(const Constants& values, uint32_t frameIndex, uint32_t id)
-{
-    SL_LOG_WARN_ONCE("Deprecated API sl::FUNCTION, please switch to using slFUNCTION API");
-    return slSetConstants(values, frameIndex, id);
-}
-SL_API bool setFeatureConstants(Feature feature, const void* consts, uint32_t frameIndex, uint32_t id)
-{
-    SL_LOG_WARN_ONCE("Deprecated API sl::FUNCTION, please switch to using slFUNCTION API");
-    return slSetFeatureConstants(feature, consts, frameIndex, id);
-}
-SL_API bool getFeatureSettings(Feature feature, const void* consts, void* settings)
-{
-    SL_LOG_WARN_ONCE("Deprecated API sl::FUNCTION, please switch to using slFUNCTION API");
-    return slGetFeatureSettings(feature, consts, settings);
-}
-SL_API bool evaluateFeature(CommandBuffer* cmdBuffer, Feature feature, uint32_t frameIndex, uint32_t id)
-{
-    SL_LOG_WARN_ONCE("Deprecated API sl::FUNCTION, please switch to using slFUNCTION API");
-    return slEvaluateFeature(cmdBuffer, feature, frameIndex, id);
-}
-
-} // namespace sl

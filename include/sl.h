@@ -101,6 +101,8 @@ enum BufferType : uint32_t
     eBufferTypeRaytracingDistance,
     //! Optional - Motion vectors for reflections
     eBufferTypeReflectionMotionVectors,
+    //! Optional - Position, in same space as eBufferTypeNormals
+    eBufferTypePosition,
 };
 
 //! Features supported with this SDK
@@ -112,7 +114,13 @@ enum Feature : uint32_t
     //! Deep Learning Super Sampling
     eFeatureDLSS = 0,
     //! Real-Time Denoiser
-    eFeatureNRD = 1
+    eFeatureNRD = 1,
+    //! NVIDIA Image Scaling
+    eFeatureNIS = 2,
+    //! Low-Latency (Reflex)
+    eFeatureLatency = 3,
+    //! Common feature, NOT intended to be used directly
+    eFeatureCommon = UINT_MAX
 };
 
 //! Different levels for logging
@@ -141,13 +149,13 @@ struct ResourceDesc
     //! Indicates the type of resource
     ResourceType type = eResourceTypeTex2d;
     //! D3D12_RESOURCE_DESC/VkImageCreateInfo/VkBufferCreateInfo
-    void* desc = {};
+    void* desc{};
     //! Initial state as D3D12_RESOURCE_STATES or VkMemoryPropertyFlags
     uint32_t state = 0;
     //! CD3DX12_HEAP_PROPERTIES or nullptr
-    void* heap = {};
+    void* heap{};
     //! Reserved for future expansion, must be set to null
-    void* ext = {};
+    void* ext{};
 };
 
 //! Native resource
@@ -156,13 +164,18 @@ struct Resource
     //! Indicates the type of resource
     ResourceType type = eResourceTypeTex2d;
     //! ID3D11Resource/ID3D12Resource/VkBuffer/VkImage
-    void* native = {};
+    void* native{};
     //! vkDeviceMemory or nullptr
-    void* memory = {};
+    void* memory{};
     //! VkImageView/VkBufferView or nullptr
-    void* view = {};
+    void* view{};
+    //! State as D3D12_RESOURCE_STATES or VkImageLayout
+    //! 
+    //! IMPORTANT: State needs to be correct when tagged resources are actually used.
+    //! 
+    uint32_t state{};
     //! Reserved for future expansion, must be set to null
-    void* ext = {};
+    void* ext{};
 };
 
 //! Resource allocation/deallocation callbacks
@@ -216,7 +229,17 @@ struct Preferences
     pfunResourceReleaseCallback* releaseCallback = {};
     //! Optional - Allows log message tracking including critical errors if they occur
     pfunLogMessageCallback* logMessageCallback = {};
-    //! Pointer to Preferences1 or null if not used
+    //! Required - Pointer to Preferences1 (see below)
+    void* ext = {};
+};
+
+struct Preferences1
+{
+    //! Required - Features to enable (assuming appropriate plugins are found); if not specified, all features are DISABLED by default
+    const Feature* featuresToEnable = {};
+    //! Required - Number of features to enable, only used when list is not a null pointer
+    uint32_t numFeaturesToEnable = 0;
+    //! Reserved for future expansion, must be set to null
     void* ext = {};
 };
 
@@ -236,6 +259,8 @@ using PFunSlSetConstants = bool(const sl::Constants& values, uint32_t frameIndex
 using PFunSlSetFeatureConstants = bool(sl::Feature feature, const void* consts, uint32_t frameIndex, uint32_t id);
 using PFunSlGetFeatureSettings = bool(sl::Feature feature, const void* consts, void* settings);
 using PFunSlEvaluateFeature = bool(sl::CommandBuffer* cmdBuffer, sl::Feature feature, uint32_t frameIndex, uint32_t id);
+using PFunSlAllocateResources = bool(sl::CommandBuffer* cmdBuffer, sl::Feature feature, uint32_t id);
+using PFunSlFreeResources = bool(sl::Feature feature, uint32_t id);
 
 //! Initializes the SL module
 //!
@@ -279,12 +304,12 @@ SL_API bool slIsFeatureSupported(sl::Feature feature, uint32_t* adapterBitMask =
 //!
 //! @param feature Specifies which feature to check
 //! @param enabled Value specifying if feature should be enabled or disabled.
-//! @return false if feature is not supported on the system true otherwise.
+//! @return false if feature is not supported on the system or if device has not beeing created yet, true otherwise.
 //!
 //! NOTE: When this method is called no other DXGI/D3D/Vulkan APIs should be invoked in parallel so
 //! make sure to flush your pipeline before calling this method.
 //!
-//! This method is NOT thread safe.
+//! This method is NOT thread safe and requires DX/VK device to be created before calling it.
 SL_API bool slSetFeatureEnabled(sl::Feature feature, bool enabled);
 
 //! Tags resource
@@ -295,9 +320,9 @@ SL_API bool slSetFeatureEnabled(sl::Feature feature, bool enabled);
 //! @param tag Specific tag for the resource
 //! @param id Unique id (can be viewport id | instance id etc.)
 //! @param extent The area of the tagged resource to use (if using the entire resource leave as null)
-//! @return false if resource cannot be tagged true otherwise.
+//! @return false if resource cannot be tagged or if device has not beeing created yet, true otherwise.
 //!
-//! This method is thread safe.
+//! This method is thread safe and requires DX/VK device to be created before calling it.
 SL_API bool slSetTag(const sl::Resource *resource, sl::BufferType tag, uint32_t id = 0, const sl::Extent* extent = nullptr);
 
 //! Sets common constants.
@@ -307,9 +332,9 @@ SL_API bool slSetTag(const sl::Resource *resource, sl::BufferType tag, uint32_t 
 //! @param values Common constants required by SL plugins (SL will keep a copy)
 //! @param frameIndex Index of the current frame
 //! @param id Unique id (can be viewport id | instance id etc.)
-//! @return false if constants cannot be set true otherwise.
+//! @return false if constants cannot be set or if device has not beeing created yet, true otherwise.
 //! 
-//! This method is thread safe.
+//! This method is thread safe and requires DX/VK device to be created before calling it.
 SL_API bool slSetConstants(const sl::Constants& values, uint32_t frameIndex, uint32_t id = 0);
 
 //! Sets feature specific constants.
@@ -321,9 +346,9 @@ SL_API bool slSetConstants(const sl::Constants& values, uint32_t frameIndex, uin
 //! @param consts Pointer to the feature specific constants (SL will keep a copy)
 //! @param frameIndex Index of the current frame
 //! @param id Unique id (can be viewport id | instance id etc.)
-//! @return false if constants cannot be set true otherwise.
+//! @return false if constants cannot be set or if device has not beeing created yet, true otherwise.
 //!
-//! This method is thread safe.
+//! This method is thread safe and requires DX/VK device to be created before calling it.
 SL_API bool slSetFeatureConstants(sl::Feature feature, const void *consts, uint32_t frameIndex, uint32_t id = 0);
 
 //! Gets feature specific settings.
@@ -333,10 +358,35 @@ SL_API bool slSetFeatureConstants(sl::Feature feature, const void *consts, uint3
 //! @param feature Feature we are working with
 //! @param consts Pointer to the feature specific constants
 //! @param settings Pointer to the returned feature specific settings
-//! @return false if feature does not have settings true otherwise.
+//! @return false if feature does not have settings or if device has not beeing created yet, true otherwise.
 //!
-//! This method is NOT thread safe.
+//! This method is NOT thread safe and requires DX/VK device to be created before calling it.
 SL_API bool slGetFeatureSettings(sl::Feature feature, const void* consts, void* settings);
+
+//! Allocates resources for the specified feature.
+//!
+//! Call this method to explicitly allocate resources
+//! for an instance of the specified feature.
+//! 
+//! @param cmdBuffer Command buffer to use (must be created on device where feature is supported but can be null if not needed)
+//! @param feature Feature we are working with
+//! @param id Unique id (instance handle)
+//! @return false if resources cannot be allocated or if device has not beeing created yet, true otherwise.
+//!
+//! This method is NOT thread safe and requires DX/VK device to be created before calling it.
+SL_API bool slAllocateResources(sl::CommandBuffer* cmdBuffer, sl::Feature feature, uint32_t id);
+
+//! Frees resources for the specified feature.
+//!
+//! Call this method to explicitly free resources
+//! for an instance of the specified feature.
+//! 
+//! @param feature Feature we are working with
+//! @param id Unique id (instance handle)
+//! @return false if resources cannot be freed or if device has not beeing created yet, true otherwise.
+//!
+//! This method is NOT thread safe and requires DX/VK device to be created before calling it.
+SL_API bool slFreeResources(sl::Feature feature, uint32_t id);
 
 //! Evaluates feature
 //! 
@@ -347,9 +397,9 @@ SL_API bool slGetFeatureSettings(sl::Feature feature, const void* consts, void* 
 //! @param feature Feature we are working with
 //! @param frameIndex Current frame index (can be 0 if not needed)
 //! @param id Unique id (can be viewport id | instance id etc.)
-//! @return false if feature event cannot be injected in the command buffer true otherwise.
+//! @return false if feature event cannot be injected in the command buffer or if device has not beeing created yet, true otherwise.
 //! 
 //! IMPORTANT: frameIndex and id must match whatever is used to set common and or feature constants (if any)
 //!
-//! This method is NOT thread safe (Vulkan command buffers or D3D command lists by design and not thread safe)
+//! This method is NOT thread safe and requires DX/VK device to be created before calling it.
 SL_API bool slEvaluateFeature(sl::CommandBuffer* cmdBuffer, sl::Feature feature, uint32_t frameIndex, uint32_t id = 0);

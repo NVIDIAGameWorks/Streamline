@@ -60,7 +60,7 @@ struct CommonResource
 
 using PFunGetTag = CommonResource * (BufferType tag, uint32_t id);
 
-inline bool getTaggedResource(BufferType tag, void*& res, uint32_t id = 0, Extent* ext = nullptr)
+inline bool getTaggedResource(BufferType tag, void*& res, uint32_t id = 0, Extent* ext = nullptr, uint32_t* nativeState = nullptr)
 {
     res = nullptr;
     static PFunGetTag* getTag = {};
@@ -73,6 +73,10 @@ inline bool getTaggedResource(BufferType tag, void*& res, uint32_t id = 0, Exten
     if (ext)
     {
         *ext = cr->extent;
+    }
+    if (nativeState)
+    {
+        *nativeState = cr->res.state;
     }
     return cr->res.native != nullptr;
 }

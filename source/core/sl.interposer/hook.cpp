@@ -30,8 +30,6 @@
 #include "source/core/sl.log/log.h"
 #include "source/core/sl.file/file.h"
 #include "source/core/sl.param/parameters.h"
-#include "external/json/include/nlohmann/json.hpp"
-using json = nlohmann::json;
 
 namespace sl
 {
@@ -42,16 +40,46 @@ struct Hook : public IHook
 {    
     Hook()
     {
+#ifndef SL_PRODUCTION
+        const wchar_t* exePath = file::getCurrentDirectoryPath();
+        std::wstring interposerJSONFile = std::wstring(file::getCurrentDirectoryPath()) + L"/sl.interposer.json";
+        if (file::exists(interposerJSONFile.c_str())) try
+        {
+            SL_LOG_HINT("Found %S", interposerJSONFile.c_str());
+            auto jsonText = file::read(interposerJSONFile.c_str());
+            if (!jsonText.empty())
+            {
+                // safety null in case the JSON string is not null-terminated (found by AppVerif)
+                jsonText.push_back(0);
+                std::istringstream stream((const char*)jsonText.data());
+                stream >> m_config;
+                if (m_config.contains("enableInterposer"))
+                {
+                    m_config.at("enableInterposer").get_to(m_enabled);
+                    SL_LOG_HINT("Interposer enabled - %s", m_enabled ? "yes" : "no");
+                }
+            }
+        }
+        catch (std::exception& e)
+        {
+            SL_LOG_ERROR("Failed to parse JSON file - %s", e.what());
+        }
+#endif
     };
 
     void setEnabled(bool value) override final
     {
-        enabled = value;
+        m_enabled = value;
     }
 
     bool isEnabled() const override final
     {
-        return enabled;
+        return m_enabled;
+    }
+
+    const json& getConfig() const override final
+    {
+        return m_config;
     }
 
 #ifdef SL_WINDOWS
@@ -90,18 +118,30 @@ struct Hook : public IHook
 
     bool registerHookForClassInstance(IUnknown* instance, uint32_t virtualTableOffset, ExportedFunction& f) override final
     {
+        std::scoped_lock<std::mutex> lock(m_mutex);
         void** virtualTable = *reinterpret_cast<VirtualAddress**>(instance);
         auto address = &virtualTable[virtualTableOffset];
         if (virtualTable[virtualTableOffset] != f.replacement)
         {            
             f.target = virtualTable[virtualTableOffset];
-            DWORD protection = PAGE_READWRITE;
-            if (!VirtualProtect(address, sizeof(VirtualAddress), protection, &protection))
+            DWORD prevProtection{};
+            if (!VirtualProtect(address, kCodePatchSize, PAGE_READWRITE, &prevProtection))
             {
                 return false;
             }
             *reinterpret_cast<VirtualAddress*>(address) = f.replacement;
-            VirtualProtect(address, sizeof(VirtualAddress), protection, &protection);
+            VirtualProtect(address, kCodePatchSize, prevProtection, &prevProtection);
+
+            // Cache the original code at target's address
+            if (!VirtualProtect(f.target, kCodePatchSize, PAGE_READWRITE, &prevProtection))
+            {
+                return false;
+            }
+            memcpy(f.originalCode, f.target, kCodePatchSize);
+            if (!VirtualProtect(f.target, kCodePatchSize, prevProtection, &prevProtection))
+            {
+                return false;
+            }
 
             auto parameters = sl::param::getInterface();
             parameters->set(f.name, f.target);
@@ -109,9 +149,46 @@ struct Hook : public IHook
         return true;
     }
 
+    bool restoreOriginalCode(ExportedFunction& f) override final
+    {
+        std::scoped_lock<std::mutex> lock(m_mutex);
+        DWORD prevProtection{};
+        if (!VirtualProtect(f.target, kCodePatchSize, PAGE_READWRITE, &prevProtection))
+        {
+            return false;
+        }
+        memcpy(f.currentCode, f.target, kCodePatchSize);
+        memcpy(f.target, f.originalCode, kCodePatchSize);
+        if (!VirtualProtect(f.target, kCodePatchSize, prevProtection, &prevProtection))
+        {
+            return false;
+        }
+        FlushInstructionCache(GetCurrentProcess(), f.target, kCodePatchSize);
+        return true;
+    }
+
+    bool restoreCurrentCode(const ExportedFunction& f) override final
+    {
+        std::scoped_lock<std::mutex> lock(m_mutex);
+        DWORD prevProtection{};
+        if (!VirtualProtect(f.target, kCodePatchSize, PAGE_READWRITE, &prevProtection))
+        {
+            return false;
+        }
+        memcpy(f.target, f.currentCode, kCodePatchSize);
+        if (!VirtualProtect(f.target, kCodePatchSize, prevProtection, &prevProtection))
+        {
+            return false;
+        }
+        FlushInstructionCache(GetCurrentProcess(), f.target, kCodePatchSize);
+        return true;
+    }
+
 #endif
 
-    bool enabled = true;
+    json m_config;
+    bool m_enabled = true;
+    std::mutex m_mutex;
     inline static Hook* s_hook = {};
 };
 

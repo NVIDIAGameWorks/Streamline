@@ -42,18 +42,18 @@ workspace "streamline"
 	cppdialect "C++17"
 	
 	filter "configurations:Debug"
-		defines { "DEBUG", "_DEBUG" }
+		defines { "DEBUG", "_DEBUG", "SL_ENABLE_TIMING=1","SL_ENABLE_PROFILING=0" }
 		symbols "On"
 				
 	filter "configurations:Release"
-		defines { "NDEBUG" }
+		defines { "NDEBUG","SL_ENABLE_TIMING=1","SL_ENABLE_PROFILING=0" }
 		optimize "On"
 		flags { "LinkTimeOptimization" }		
-		
+	
 	filter "configurations:Production"
-		defines { "SL_PRODUCTION" }
+		defines { "SL_PRODUCTION","SL_ENABLE_TIMING=0","SL_ENABLE_PROFILING=0" }
 		optimize "On"
-		flags { "LinkTimeOptimization" }		
+		flags { "LinkTimeOptimization" }	
 
 		filter { "files:**.hlsl" }
 		buildmessage 'Compiling shader %{file.relpath} to DXBC/SPIRV with slang'
@@ -173,7 +173,7 @@ function pluginBasicSetup(name)
 		"./source/core/sl.file/**.cpp",
 		"./source/core/sl.extra/**.h",		
 		"./source/core/sl.plugin/**.h",
-		"./source/core/sl.plugin/**.cpp",
+		"./source/core/sl.plugin/**.cpp",		
 		"./source/plugins/sl."..name.."/versions.h",
 		"./source/plugins/sl."..name.."/resource.h",
 		"./source/plugins/sl."..name.."/**.rc"
@@ -221,14 +221,59 @@ project "sl.common"
 	filter "configurations:Release or Production"
 		links { "nvsdk_ngx_d.lib"}
 	filter {}
-   	
-project "sl.template"
+
+project "sl.dlss"
 	kind "SharedLib"	
 	targetdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}")
 	objdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}") 
 	characterset ("MBCS")
 	dependson { "sl.common"}
+	pluginBasicSetup("dlss")
+	files { 
+		"./source/core/ngx/**.h",
+		"./source/core/ngx/**.cpp",		
+		"./source/plugins/sl.dlss/**.h", 
+		"./source/plugins/sl.dlss/**.cpp"		
+	}
+	vpaths { ["impl"] = {"./source/plugins/sl.dlss/**.h", "./source/plugins/sl.dlss/**.cpp" }}
+	vpaths { ["ngx"] = {"./source/core/ngx/**.h", "./source/core/ngx/**.cpp"}}
+	removefiles {"./source/core/sl.extra/extra.cpp"}
+   	
 
+project "sl.nrd"
+	kind "SharedLib"	
+	targetdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}")
+	objdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}") 
+	characterset ("MBCS")
+	dependson { "sl.compute"}
+	dependson { "sl.common"}
+	pluginBasicSetup("nrd")
+	files { 
+		"./source/plugins/sl.nrd/**.h", 
+		"./source/plugins/sl.nrd/**.cpp",		
+		"./source/core/sl.security/**.h",
+		"./source/core/sl.security/**.cpp"
+	}
+	vpaths { ["impl"] = {"./source/plugins/sl.nrd/**.h", "./source/plugins/sl.nrd/**.cpp" }}
+	removefiles {"./source/core/sl.extra/extra.cpp"}
+
+project "sl.latency"
+	kind "SharedLib"	
+	targetdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}")
+	objdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}") 
+	characterset ("MBCS")
+	pluginBasicSetup("latency")
+	files { 
+		"./source/plugins/sl.latency/**.h", 
+		"./source/plugins/sl.latency/**.cpp"		
+	}
+	vpaths { ["impl"] = {"./source/plugins/sl.latency/**.h", "./source/plugins/sl.latency/**.cpp" }}
+	removefiles {"./source/core/sl.extra/extra.cpp"}
+project "sl.template"
+	kind "SharedLib"	
+	targetdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}")
+	objdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}") 
+	characterset ("MBCS")
 	pluginBasicSetup("template")
 	
 	files { 
@@ -240,4 +285,18 @@ project "sl.template"
 			
 	removefiles {"./source/core/sl.extra/extra.cpp"}
 	
+project "sl.nis"
+	kind "SharedLib"
+	targetdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}")
+	objdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}")
+	characterset ("MBCS")
+	dependson { "sl.compute"}
+	dependson { "sl.common"}
+	pluginBasicSetup("nis")
+	files {
+		"./source/plugins/sl.nis/**.h",
+		"./source/plugins/sl.nis/**.cpp"
+	}
+	vpaths { ["impl"] = {"./source/plugins/sl.nis/**.h", "./source/plugins/sl.nis/**.cpp" }}
+	removefiles {"./source/core/sl.extra/extra.cpp"}
 group ""

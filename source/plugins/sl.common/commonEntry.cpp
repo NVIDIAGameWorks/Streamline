@@ -57,6 +57,8 @@ extern HRESULT slHookCreatePlacedResource(ID3D12Heap* pHeap, UINT64 HeapOffset, 
 extern HRESULT slHookCreateReservedResource(const D3D12_RESOURCE_DESC* pDesc, D3D12_RESOURCE_STATES InitialState, const D3D12_CLEAR_VALUE* pOptimizedClearValue, REFIID riid, void** ppvResource);
 extern void slHookResourceBarrier(ID3D12GraphicsCommandList* pCmdList, UINT NumBarriers, const D3D12_RESOURCE_BARRIER* pBarriers);
 extern HRESULT slHookPresent(IDXGISwapChain* swapChain, UINT SyncInterval, UINT Flags, bool& Skip);
+extern HRESULT slHookResizeSwapChainPre(IDXGISwapChain* swapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags);
+
 extern bool getGPUInfo(common::GPUArch*& info, LUID* id);
 
 //! Our common context
@@ -72,9 +74,6 @@ struct CommonEntryContext
 
     chi::PlatformType platform = chi::ePlatformTypeD3D12;
 
-#if SL_ENABLE_OTA
-    std::future<bool> otaLambda = {};
-#endif
     std::mutex resourceTagMutex = {};
     std::map<uint64_t, CommonResource> idToResourceMap;
     common::ViewportIdFrameData<3> constants = { "common" };
@@ -329,6 +328,17 @@ bool slOnPluginStartup(const char* jsonConfig, void* device, param::IParameters*
     // Now let's create our compute interface
     ctx.platform = (chi::PlatformType)deviceType;
     common::createCompute(device, ctx.platform);
+
+#ifdef SL_CAPTURE
+    if (extraConfig.contains("numberFrameCapture"))
+    {
+        int captIndex;
+        extraConfig.at("numberFrameCapture").get_to(captIndex);
+        sl::chi::ICapture* capture;
+        param::getPointerParam(api::getContext()->parameters, sl::param::common::kCaptureAPI, &capture);
+        capture->setMaxCaptureIndex(captIndex);
+    }
+#endif
     
     // Check if any of the plugins requested NGX
     ctx.needNGX = false;
@@ -336,7 +346,6 @@ bool slOnPluginStartup(const char* jsonConfig, void* device, param::IParameters*
     if (ctx.needNGX)
     {
         // NGX initialization
-
         SL_LOG_INFO("At least one plugin requires NGX, trying to initialize ...");
 
         // Reset our flag until we see if NGX can be initialized correctly
@@ -443,9 +452,6 @@ void slOnPluginShutdown()
 {
     if (ctx.needNGX)
     {
-#if SL_ENABLE_OTA
-        ctx.otaLambda.get();
-#endif
         SL_LOG_INFO("Shutting down NGX");
         if (ctx.platform == chi::ePlatformTypeD3D11)
         {
@@ -475,6 +481,7 @@ static const char* JSON = R"json(
 {
     "id" : -1,
     "priority" : 0,
+    "namespace" : "common",
     "hooks" :
     [
         {
@@ -501,7 +508,13 @@ static const char* JSON = R"json(
             "replacement" : "slHookResourceBarrier",
             "base" : "after"
         },
-        
+
+        {
+            "class": "IDXGISwapChain",
+            "target" : "ResizeBuffers",
+            "replacement" : "slHookResizeSwapChainPre",
+            "base" : "before"
+        },
         {
             "class": "IDXGISwapChain",
             "target" : "Present",
@@ -516,13 +529,6 @@ static const char* JSON = R"json(
 //! 
 uint32_t getSupportedAdapterMask()
 {
-#if SL_ENABLE_OTA
-    // First grab the OTA manifest
-    ota::getInterface()->readServerManifest();
-
-    // Inform other plugins about the interfaces we provide
-    api::getContext()->parameters->set(param::global::kOTAInterface, ota::getInterface());
-#endif
     // Provide shared interface for keyboard
     api::getContext()->parameters->set(param::common::kKeyboardAPI, extra::keyboard::getInterface());
 
@@ -561,6 +567,7 @@ SL_EXPORT void* slGetPluginFunction(const char* functionName)
 
     //! D3D12
     SL_EXPORT_FUNCTION(slHookPresent);
+    SL_EXPORT_FUNCTION(slHookResizeSwapChainPre);
     SL_EXPORT_FUNCTION(slHookResourceBarrier);
     SL_EXPORT_FUNCTION(slHookCreateCommittedResource);
     SL_EXPORT_FUNCTION(slHookCreatePlacedResource);

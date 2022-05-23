@@ -52,35 +52,40 @@ struct DLSSConstants
     float exposureScale = 1.0f;
     //! Specifies if tagged color buffers are full HDR or not (DLSS in HDR pipeline or not)
     Boolean colorBuffersHDR = Boolean::eTrue;
+    //! Specifies if indicator on screen should invert axis
+    Boolean indicatorInvertAxisX = Boolean::eFalse;
+    //! Specifies if indicator on screen should invert axis
+    Boolean indicatorInvertAxisY = Boolean::eFalse;
     //! Reserved for future expansion, must be set to null
-    void* ext = {};
+    void* ext{};
 };
 
 //! Returned by DLSS plugin, please see 'getFeatureSettings' API
 struct DLSSSettings
 {
     //! Specifies render area width
-    uint32_t optimalRenderWidth;
+    uint32_t optimalRenderWidth{};
     //! Specifies render area height
-    uint32_t optimalRenderHeight;
+    uint32_t optimalRenderHeight{};
     //! Specifies the optimal sharpness value
-    float optimalSharpness;
+    float optimalSharpness{};
     //! Points to DLSSSettings1 or null if not needed
-    void* ext = {};
+    void* ext{};
 };
 
 struct DLSSSettings1
-{
+{   
     //! Specifies minimal render area width
-    uint32_t renderWidthMin;
+    uint32_t renderWidthMin{};
     //! Specifies minimal render area height
-    uint32_t renderHeightMin;
+    uint32_t renderHeightMin{};
     //! Specifies maximal render area width
-    uint32_t renderWidthMax;
+    uint32_t renderWidthMax{};
     //! Specifies maximal render area height
-    uint32_t renderHeightMax;
+    uint32_t renderHeightMax{};
+    //! Specified the amount of memory used by DLSS
+    uint64_t allocatedBytes{};
     //! Reserved for future expansion, must be set to null
-    void* ext = {};
+    void* ext{};
 };
-
 }

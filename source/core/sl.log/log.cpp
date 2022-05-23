@@ -264,9 +264,7 @@ struct Log : ILog
     bool isConsoleActive()
     {
         HWND consoleWnd = GetConsoleWindow();
-        DWORD consoleProcessId = 0;
-        GetWindowThreadProcessId(consoleWnd, &consoleProcessId);
-        return GetCurrentProcessId() == consoleProcessId;
+        return consoleWnd != NULL;
     }
 
     inline static Log* s_log = {};

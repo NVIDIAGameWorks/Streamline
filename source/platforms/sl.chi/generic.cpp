@@ -35,7 +35,7 @@ struct IDXGISwapChain;
 #include "source/core/sl.log/log.h"
 #include "source/core/sl.extra/extra.h"
 #include "source/platforms/sl.chi/generic.h"
-
+#include "external/nvapi/nvapi.h"
 
 #include "shaders/font_cs.h"
 #include "shaders/font_spv.h"
@@ -235,7 +235,7 @@ ComputeStatus Generic::genericPostInit()
 
     auto node = 0; // FIX THIS
     CHI_CHECK(createBuffer(ResourceDescription(sizeof(GFont), 1, eFormatINVALID), m_font[node], "sl.chi.fontTexture"));
-    CHI_CHECK(createBuffer(ResourceDescription(SL_TEXT_BUFFER_SIZE, 1, eFormatINVALID), m_dynamicText[node], "sl.chi.dynamicText"));
+    CHI_CHECK(createBuffer(ResourceDescription(SL_TEXT_BUFFER_SIZE, 1, eFormatINVALID, eHeapTypeDefault, ResourceState::eStorageRW), m_dynamicText[node], "sl.chi.dynamicText"));
     CHI_CHECK(createBuffer(ResourceDescription(SL_TEXT_BUFFER_SIZE, 1, eFormatINVALID, eHeapTypeUpload), m_dynamicTextUpload[node], "sl.chi.dynamicTextUpload"));
 
     return eComputeStatusOk;
@@ -408,7 +408,9 @@ ComputeStatus Generic::createTexture2DResourceShared(const ResourceDescription &
         {
             getFormat(resourceDesc.nativeFormat, resourceDesc.format);
         }
-        uint64_t currentSize = (resourceDesc.format != eFormatINVALID) ? resourceDesc.width * resourceDesc.height * getFormatBytesPerPixel(resourceDesc.format) : 0;
+        size_t bytesPerPixel;
+        getBytesPerPixel(resourceDesc.format, bytesPerPixel);
+        uint64_t currentSize = (resourceDesc.format != eFormatINVALID) ? resourceDesc.width * resourceDesc.height * bytesPerPixel : 0;
         m_totalAllocatedSize += currentSize;        
         SL_LOG_VERBOSE("Tex2d (%s:%u:%u:%s), m_allocCount=%d, currentSize %.1lf MB, totalSize %.1lf MB", InFriendlyName, resourceDesc.width, resourceDesc.height, GFORMAT_STR[resourceDesc.format], m_allocCount.load(), (double)currentSize / (1024 * 1024), (double)m_totalAllocatedSize.load() / (1024 * 1024));
     }
@@ -445,7 +447,7 @@ ComputeStatus Generic::destroyResource(Resource& resource)
             std::lock_guard<std::mutex> lock(m_mutex);
             m_resourceStateMap.erase(resource);
         }
-        sl::Resource res = { (desc.flags & ResourceFlags::eRawOrStructuredBuffer) != 0 ? ResourceType::eResourceTypeBuffer : ResourceType::eResourceTypeTex2d, (void*)resource, nullptr, nullptr, nullptr };
+        sl::Resource res = { (desc.flags & ResourceFlags::eRawOrStructuredBuffer) != 0 ? ResourceType::eResourceTypeBuffer : ResourceType::eResourceTypeTex2d, (void*)resource, nullptr, nullptr, 0, nullptr };
         m_releaseCallback(&res, m_typelessDevice);
     }
     else
@@ -577,6 +579,9 @@ ComputeStatus Generic::renderText(CommandList cmdList, int x, int y, const char 
             m_textIndex[node] = 0;
         }
         index = m_textIndex[node];
+        extra::ScopedTasks revTransitions;
+        chi::ResourceTransition transitions[] = { {m_dynamicText[node], chi::ResourceState::eCopyDestination, chi::ResourceState::eStorageRW} };
+        CHI_CHECK(transitionResources(cmdList, transitions, (uint32_t)countof(transitions), &revTransitions));
         CHI_CHECK(copyHostToDeviceBuffer(cmdList, textSize, (const void*)text, m_dynamicTextUpload[node], m_dynamicText[node], index, index));
         m_textIndex[node] = extra::align((m_textIndex[node] + textSize) % SL_TEXT_BUFFER_SIZE, 4);
     }
@@ -613,11 +618,12 @@ ComputeStatus Generic::renderText(CommandList cmdList, int x, int y, const char 
     CHI_CHECK(bindRWTexture(2, 2, out.resource));
     CHI_CHECK(bindConsts(3, 0, &cb, sizeof(CBData), 64));
     CHI_CHECK(dispatch(textSize, 1, 1));
+    CHI_CHECK(insertGPUBarrier(cmdList, out.resource));
 
     return eComputeStatusOk;
 }
 
-size_t Generic::getFormatBytesPerPixel(Format InFormat)
+ComputeStatus Generic::getBytesPerPixel(Format InFormat, size_t& size)
 {
     static constexpr size_t BYTES_PER_PIXEL_TABLE[] = {
         1,                      // eFormatINVALID - aka unknown - used for buffers
@@ -649,7 +655,8 @@ size_t Generic::getFormatBytesPerPixel(Format InFormat)
         4,                      // eFormatD24S8,
     }; static_assert(countof(BYTES_PER_PIXEL_TABLE) == eFormatCOUNT, "Not enough numbers for eFormatCOUNT");
 
-    return BYTES_PER_PIXEL_TABLE[InFormat];
+    size = BYTES_PER_PIXEL_TABLE[InFormat];
+    return eComputeStatusOk;
 }
 
 uint64_t Generic::getResourceSize(Resource res)
@@ -668,7 +675,9 @@ uint64_t Generic::getResourceSize(Resource res)
             SL_LOG_ERROR("Don't know the size for resource 0x%llx format %u native %u", res, resourceDesc.format, resourceDesc.nativeFormat);
         }
     }
-    return resourceDesc.width * resourceDesc.height * getFormatBytesPerPixel(format);
+    size_t bytesPerPixel;
+    getBytesPerPixel(format, bytesPerPixel);
+    return resourceDesc.width * resourceDesc.height * bytesPerPixel;
 }
 
 ComputeStatus Generic::getNativeFormat(Format format, NativeFormat& native)
@@ -812,6 +821,72 @@ bool Generic::savePFM(const std::string &path, const char* srcBuffer, const int 
     binWriter.write(srcBuffer, totalBytes);
     binWriter.close();
     return true;
+}
+
+ComputeStatus Generic::setSleepMode(const LatencyConstants& consts)
+{
+    NV_SET_SLEEP_MODE_PARAMS_V1 params = { 0 };
+    params.version = NV_SET_SLEEP_MODE_PARAMS_VER1;
+    params.bLowLatencyMode = consts.mode != eLatencyModeOff;
+    params.bLowLatencyBoost = consts.mode == eLatencyModeLowLatencyWithBoost;
+    params.minimumIntervalUs = consts.frameLimitUs;
+    params.bUseMarkersToOptimize = consts.useMarkersToOptimize;
+    NVAPI_CHECK(NvAPI_D3D_SetSleepMode((IUnknown*)m_typelessDevice, &params));
+    return eComputeStatusOk;
+}
+
+ComputeStatus Generic::getSleepStatus(LatencySettings& settings)
+{
+
+    NV_GET_SLEEP_STATUS_PARAMS_V1 params = {};
+    params.version = NV_GET_SLEEP_STATUS_PARAMS_VER1;
+    NVAPI_CHECK(NvAPI_D3D_GetSleepStatus((IUnknown*)m_typelessDevice, &params));
+    return eComputeStatusOk;
+}
+
+ComputeStatus Generic::getLatencyReport(LatencySettings& settings)
+{
+    NV_LATENCY_RESULT_PARAMS params = {};
+    params.version = NV_LATENCY_RESULT_PARAMS_VER1;
+    NVAPI_CHECK(NvAPI_D3D_GetLatency((IUnknown*)m_typelessDevice, &params));
+
+    for (auto i = 0; i < 64; i++)
+    {
+        settings.frameReport[i].frameID = params.frameReport[i].frameID;
+        settings.frameReport[i].inputSampleTime = params.frameReport[i].inputSampleTime;
+        settings.frameReport[i].simStartTime = params.frameReport[i].simStartTime;
+        settings.frameReport[i].simEndTime = params.frameReport[i].simEndTime;
+        settings.frameReport[i].renderSubmitStartTime = params.frameReport[i].renderSubmitStartTime;
+        settings.frameReport[i].renderSubmitEndTime = params.frameReport[i].renderSubmitEndTime;
+        settings.frameReport[i].presentStartTime = params.frameReport[i].presentStartTime;
+        settings.frameReport[i].presentEndTime = params.frameReport[i].presentEndTime;
+        settings.frameReport[i].driverStartTime = params.frameReport[i].driverStartTime;
+        settings.frameReport[i].driverEndTime = params.frameReport[i].driverEndTime;
+        settings.frameReport[i].osRenderQueueStartTime = params.frameReport[i].osRenderQueueStartTime;
+        settings.frameReport[i].osRenderQueueEndTime = params.frameReport[i].osRenderQueueEndTime;
+        settings.frameReport[i].gpuRenderStartTime = params.frameReport[i].gpuRenderStartTime;
+        settings.frameReport[i].gpuRenderEndTime = params.frameReport[i].gpuRenderEndTime;
+        settings.frameReport[i].gpuActiveRenderTimeUs = params.frameReport[i].gpuActiveRenderTimeUs;
+        settings.frameReport[i].gpuFrameTimeUs = params.frameReport[i].gpuFrameTimeUs;
+    }
+
+    return eComputeStatusOk;
+}
+
+ComputeStatus Generic::sleep()
+{
+    NVAPI_CHECK(NvAPI_D3D_Sleep((IUnknown*)m_typelessDevice));
+    return eComputeStatusOk;
+}
+
+ComputeStatus Generic::setLatencyMarker(LatencyMarker marker, uint64_t frameId)
+{
+    NV_LATENCY_MARKER_PARAMS_V1 params = { 0 };
+    params.version = NV_LATENCY_MARKER_PARAMS_VER1;
+    params.frameID = frameId;
+    params.markerType = (NV_LATENCY_MARKER_TYPE)marker;
+    NVAPI_CHECK(NvAPI_D3D_SetLatencyMarker((IUnknown*)m_typelessDevice, &params));
+    return eComputeStatusOk;
 }
 
 }
