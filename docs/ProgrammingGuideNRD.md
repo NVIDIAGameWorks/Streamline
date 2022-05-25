@@ -65,6 +65,7 @@ NRD expects inputs in a specific format, so make sure to run a pre-processing pa
 * `eBufferTypeSpecularHitNoisy`      (RGB color,  A reflection ray hitT)
 * `eBufferTypeDiffuseHitNoisy`       (RGB color,  A primary ray hitT)
 * `eBufferTypeAmbientOcclusionNoisy` (R ambient)
+
 ### 4.0 PROVIDE NRD CONSTANTS
 
 NRD constants must be set so that the NRD plugin can track any changes made by the user:
@@ -93,27 +94,18 @@ else if (enableSpecular)
 nrdConsts.clipToWorld = myMatrix;
 nrdConsts.clipToWorldPrev = myMatrix; // clipToWorld from the previous frame
 nrdConsts.common = {};
-nrdConsts.common.denoisingRange = myDenoisingRange;
 nrdConsts.common.worldToViewMatrix = myworldToViewMatrix;
-nrdConsts.common.worldToViewMatrixPrev = myworldToViewMatrixPrev;
-nrdConsts.common.viewToClipMatrix = myviewToClipMatrix;
-nrdConsts.common.viewToClipMatrixPrev = myviewToClipMatrixPrev;
-nrdConsts.common.cameraJitter[0] = myJitterOffsetX;
-nrdConsts.common.cameraJitter[1] = myJitterOffsetY;
-nrdConsts.common.frameIndex = myFrameIndex;
-nrdConsts.common.isMotionVectorInWorldSpace = myMVecInWorldSpace; // Set to true if Mvec is in RGB(A) format and B component has depth based motion
 nrdConsts.common.motionVectorScale[0] = myMVecScaleX; // Normally 1
 nrdConsts.common.motionVectorScale[1] = myMVecScaleY; // Normally 1
-nrdConsts.common.splitScreen = mySplitScreen;
-nrdConsts.common.accumulationMode = myAccumMode; // Reset or keep history etc
 nrdConsts.common.resolutionScale[0] = myScaleX; // Are we rendering within a larger render target? If so set scale, otherwise set to 1.0f
 nrdConsts.common.resolutionScale[1] = myScaleY; // Are we rendering within a larger render target? If so set scale, otherwise set to 1.0f
+nrdConsts.common.denoisingRange = myDenoisingRange;
+nrdConsts.common.splitScreen = mySplitScreen;
+nrdConsts.common.accumulationMode = myAccumMode; // Reset or keep history etc
 
 // Now set the specific settings for the method(s) chosen above (defaults are OK for 99% of the applications)
-sl::NRDReblurSpecularSettings& specularSettings = nrdConsts.reblurSpecular;
-specularSettings = {};
-sl::NRDReblurDiffuseSettings& diffuseSettings = nrdConsts.reblurDiffuse;
-diffuseSettings = {};
+sl::NRDReblurSettings& reblurSettings = nrdConsts.reblurSettings;
+reblurSettings = {};
 
 // Note that we use method mask as a unique id
 // This allows us to evaluate different NRD denoisers in the same or different viewports but at the different stages with the same frame
@@ -123,10 +115,35 @@ if(!slSetFeatureConstants(sl::eFeatureNRD, &nrdConsts, myFrameIndex, nrdConsts.m
 }
 ```
 
+You may need to set additional values in the `NRDConstants` structure, and the NRD method specific constants structures contained within it, depending on the NRD method in use.
+
 > **NOTE:**
 > To disable NRD, set `sl::NRDConstants.methodMask` to `sl::NRDMode::eNRDMethodOff` or simply stop calling `slEvaluateFeature`
 
-### 5.0 TAG ALL REQUIRED RESOURCES
+### 5.0 PROVIDE COMMON CONSTANTS
+
+Various per frame camera related constants are required by all Streamline features and must be provided ***if any SL feature is active and as early in the frame as possible***. Please keep in mind the following: 
+
+* All SL matrices are row-major and should not contain any jitter offsets
+* If motion vector values in your buffer are in {-1,1} range then motion vector scale factor in common constants should be {1,1}
+* If motion vector values in your buffer are NOT in {-1,1} range then motion vector scale factor in common constants must be adjusted so that values end up in {-1,1} range
+
+```cpp
+sl::Constants consts = {};
+// Set motion vector scaling based on your setup
+consts.mvecScale = {1,1}; // Values in eBufferTypeMVec are in [-1,1] range
+consts.mvecScale = {1.0f / renderWidth,1.0f / renderHeight}; // Values in eBufferTypeMVec are in pixel space
+consts.mvecScale = myCustomScaling; // Custom scaling to ensure values end up in [-1,1] range
+// Set all other constants here
+if(!setConstants(consts, myFrameIndex)) // constants are changing per frame so frame index is required
+{
+    // Handle error, check logs
+}
+```
+For more details please see [common constants](ProgrammingGuide.md#251-common-constants)
+
+
+### 6.0 TAG ALL REQUIRED RESOURCES
 
 NRD requires depth, motion vectors, noisy inputs and outputs depending on which type of denoising is selected:
 
@@ -153,7 +170,7 @@ setTag(&specularOut, sl::BufferType::eBufferTypeSpecularHitDenoised, nrdConsts.m
 > **NOTE:**
 > If dynamic resolution is used then please specify the extent for each tagged resource. Please note that SL **manages resource states so there is no need to transition tagged resources**.
 
-### 6.0 PROVIDE COMMON CONSTANTS
+### 7.0 PROVIDE COMMON CONSTANTS
 
 Various per frame camera related constants are required by all Streamline features and must be provided ***if any SL feature is active as early in the frame as possible***. Please keep in mind the following: 
 
@@ -176,9 +193,9 @@ if(!setConstants(consts, myFrameIndex)) // constants are changing per frame so f
 ```
 For more details please see [common constants](ProgrammingGuide.md#251-common-constants)
 
-### 7.0 ADD NRD TO THE RENDERING PIPELINE
+### 8.0 ADD NRD TO THE RENDERING PIPELINE
 
-On your rendering thread, call `evaluateFeature` at the appropriate location where denoising should happen. Please note that `myFrameIndex` and `myId` used in `evaluateFeature` must match the one used when settings constants.
+On your rendering thread, call `slEvaluateFeature` at the appropriate location where denoising should happen. Please note that `myFrameIndex` and `myId` used in `slEvaluateFeature` must match the one used when settings constants.
 
 ```cpp
 // Make sure NRD is available and user selected this option in the UI

@@ -61,7 +61,7 @@ if((adapterBitMask & (1 << myAdapterIndex)) != 0)
 
 ### 3.0 CHECK LATENCY SETTINGS AND CAPABILITIES
 
-To find out what latency modes are available, current active or to obtain the latest latency stats you can do the following:
+To find out what latency modes are available, currently active or to obtain the latest latency stats you can do the following:
 
 ```cpp
 sl::LatencySettings latencySettings{};
@@ -101,7 +101,9 @@ if(!slSetFeatureConstants(sl::eFeatureLatency, &latencyConsts))
 
 ### 5.0 ADD LATENCY TO THE RENDERING PIPELINE
 
-Call `evaluateFeature` at the appropriate location where Latency markers need to be injected or where your application should sleep. Here is some pseudo code:
+Call `slEvaluateFeature` at the appropriate location where Latency markers need to be injected or where your application should sleep. Note that since there is only ever one instance of the Latency feature active, we use the `id` parameter of `slEvaluateFeature` to indicate which marker is to be injected, rather than its typical usage of indicating which instance of the feature is to be evaluated.
+
+Here is some pseudo code:
 
 ```cpp
 // Make sure Latency is available
@@ -156,10 +158,10 @@ if(useLatency)
 
 ### 6.0 HOW TO TRANSITION FROM REFLEX TO SL LATENCY
 
-Existing Reflex integrations can be easily converted to use SL latency by following these steps:
+Existing Reflex integrations can be easily converted to use SL Latency by following these steps:
 
 * Remove NVAPI from your application
-* There is no longer need to provide native D3D/VK device when making Reflex calls - SL takes care of that hence making the integrations easier
+* There is no longer any need to provide a native D3D/VK device when making Reflex calls - SL takes care of that, hence making the integrations easier
 * `NvAPI_D3D_SetSleepMode` is replaced with [set latency constants](#40-set-latency-constants)
 * `NvAPI_D3D_GetSleepStatus` is replaced with [get latency settings](#30-check-latency-settings-and-capabilities) - see `sl::LatencySettings::lowLatencyAvailable`
 * `NvAPI_D3D_GetLatency` is replaced with [get latency settings](#30-check-latency-settings-and-capabilities) - see `sl::LatencyReport`

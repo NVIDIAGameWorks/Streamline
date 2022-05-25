@@ -76,8 +76,6 @@ if(!slGetFeatureSettings(sl::eFeatureDLSS, &dlssConsts, &dlssSettings))
 }
 // Setup rendering based on the provided values in the sl::DLSSSettings structure
 myViewport->setSize(dlssSettings.optimalRenderWidth, dlssSettings.optimalRenderHeight);
-// Use recommended sharpness
-dlssConsts.sharpness = dlssSettings.optimalSharpness;
 ```
 
 ### 4.0 TAG ALL REQUIRED RESOURCES
@@ -157,7 +155,7 @@ For more details please see [common constants](ProgrammingGuide.md#251-common-co
 
 ### 7.0 ADD DLSS TO THE RENDERING PIPELINE
 
-On your rendering thread, call `evaluateFeature` at the appropriate location where up-scaling is happening. Please note that `myFrameIndex` used in `evaluateFeature` must match the one used when setting constants.
+On your rendering thread, call `slEvaluateFeature` at the appropriate location where up-scaling is happening. Please note that `myFrameIndex` used in `slEvaluateFeature` must match the one used when setting constants.
 
 ```cpp
 // Make sure DLSS is available and user selected this option in the UI

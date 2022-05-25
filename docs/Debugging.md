@@ -5,7 +5,7 @@
 
 ## How to toggle SL on/off
 
-Place `sl.interposer.json` file (located in `./scripts/`) in the game's working directory. Edit the following line(s):
+Place the `sl.interposer.json` file (located in `./scripts/`) in the game's working directory. Edit the following line(s):
 
 ```json
 {
@@ -13,11 +13,11 @@ Place `sl.interposer.json` file (located in `./scripts/`) in the game's working 
 }
 ```
 
-When game starts if flag is set to off interposing will be completely disabled. This can be used to check for added CPU overhead in games.
+When the game starts, if the flag is set to off, interposing will be completely disabled. This can be used to check for added CPU overhead in games.
 
 ## How to override plugin location
 
-Place `sl.interposer.json` file (located in `./scripts/`) in the game's working directory. Edit the following line(s):
+Place the `sl.interposer.json` file (located in `./scripts/`) in the game's working directory. Edit the following line(s):
 
 ```json
 {
@@ -26,20 +26,22 @@ Place `sl.interposer.json` file (located in `./scripts/`) in the game's working 
 ```
 
 By default SL looks for plugins next to the executable or in the paths provided by the host application (see sl::Preferences). If `pathToPlugins` is provided in JSON it overrides all these settings.
+> **NOTE:**
+> The `sl.interposer.dll` still needs to reside in the game's working directory in order to be found and loaded properly.  All other SL plugin dlls should reside in the path referenced in the `pathToPlugins` setting.
 
 ## How to override logging settings
 
-Place `sl.interposer.json` file (located in `./scripts/`) in the game's working directory. Edit the following line(s):
+Place the `sl.interposer.json` file (located in `./scripts/`) in the game's working directory. Edit the following line(s):
 
 ```json
 {
 	"showConsole": true,
 	"logLevel": 2,
-    "logPath": "N:\\My\\Log\\Path"
+	"logPath": "N:/My/Log/Path"
 }
 ```
 
-To modify NGX logging place `sl.common.json` file (located in `./scripts/`) in the game's working directory. Edit the following line(s):
+To modify NGX logging, place `sl.common.json` file (located in `./scripts/`) in the game's working directory. Edit the following line(s):
 
 ```json
 {
@@ -54,7 +56,7 @@ Log levels are `off` (0), `on` (1) and `verbose` (2). Default values come from t
 
 ## How to override feature allow list
 
-Place `sl.interposer.json` file (located in `./scripts/`) in the game's working directory. Edit the following line(s):
+Place the `sl.interposer.json` file (located in `./scripts/`) in the game's working directory. Edit the following line(s):
 
 ```json
 {
@@ -62,9 +64,13 @@ Place `sl.interposer.json` file (located in `./scripts/`) in the game's working 
 }
 ```
 
+> **NOTE:**
+> This entry tells the interposer to load all features when set to true.  When set to false or not specified, only the features specified in the `Preferences1::featuresToEnable` member will be loaded.  Any features that are loaded are also enabled by default.
+This entry will be renamed in a future release of the SDK to clarify this distinction.
+
 ## How to override existing or add new hot-keys
 
-Place `sl.common.json` file (located in `./scripts/`) in the game's working directory. Edit the following line(s):
+Place the `sl.common.json` file (located in `./scripts/`) in the game's working directory. Edit the following line(s):
 
 ```json
 {

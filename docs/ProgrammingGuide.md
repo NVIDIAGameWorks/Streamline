@@ -23,18 +23,18 @@ The following is needed to use SL features:
 
 ### 2.1 ADDING SL TO YOUR APPLICATION
 
-The SL SDK comes with several header files, `sl.h` and `sl_*.h`, which are located in the `./include` folder. Two main header files are `sl.h`and `sl_consts.h` and they should be included always. Depending on which SL feature is used by your application the additional header(s) should be included (see bellow for more details). Your project should link against the export library `sl.interposer.lib` (which is provided in the ./lib/x64 folder) and if using Vulkan distribute the included `VkLayer_streamline.json` with your application. Since SL is an interposer, there are several ways it can be integrated into your application:
+The SL SDK comes with several header files, `sl.h` and `sl_*.h`, which are located in the `./include` folder. Two main header files are `sl.h`and `sl_consts.h` and they should be included always. Depending on which SL features are used by your application, additional header(s) should be included (see below for more details). Your project should link against the export library `sl.interposer.lib` (which is provided in the ./lib/x64 folder) and if using Vulkan, distribute the included `VkLayer_streamline.json` with your application. Since SL is an interposer, there are several ways it can be integrated into your application:
 
-* If you are statically linking `d3d11.lib`, `d3d12.lib` and `dxgi.lib` there are two options:
-    * remove standard libraries from the linking stage and and link `sl.interposer.lib` instead, SL will automatically intercept API it requires to function correctly
+* If you are statically linking `d3d11.lib`, `d3d12.lib` and `dxgi.lib`, there are two options:
+    * remove standard libraries from the linking stage and and link `sl.interposer.lib` instead; SL will automatically intercept API it requires to function correctly
     * keep linking the standard libraries, load `sl.interposer.dll` dynamically and redirect DXGI/D3D API calls as required (code sample can be found below)
-* If you are dynamically loading `d3d11.dll`, `d3d12.dll` and `dxgi.dll` dynamically load `sl.interposer.dll` instead 
-* If you are using Vulkan enable `VK_LAYER_Streamline` and include `VkLayer_streamline.json` with your distribution
+* If you are dynamically loading `d3d11.dll`, `d3d12.dll` and `dxgi.dll`, dynamically load `sl.interposer.dll` instead 
+* If you are using Vulkan, enable `VK_LAYER_Streamline` and include `VkLayer_streamline.json` with your distribution
 
 > **IMPORTANT:**
 > Vulkan support is under development and does not function correctly in the current release.
 
-If you want full control, simply incorporate SL source code into your engine and instead of creating standard DirectX/DXGI interfaces, use proxies provided by the SL SDK. Please note that in this scenario you also need to ensure that SL plugin manager is initialized properly and SL plugins are loaded and mapped correctly, otherwise SL features will not work.
+If you want full control, simply incorporate SL source code into your engine and instead of creating standard DirectX/DXGI interfaces, use proxies provided by the SL SDK. Please note that in this scenario, you also need to ensure that the SL plugin manager is initialized properly and SL plugins are loaded and mapped correctly, otherwise SL features will not work.
 
 > **IMPORTANT:**
 > When running on hardware which does not support SL, `sl.interposer.dll` serves as a simple pass-through layer with negligible impact on performance. 
@@ -95,12 +95,12 @@ else
 ```
 #### 2.1.1 SECURITY
 
-All modules provided in the `./bin/x64` SDK folder are digitally signed by NVIDIA. There are two digital signatures on each SL module, one is standard Windows store certificate and can be validated using `WinVerifyTrust` while the other is custom NVIDIA certificate used to handle scenarios where OS is compromised and Windows store certificate cannot be trusted. To secure your application from potentially malicious replacement modules please do the following:
+All modules provided in the `./bin/x64` SDK folder are digitally signed by NVIDIA. There are two digital signatures on each SL module, one is a standard Windows store certificate and can be validated using `WinVerifyTrust` while the other is a custom NVIDIA certificate used to handle scenarios where the OS is compromised and Windows store certificates cannot be trusted. To secure your application from potentially malicious replacement modules, please do the following:
 
 * Validate the digital signature on ***all Streamline modules*** using the `WinVerifyTrust` Win32 API when starting your application.
-* Validate the public key for the NVIDIA custom digital certificate on `sl.interposer.dll` if using binary provided by NVIDIA (see `source/core/sl.security/secureLoadLibrary` for more details)
+* Validate the public key for the NVIDIA custom digital certificate on `sl.interposer.dll` if using the binary provided by NVIDIA (see `source/core/sl.security/secureLoadLibrary` for more details)
 
-***It is strongly recommended*** to use the provided `sl.interposer.dll` binary and follow the above guidelines. Prebuilt binary automatically performs the above steps when loading SL plugins to ensure maximum security. If you decide to build your own `sl.interposer.dll` make sure to enforce your own strict security policies.
+***It is strongly recommended*** to use the provided `sl.interposer.dll` binary and follow the above guidelines. The prebuilt binary automatically performs the above steps when loading SL plugins to ensure maximum security. If you decide to build your own `sl.interposer.dll`, make sure to enforce your own strict security policies.
 
 ### 2.2 INITIALIZING SL 
 
@@ -147,7 +147,7 @@ struct Preferences1
 
 ##### 2.2.1.1 MANAGING FEATURES
 
-SL will only enable features specified via the `Preferences1::featuresToEnable` (assuming they are supported on the user's system). For example, to enable only DLSS one can do the following:
+SL will only allow features to be loaded that are specified via the `Preferences1::featuresToEnable` (assuming they are supported on the user's system). ***If this value is empty, no features will be loaded.***  For example, to only allow DLSS to be loaded, one can do the following:
 
 ```cpp
 Preferences1 pref1;
@@ -160,7 +160,13 @@ pref.ext = &pref1; // Provide link to Preferences1
 ```
 
 > **IMPORTANT:**
-> If SL plugins are not located next to the host executable then the absolute paths to locations where to look for them must be specified by setting the `pathsToPlugins` field in the `Preferences` structure. Plugins will be loaded from the first path where they can be found.
+> This is a change in behavior from previous versions of the Streamline SDK.  Previously, all available features were loaded by default if no list was provided.
+
+> **IMPORTANT:**
+> If SL plugins are not located next to the host executable, then the absolute paths to locations where to look for them must be specified by setting the `pathsToPlugins` field in the `Preferences` structure. Plugins will be loaded from the first path where they can be found.
+
+> **NOTE:**
+> In this context, "enable" means to load the plugins.  To change whether a plugin is active or not, please see [section 2.4](#2.4-enabling-or-disabling-features).  We will be renaming this member in a future release to clarify this distinction.
 
 ##### 2.2.1.2 LOGGING AND DEBUG CONSOLE WINDOW
 
@@ -202,7 +208,7 @@ using pfunLogMessageCallback = void(LogType type, const char *msg);
 ```
 
 > **NOTE:**
-> If logging callback is specified then SL will not use `OutputDebugString` debug API.
+> If a logging callback is specified then SL will not use `OutputDebugString` debug API.
 
 ##### 2.2.1.3 MEMORY MANAGEMENT
 
@@ -214,15 +220,13 @@ side will be **fully responsible for the resource allocation and destruction**.
 struct ResourceDesc
 {
     //! Indicates the type of resource
-    ResourceType type{};
-    //! Indicates if resource is a buffer or not
-    bool buffer{};
+    ResourceType type = eResourceTypeTex2d;
     //! D3D12_RESOURCE_DESC/VkImageCreateInfo/VkBufferCreateInfo
-    void *desc{};
-    //! D3D12_RESOURCE_STATES or VkMemoryPropertyFlags
-    unsigned int state{};
+    void* desc{};
+    //! Initial state as D3D12_RESOURCE_STATES or VkMemoryPropertyFlags
+    uint32_t state = 0;
     //! CD3DX12_HEAP_PROPERTIES or nullptr
-    void *heap{};
+    void* heap{};
     //! Reserved for future expansion, must be set to null
     void* ext{};
 };
@@ -231,15 +235,13 @@ struct ResourceDesc
 struct Resource
 {
     //! Indicates the type of resource
-    ResourceType type{};
-    //! Indicates if resource is a buffer or not
-    bool buffer{};
-    //! ID3D12Resource/VkBuffer/VkImage
-    void *native{};
+    ResourceType type = eResourceTypeTex2d;
+    //! ID3D11Resource/ID3D12Resource/VkBuffer/VkImage
+    void* native{};
     //! vkDeviceMemory or nullptr
-    void *memory{};
-    //! VkImageView or nullptr
-    void *view{};    
+    void* memory{};
+    //! VkImageView/VkBufferView or nullptr
+    void* view{};
     //! State as D3D12_RESOURCE_STATES or VkImageLayout
     //! 
     //! IMPORTANT: State needs to be correct when tagged resources are actually used.
@@ -395,13 +397,15 @@ SL supports the following features:
 enum Feature
 {
     //! Deep Learning Super Sampling
-    eFeatureDLSS,
+    eFeatureDLSS = 0,
     //! Real-Time Denoiser
-    eFeatureNRD,
-    //! NVIDIA Image Scaling SDK
-    eFeatureNIS,
-    //! Total count
-    eFeatureCount
+    eFeatureNRD = 1,
+    //! NVIDIA Image Scaling
+    eFeatureNIS = 2,
+    //! Low-Latency
+    eFeatureLatency = 3,
+    //! Common feature, NOT intended to be used directly
+    eFeatureCommon = UINT_MAX
 };
 ```
 
@@ -439,10 +443,11 @@ if((adapterBitMask & (1 << myAdapterIndex)) != 0)
 ```
 > **NOTE:**
 > If `slIsFeatureSupported` returns false, you can enable the console window or use `logMessagesCallback` to find out why the specific feature is not supported.
+> If `slIsFeatureSupported` returns true, it means that the feature is supported by some adapter in the system.  In a multi-adapter system, you MUST check the bitmask to determine if the feature is supported on the desired adapter!
 
-### 2.4 ENABLING OR DISABLING FEATURE
+### 2.4 ENABLING OR DISABLING FEATURES
 
-All supported features are enabled by default. To explicitly enable or disable a specific feature use the following method:
+All loaded features are enabled by default. To explicitly enable or disable a specific feature use the following method:
 
 ```cpp
 //! Sets the specified feature to either enabled or disabled state.
@@ -554,7 +559,7 @@ enum BufferType
 SL_API bool slSetTag(Resource* resource, BufferType tag, uint32_t id = 0, const Extent* extent = nullptr);
 ```
 
-Resource state can be provided by the host or if not SL will use internal tracking. Here is an example:
+Resource state can be provided by the host or, if not, SL will use internal tracking. Here is an example:
 
 ```cpp
 // Host providing native D3D12 resource state
@@ -669,8 +674,6 @@ struct Constants
     //! Specifies which value represents an invalid (un-initialized) value in the motion vectors buffer
     float motionVectorsInvalidValue = INVALID_FLOAT;
 
-    //! Specifies if tagged color buffers are full HDR (rendering to an HDR monitor) or not 
-    Boolean colorBuffersHDR = Boolean::eInvalid;
     //! Specifies if depth values are inverted (value closer to the camera is higher) or not.
     Boolean depthInverted = Boolean::eInvalid;
     //! Specifies if camera motion is included in the MVec buffer.
@@ -748,7 +751,7 @@ Some features provide feedback to the host application specifying which renderin
 SL_API bool slGetFeatureSettings(Feature feature, const void* consts, void* settings);
 ```
 
-For example, when using DLSS, it is mandatory to call `getFeatureSettings` to find out at which resolution we should render our game:
+For example, when using DLSS, it is mandatory to call `getFeatureSettings` to find out at which resolution we should render your game:
 
 ```cpp
 sl::DLSSSettings dlssSettings;
@@ -816,6 +819,7 @@ else
 ### 2.9 SHUTDOWN
 
 To release the SDK instance and all resources allocated with it, use the following method:
+
 ```cpp
 //! Shuts down the SL module
 //!

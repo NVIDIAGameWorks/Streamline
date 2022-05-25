@@ -1,17 +1,19 @@
 Streamline SDK 1.0.3 Release Notes
+-- Major Change: Feature plugins are no longer loaded by default; you must explicitly define the features which your app will use via the Preferences1::featuresToEnable field.  In previous versions of the SDK, all available features would be loaded if 'featuresToEnable' was set to NULL.  Leaving the value as NULL will now result in NO feature plugins being loaded.  See ProgrammingGuide.md for more details.
 -- Source code for the Streamline DLSS plugin has been added.
 -- Added support for DLSS NVSDK_NGX_Parameter_DLSS_Indicator_Invert_X_Axis, NVSDK_NGX_Parameter_DLSS_Indicator_Invert_Y_Axis and NVSDK_NGX_Parameter_FreeMemOnReleaseFeature parameters.
 -- The value of NVSDK_NGX_DLSS_Feature_Flags_MVLowRes is now inferred from the extents of the Motion Vector resource compared to the extents of the Color Input resource in the DLSS plugin. 
 -- Added support for DLSS GPU memory usage query via getDLSSSettings() in the Streamline DLSS plugin
 -- A new Plugin, sl.nis, and its source code has been added, which utilizes the NVIDIA Image Scaling SDK.
 -- A new Plugin, sl.latency, and its source code has been added, which enables PC Latency measurement.
+-- Source code for the Streamline NRD plugin has been added.
 -- Added support to allow resource state tracking to be handled by the host application
 -- Modified the Streamline Interposer to properly handle the case where other interposers were already active
 -- Added slAlloc/FreeResources API to allow the host app to more explicitly control the lifetime of resources used by Streamline Plugins, if desired
 -- Upgraded D3D12 CommandList support to ID3D12GraphicsCommandList6 and Device support to ID3D12Device9
 -- Added per-plugin namespace to clarify the scope of parameters and functions
--- Added a new "development" folder containing unsigned, non-production builds of Streamline with additional debugging functionality
--- Added a Debugging.md document to the "docs" folder with details on using JSON files to configure options for the Development build of Streamline
+-- Added a new "bin/x64/development" folder containing unsigned, non-production builds of Streamline with additional debugging functionality.
+-- Added a Debugging.md document to the "docs" folder with details on using JSON files to configure options for the Development build of Streamline.  Sample JSON files are included in the "scripts" folder.
 -- Clarified which parts of SL API can be used before device is created and which can only be used after device has been created
 -- Bug-Fix: Fixed a crash when resizing the swapchain in D3D11
 -- Bug-Fix: Fixed a crash when switching between monitors
