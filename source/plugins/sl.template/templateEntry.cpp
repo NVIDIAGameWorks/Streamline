@@ -374,9 +374,17 @@ static const char* JSON = R"json(
 {
     "comment_id" : "id must match the sl::Feature enum in sl.h or sl_template.h, for example sl.dlss has id 0 hence eFeatureDLSS = 0",
     "id" : 65535,
+    "comment_priority" : "plugins are executed in the order of their priority so keep that in mind",
     "priority" : 1,
+    
     "comment_namespace" : "rename this to the namespace used for parameters used by your plugin",
     "namespace" : "template",
+    
+    "comment_optional_dependencies" : "the following lists can be used to specify dependencies, incompatibilities with other plugin(s)",
+    "required_plugins" : ["sl.some_plugin_we_depend_on"],
+    "exclusive_hooks" : ["IDXGISwapChain_SomeFunctionNobodyElseCanUse"],
+    "incompatible_plugins" : ["sl.some_plugin_we_are_not_compatible_with"],
+    
     "hooks" :
     [
         {

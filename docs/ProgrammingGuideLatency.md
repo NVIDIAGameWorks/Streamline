@@ -3,9 +3,10 @@
 Streamline - Latency
 =======================
 
->The focus of this guide is on using Streamline to integrate Reflex into an application.  For more information about Reflex itself, please visit the [NVIDIA Developer Reflex Page](https://developer.nvidia.com/performance-rendering-tools/reflex)
+>The focus of this guide is on using Streamline to integrate Reflex into an application.  For more information about Reflex itself, please visit the [NVIDIA Developer Reflex Page](https://developer.nvidia.com/performance-rendering-tools/reflex)  
+>For information on user interface considerations when using the Latency plugin, please see the "Reflex SDK UI Integration Guidelines.pdf" document included in the Reflex SDK.
 
-Version 1.0.3
+Version 1.0.4
 ------
 
 ### 1.0 INITIALIZE AND SHUTDOWN

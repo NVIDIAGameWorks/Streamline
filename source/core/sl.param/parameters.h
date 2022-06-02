@@ -50,6 +50,7 @@ constexpr const char* kDebugMode = "sl.param.global.dbgMode";
 constexpr const char* kPFunSetTag = "sl.param.global.setTag";
 constexpr const char* kPFunGetTag = "sl.param.global.getTag";
 constexpr const char* kVulkanTable = "sl.param.global.vulkanTable";
+constexpr const char* kPreferenceFlags = "sl.param.global.prefFlags";
 }
 
 namespace common
@@ -57,7 +58,6 @@ namespace common
 
 constexpr const char* kGPUInfo = "sl.param.common.gpuInfo";
 constexpr const char* kComputeAPI = "sl.param.common.computeAPI";
-constexpr const char* kCaptureAPI = "sl.param.common.captureAPI";
 constexpr const char* kKeyboardAPI = "sl.param.common.keyboardAPI";
 constexpr const char* kPFunEvaluateFeature = "sl.param.common.evaluateFeature";
 constexpr const char* kPFunRegisterEvaluateCallbacks = "sl.param.common.registerEvaluateCallbacks";

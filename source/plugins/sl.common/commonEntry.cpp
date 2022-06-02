@@ -57,6 +57,7 @@ extern HRESULT slHookCreatePlacedResource(ID3D12Heap* pHeap, UINT64 HeapOffset, 
 extern HRESULT slHookCreateReservedResource(const D3D12_RESOURCE_DESC* pDesc, D3D12_RESOURCE_STATES InitialState, const D3D12_CLEAR_VALUE* pOptimizedClearValue, REFIID riid, void** ppvResource);
 extern void slHookResourceBarrier(ID3D12GraphicsCommandList* pCmdList, UINT NumBarriers, const D3D12_RESOURCE_BARRIER* pBarriers);
 extern HRESULT slHookPresent(IDXGISwapChain* swapChain, UINT SyncInterval, UINT Flags, bool& Skip);
+extern HRESULT slHookPresent1(IDXGISwapChain* swapChain, UINT SyncInterval, UINT Flags, DXGI_PRESENT_PARAMETERS* params, bool& Skip);
 extern HRESULT slHookResizeSwapChainPre(IDXGISwapChain* swapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags);
 
 extern bool getGPUInfo(common::GPUArch*& info, LUID* id);
@@ -329,17 +330,7 @@ bool slOnPluginStartup(const char* jsonConfig, void* device, param::IParameters*
     ctx.platform = (chi::PlatformType)deviceType;
     common::createCompute(device, ctx.platform);
 
-#ifdef SL_CAPTURE
-    if (extraConfig.contains("numberFrameCapture"))
-    {
-        int captIndex;
-        extraConfig.at("numberFrameCapture").get_to(captIndex);
-        sl::chi::ICapture* capture;
-        param::getPointerParam(api::getContext()->parameters, sl::param::common::kCaptureAPI, &capture);
-        capture->setMaxCaptureIndex(captIndex);
-    }
-#endif
-    
+   
     // Check if any of the plugins requested NGX
     ctx.needNGX = false;
     parameters->get(param::global::kNeedNGX, &ctx.needNGX);
@@ -400,15 +391,16 @@ bool slOnPluginStartup(const char* jsonConfig, void* device, param::IParameters*
             }
         }
 
+        NVSDK_NGX_Result ngxStatus{};
         if (deviceType == chi::ePlatformTypeD3D11)
         {
-            CHECK_NGX_RETURN_ON_ERROR(NVSDK_NGX_D3D11_Init(appId, documentsDataPath, (ID3D11Device*)device, &info, NVSDK_NGX_Version_API));
-            CHECK_NGX_RETURN_ON_ERROR(NVSDK_NGX_D3D11_GetCapabilityParameters(&ctx.ngxContext.params));
+            ngxStatus = NVSDK_NGX_D3D11_Init(appId, documentsDataPath, (ID3D11Device*)device, &info, NVSDK_NGX_Version_API);
+            ngxStatus = NVSDK_NGX_D3D11_GetCapabilityParameters(&ctx.ngxContext.params);
         }
         else if (deviceType == chi::ePlatformTypeD3D12)
         {
-            CHECK_NGX_RETURN_ON_ERROR(NVSDK_NGX_D3D12_Init(appId, documentsDataPath, (ID3D12Device*)device, &info, NVSDK_NGX_Version_API));
-            CHECK_NGX_RETURN_ON_ERROR(NVSDK_NGX_D3D12_GetCapabilityParameters(&ctx.ngxContext.params));
+            ngxStatus = NVSDK_NGX_D3D12_Init(appId, documentsDataPath, (ID3D12Device*)device, &info, NVSDK_NGX_Version_API);
+            ngxStatus = NVSDK_NGX_D3D12_GetCapabilityParameters(&ctx.ngxContext.params);
         }
         else
         {
@@ -424,10 +416,12 @@ bool slOnPluginStartup(const char* jsonConfig, void* device, param::IParameters*
             assert(vk->dispatchDeviceMap.find(slVkDevices->device) != vk->dispatchDeviceMap.end());
             assert(vk->dispatchInstanceMap.find(slVkDevices->instance) != vk->dispatchInstanceMap.end());
 
-            CHECK_NGX_RETURN_ON_ERROR(NVSDK_NGX_VULKAN_Init(appId, documentsDataPath, slVkDevices->instance, slVkDevices->physical, slVkDevices->device, /*vk->getInstanceProcAddr, vk->getDeviceProcAddr,*/ &info, NVSDK_NGX_Version_API));
-            CHECK_NGX_RETURN_ON_ERROR(NVSDK_NGX_VULKAN_GetCapabilityParameters(&ctx.ngxContext.params));
+            ngxStatus = NVSDK_NGX_VULKAN_Init(appId, documentsDataPath, slVkDevices->instance, slVkDevices->physical, slVkDevices->device, /*vk->getInstanceProcAddr, vk->getDeviceProcAddr,*/ &info, NVSDK_NGX_Version_API);
+            ngxStatus = NVSDK_NGX_VULKAN_GetCapabilityParameters(&ctx.ngxContext.params);
         }
 
+        if (ngxStatus == NVSDK_NGX_Result_Success)
+        {
         SL_LOG_HINT("NGX loaded - app id %u - logging to %S", appId, documentsDataPath);
         
         ctx.needNGX = true;
@@ -441,6 +435,11 @@ bool slOnPluginStartup(const char* jsonConfig, void* device, param::IParameters*
         ctx.ngxContext.releaseFeature = ngx::releaseNGXFeature;
         ctx.ngxContext.evaluateFeature = ngx::evaluateNGXFeature;
         parameters->set(param::global::kNGXContext, &ctx.ngxContext);
+        }
+        else
+        {
+            SL_LOG_WARN("Failed to initialize NGX, any SL feature requiring NGX will be unloaded and disabled");
+        }
     }
 
     return true;
@@ -520,6 +519,12 @@ static const char* JSON = R"json(
             "target" : "Present",
             "replacement" : "slHookPresent",
             "base" : "before"
+        },
+        {
+            "class": "IDXGISwapChain",
+            "target" : "Present1",
+            "replacement" : "slHookPresent1",
+            "base" : "before"
         }
     ]
 }
@@ -567,6 +572,7 @@ SL_EXPORT void* slGetPluginFunction(const char* functionName)
 
     //! D3D12
     SL_EXPORT_FUNCTION(slHookPresent);
+    SL_EXPORT_FUNCTION(slHookPresent1);
     SL_EXPORT_FUNCTION(slHookResizeSwapChainPre);
     SL_EXPORT_FUNCTION(slHookResourceBarrier);
     SL_EXPORT_FUNCTION(slHookCreateCommittedResource);

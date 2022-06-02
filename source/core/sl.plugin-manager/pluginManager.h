@@ -38,6 +38,7 @@ enum class FunctionHookID : uint32_t
     eIDXGIFactory2_CreateSwapChainForHwnd,
     eIDXGIFactory2_CreateSwapChainForCoreWindow,
     eIDXGISwapChain_Present,
+    eIDXGISwapChain_Present1,
     eIDXGISwapChain_GetBuffer,
     eIDXGISwapChain_ResizeBuffers,
     eIDXGISwapChain_GetCurrentBackBufferIndex,
@@ -107,6 +108,7 @@ struct IPluginManager
 
     virtual bool setFeatureEnabled(Feature feature, bool value) = 0;
     virtual void setPreferences(const Preferences& pref) = 0;
+    virtual const Preferences& getPreferences() const = 0;
     virtual void setApplicationId(int appId) = 0;
     virtual void setD3D12Device(ID3D12Device* device) = 0;
     virtual void setD3D11Device(ID3D11Device* device) = 0;

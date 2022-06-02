@@ -50,9 +50,6 @@ struct CommonInterfaceContext
 {
     chi::PlatformType platform;
     sl::chi::ICompute* compute;
-#ifdef SL_CAPTURE
-    sl::chi::ICapture* capture;
-#endif
     uint32_t frameIndex = 0;
 
     thread::ThreadContext<chi::D3D11ThreadContext>* threadsD3D11 = {};
@@ -162,12 +159,6 @@ bool createCompute(void* device, uint32_t deviceType)
     CHI_CHECK_RF(ctx.compute->setCallbacks(allocate, release, getThreadContext));
 
     api::getContext()->parameters->set(sl::param::common::kComputeAPI, ctx.compute);
-
-#ifdef SL_CAPTURE
-    ctx.capture = sl::chi::getCapture();
-    ctx.capture->init(ctx.compute);
-    api::getContext()->parameters->set(sl::param::common::kCaptureAPI, ctx.capture);
-#endif
 
     return true;
 }
@@ -315,8 +306,12 @@ void slHookResourceBarrier(ID3D12GraphicsCommandList* pCmdList, UINT NumBarriers
     }
 }
 
-void presentCommon()
+void presentCommon(UINT Flags)
 {
+    if ((Flags & DXGI_PRESENT_TEST))
+    {
+        return;
+    }
     if (ctx.compute)
     {
         ctx.frameIndex++;
@@ -340,9 +335,14 @@ void presentCommon()
     api::getContext()->parameters->set(sl::param::common::kStats, (void*)s_stats.c_str());
 }
 
+HRESULT slHookPresent1(IDXGISwapChain* swapChain, UINT SyncInterval, UINT Flags, DXGI_PRESENT_PARAMETERS* params, bool& Skip)
+{
+    presentCommon(Flags);
+    return S_OK;
+}
 HRESULT slHookPresent(IDXGISwapChain* swapChain, UINT SyncInterval, UINT Flags, bool& Skip)
 {
-    presentCommon();
+    presentCommon(Flags);
     return S_OK;
 }
 

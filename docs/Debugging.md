@@ -60,13 +60,13 @@ Place the `sl.interposer.json` file (located in `./scripts/`) in the game's work
 
 ```json
 {
-	"enableAllFeatures": true,
+	"loadAllFeatures": true,
+	"loadSpecificFeatures": [0,1],
 }
 ```
 
 > **NOTE:**
-> This entry tells the interposer to load all features when set to true.  When set to false or not specified, only the features specified in the `Preferences1::featuresToEnable` member will be loaded.  Any features that are loaded are also enabled by default.
-This entry will be renamed in a future release of the SDK to clarify this distinction.
+> This entry tells the interposer to load all features or a specific subset using the unique Ids from `sl.h`. `loadAllFeatures` supersedes `loadSpecificFeatures` if set to true.
 
 ## How to override existing or add new hot-keys
 

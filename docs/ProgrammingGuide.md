@@ -3,7 +3,7 @@
 Streamline - SL
 =======================
 
-Version 1.0.3
+Version 1.0.4
 ------
 
 1 SETTING UP
@@ -25,7 +25,7 @@ The following is needed to use SL features:
 
 The SL SDK comes with several header files, `sl.h` and `sl_*.h`, which are located in the `./include` folder. Two main header files are `sl.h`and `sl_consts.h` and they should be included always. Depending on which SL features are used by your application, additional header(s) should be included (see below for more details). Your project should link against the export library `sl.interposer.lib` (which is provided in the ./lib/x64 folder) and if using Vulkan, distribute the included `VkLayer_streamline.json` with your application. Since SL is an interposer, there are several ways it can be integrated into your application:
 
-* If you are statically linking `d3d11.lib`, `d3d12.lib` and `dxgi.lib`, there are two options:
+* If you are statically linking `d3d11.lib`, `d3d12.lib` and/or `dxgi.lib`, there are two options:
     * remove standard libraries from the linking stage and and link `sl.interposer.lib` instead; SL will automatically intercept API it requires to function correctly
     * keep linking the standard libraries, load `sl.interposer.dll` dynamically and redirect DXGI/D3D API calls as required (code sample can be found below)
 * If you are dynamically loading `d3d11.dll`, `d3d12.dll` and `dxgi.dll`, dynamically load `sl.interposer.dll` instead 
@@ -104,11 +104,40 @@ All modules provided in the `./bin/x64` SDK folder are digitally signed by NVIDI
 
 ### 2.2 INITIALIZING SL 
 
-#### 2.2.1 PREFERENCES
+#### 2.2.1 SL FEATURE LIFECYCLE
+Here is the typical lifecycle for SL features:
+* Requested feature DLLs are loaded during `slInit` call.
+    * This is (and must be) done before any DX/VK APIs are invoked (which is why the app must call slInit very early in its initialization)
+    * The feature "request" process is detailed in [featuresToLoad in preferences](#222-preferences)
+* At this point, required and supported features are loaded but are NOT yet initialized
+    * As a result, methods like `slSet/Get/Eval` CANNOT BE USED immediately after slInit
+* The app can and should call `slIsFeatureSupported` at this point to check which specific feature(s) are supported and on which adapters
+* Later in the application's initialization sequence, the app creates a rendering API device
+    *  Specifically, a device on the adapter where SL features are supported
+* This device creation indirectly triggers SL feature initialization since the device is now available
+    * In practice, this means that each enabled and loaded feature's slOnPluginStartup is called
+    * If any feature's slOnPluginStartup returns failure, that plugin will be unloaded
+* Note that features can fail to initialize (and thus be unloaded) even if they are declared as supported
+    * For example, the app may create a D3D11 device for a feature that is supported on the device's adapter, but only when using a D3D12 device
+* After device creation, any calls to `slIsFeatureSupported` will succeed only if the feature is FULLY functional on that device
+    * This means that the set of features that return true from slIsFeatureSupported AFTER device creation can be smaller (but not larger) than the set that returned true from slIsFeatureSupported after slInit, but before device creation
+    * And thus, at this point, any SL method can be used safely since all required and supported features are initialized
+    * In addition, at this point it is possible to [explicitly allocate/free resources used by feature(s)](#2224-resource-allocation-and-de-allocation)
+
+#### 2.2.2 PREFERENCES
 
 To control the behavior of the SL SDK, some preferences can be specified using the following data structure:
 
 ```cpp
+//! Optional flags
+enum PreferenceFlags : uint64_t
+{
+    //! IMPORTANT: If this flag is set then the host application is responsible for restoring CL state correctly
+    ePreferenceFlagDisableCLStateTracking = 1 << 0,
+    //! Disables debug text on screen in development builds
+    ePreferenceFlagDisableDebugText = 1 << 1,
+};
+
 //! Optional preferences
 struct Preferences
 {
@@ -119,44 +148,38 @@ struct Preferences
     //! Optional - Absolute paths to locations where to look for plugins, first path in the list has the highest priority
     const wchar_t** pathsToPlugins = {};
     //! Optional - Number of paths to search
-    unsigned int numPathsToPlugins = 0;
+    uint32_t numPathsToPlugins = 0;
     //! Optional - Absolute path to location where logs and other data should be stored
     //! NOTE: Set this to nullptr in order to disable logging to a file
-    const wchar_t *pathToLogsAndData = {};
+    const wchar_t* pathToLogsAndData = {};
     //! Optional - Allows resource allocation tracking on the host side
     pfunResourceAllocateCallback* allocateCallback = {};
     //! Optional - Allows resource deallocation tracking on the host side
     pfunResourceReleaseCallback* releaseCallback = {};
     //! Optional - Allows log message tracking including critical errors if they occur
     pfunLogMessageCallback* logMessageCallback = {};
-    //! Pointer to Preferences1 or null if not needed
-    void* ext = {};
-};
-
-struct Preferences1
-{
-    //! Required - Features to enable (assuming appropriate plugins are found); if not specified, all features are DISABLED by default
-    const Feature* featuresToEnable = {};
-    //! Required - Number of features to enable
-    unsigned int numFeaturesToEnable = Feature::eFeatureCount;
+    //! Optional – Flags used to enable or disable advanced options
+    PreferenceFlags flags{};
+    //! Required - Features to load (assuming appropriate plugins are found), if not specified NO features will be loaded by default
+    const Feature* featuresToLoad = {};
+    //! Required - Number of features to load, only used when list is not a null pointer
+    uint32_t numFeaturesToLoad = 0;
     //! Reserved for future expansion, must be set to null
     void* ext = {};
 };
 
 ```
 
-##### 2.2.1.1 MANAGING FEATURES
+##### 2.2.2.1 MANAGING FEATURES
 
-SL will only allow features to be loaded that are specified via the `Preferences1::featuresToEnable` (assuming they are supported on the user's system). ***If this value is empty, no features will be loaded.***  For example, to only allow DLSS to be loaded, one can do the following:
+SL will only load features specified via the `Preferences::featuresToLoad` (assuming they are supported on the user's system). ***If this value is empty, no features will be loaded.*** For example, to load only DLSS, one can do the following:
 
 ```cpp
-Preferences1 pref1;
-Feature myFeatures[] = { eFeatureDLSS };
-pref1.featuresToEnable = myFeatures;
-pref1.numFeaturesToEnable = _countof(myFeatures);
 Preferences pref;
-// Set preferences here ...
-pref.ext = &pref1; // Provide link to Preferences1
+Feature myFeatures[] = { eFeatureDLSS };
+pref.featuresToLoad = myFeatures;
+pref.numFeaturesToLoad = _countof(myFeatures);
+// Set other preferences here ...
 ```
 
 > **IMPORTANT:**
@@ -165,10 +188,7 @@ pref.ext = &pref1; // Provide link to Preferences1
 > **IMPORTANT:**
 > If SL plugins are not located next to the host executable, then the absolute paths to locations where to look for them must be specified by setting the `pathsToPlugins` field in the `Preferences` structure. Plugins will be loaded from the first path where they can be found.
 
-> **NOTE:**
-> In this context, "enable" means to load the plugins.  To change whether a plugin is active or not, please see [section 2.4](#2.4-enabling-or-disabling-features).  We will be renaming this member in a future release to clarify this distinction.
-
-##### 2.2.1.2 LOGGING AND DEBUG CONSOLE WINDOW
+##### 2.2.2.2 LOGGING AND DEBUG CONSOLE WINDOW
 
 SL provides different levels of logging and can also show a debug console window if requested via the `Preferences` structure. The host can also specify the
 location where logs should be saved and track all messages via special `logMessagesCallback` including any errors or warnings.
@@ -210,7 +230,7 @@ using pfunLogMessageCallback = void(LogType type, const char *msg);
 > **NOTE:**
 > If a logging callback is specified then SL will not use `OutputDebugString` debug API.
 
-##### 2.2.1.3 MEMORY MANAGEMENT
+##### 2.2.2.3 MEMORY MANAGEMENT
 
 SL can hand over the control over resource allocation and de-allocation, if requested. When specified, the following callbacks on the host
 side will be **fully responsible for the resource allocation and destruction**.
@@ -265,7 +285,7 @@ using pfunResourceReleaseCallback = void(Resource *resource, void* device);
 > **NOTE:**
 > Memory management done by the host is an optional feature and it is NOT required for the SL to work properly. If used, proper care needs to be taken to avoid releasing resources which are still used by the GPU.
 
-##### 2.2.1.4 RESOURCE ALLOCATION AND DE-ALLOCATION
+##### 2.2.2.4 RESOURCE ALLOCATION AND DE-ALLOCATION
 
 By default SL performs the so called `lazy` initialization and destruction of all resources - in other words resources are created only when used and destroyed when plugins are unloaded. If required an explicit allocation or de-allocation of internal SL resources is also possible using the following methods:
 
@@ -355,7 +375,7 @@ For example, let's assume we have two viewports using `sl::eFeatureDLSS` and we 
 
 ```
 
-#### 2.2.2 INITIALIZATION
+#### 2.2.3 INITIALIZATION
 
 To initialize an SDK instance, simply call the following method:
 
@@ -382,7 +402,7 @@ SL_API bool slInit(const Preferences &pref, int applicationId = kUniqueApplicati
 > **IMPORTANT:**
 > Please make sure to call `slInit` very early, before any DirectX/DXGI/Vulkan API calls are made and check verbose logging for any warnings or errors.
 
-#### 2.2.3 ERROR HANDLING
+#### 2.2.4 ERROR HANDLING
 
 Since SL is an interposer **it is not always possible to immediately report potential errors or warnings after a specific SL API is invoked**. This is because some functionality can be triggered with some delay or asynchronously when DirectX/Vulkan APIs are called by the host application.
 Therefore, the SL SDK does not use error codes but instead provides `Preferences::logMessagesCallback` so that any errors or warnings can be tracked by placing breakpoints when `eLogTypeError` and/or `eLogTypeWarn` messages are received. Another useful feature is the debug console window, which should be
@@ -424,10 +444,10 @@ To check if a specific feature is available on the specific display adapter(s), 
 //! for which you are planning to create a device. For the adapter at index N you can check the bit 1 << N.
 //!
 //! This method is NOT thread safe.
-SL_API bool slIsFeatureSupported(Feature feature, uint32_t* adapterBitMask = nullptr);
+SL_API bool slIsFeatureSupported(sl::Feature feature, uint32_t* adapterBitMask = nullptr);
 ```
 
-Here is some sample showing how to use the adapter bit-mask to determine on which adapter a device should be created in order for DLSS feature to work correctly:
+Here is some sample code showing how to use the adapter bit-mask to determine on which adapter a device should be created in order for the DLSS feature to work correctly:
 
 ```cpp
 uint32_t adapterBitMask = 0;
@@ -441,8 +461,8 @@ if((adapterBitMask & (1 << myAdapterIndex)) != 0)
     // It is OK to create a device on this adapter since feature we need is supported
 }
 ```
-> **NOTE:**
-> If `slIsFeatureSupported` returns false, you can enable the console window or use `logMessagesCallback` to find out why the specific feature is not supported.
+> **NOTE:**  
+> If `slIsFeatureSupported` returns false, you can enable the console window or use `logMessagesCallback` to find out why the specific feature is not supported.  
 > If `slIsFeatureSupported` returns true, it means that the feature is supported by some adapter in the system.  In a multi-adapter system, you MUST check the bitmask to determine if the feature is supported on the desired adapter!
 
 ### 2.4 ENABLING OR DISABLING FEATURES
@@ -453,18 +473,35 @@ All loaded features are enabled by default. To explicitly enable or disable a sp
 //! Sets the specified feature to either enabled or disabled state.
 //!
 //! Call this method to enable or disable certain eFeature*. 
-//!
-//! NOTE: All supported features are enabled by default and have to be disabled explicitly if needed.
+//! All supported features are enabled by default and have to be disabled explicitly if needed.
 //!
 //! @param feature Specifies which feature to check
 //! @param enabled Value specifying if feature should be enabled or disabled.
-//! @return false if feature is not supported on the system true otherwise.
+//! @return false if feature is not supported on the system or if device has not beeing created yet, true otherwise.
 //!
-//! This method is NOT thread safe.
+//! NOTE: When this method is called no other DXGI/D3D/Vulkan APIs should be invoked in parallel so
+//! make sure to flush your pipeline before calling this method.
+//!
+//! This method is NOT thread safe and requires DX/VK device to be created before calling it.
 SL_API bool slSetFeatureEnabled(sl::Feature feature, bool enabled);
 ```
 > **NOTE:**
 > Please make sure to flush your pipeline and do not invoke DXGI/D3D/VULKAN API while this method is running.
+
+You may also query whether a particular feature is currently enabled or not with the following method:
+
+```cpp
+//! Checks if specified feature is enabled or not.
+//!
+//! Call this method to check if feature is enabled.
+//! All supported features are enabled by default and have to be disabled explicitly if needed.
+//!
+//! @param feature Specifies which feature to check
+//! @return false if feature is disabled, not supported on the system or if device has not been created yet, true otherwise.
+//!
+//! This method is NOT thread safe and requires DX/VK device to be created before calling it.
+SL_API bool slIsFeatureEnabled(sl::Feature feature);
+```
 
 ### 2.5 TAGGING RESOURCES
 
@@ -472,7 +509,7 @@ The appropriate D3D12/VK resources should be tagged using the `slSetTag` API and
 
 ```cpp
 //! Buffer types used for tagging
-enum BufferType
+enum BufferType : uint32_t
 {
     //! Depth buffer - IMPORTANT - Must be suitable to use with clipToPrevClip transformation (see Constants below)
     eBufferTypeDepth,
@@ -504,11 +541,11 @@ enum BufferType
     eBufferTypeExposure,
     //! Buffer with normal and roughness in alpha channel
     eBufferTypeNormalRoughness,
-    //! Diffuse signal and camera ray length
+    //! Diffuse and camera ray length
     eBufferTypeDiffuseHitNoisy,
     //! Diffuse denoised
     eBufferTypeDiffuseHitDenoised,
-    //! Specular signal and reflected ray length
+    //! Specular and reflected ray length
     eBufferTypeSpecularHitNoisy,
     //! Specular denoised
     eBufferTypeSpecularHitDenoised,
@@ -520,10 +557,6 @@ enum BufferType
     eBufferTypeAmbientOcclusionNoisy,
     //! AO denoised
     eBufferTypeAmbientOcclusionDenoised,
-    //! Color buffer containing jittered input data for NIS pass (after TAA and tone-mapping)
-    eBufferTypeScalingInputColor,
-    //! Color buffer containing results from the NIS pass
-    eBufferTypeScalingOutputColor,
 
     //! Optional - UI/HUD pixels hint (set to 1 if a pixel belongs to the UI/HUD elements, 0 otherwise)
     eBufferTypeUIHint,
@@ -543,6 +576,8 @@ enum BufferType
     eBufferTypeRaytracingDistance,
     //! Optional - Motion vectors for reflections
     eBufferTypeReflectionMotionVectors,
+    //! Optional - Position, in same space as eBufferTypeNormals
+    eBufferTypePosition,
 };
 
 //! Tags resource
@@ -553,10 +588,10 @@ enum BufferType
 //! @param tag Specific tag for the resource
 //! @param id Unique id (can be viewport id | instance id etc.)
 //! @param extent The area of the tagged resource to use (if using the entire resource leave as null)
-//! @return false if resource cannot be tagged true otherwise.
+//! @return false if resource cannot be tagged or if device has not beeing created yet, true otherwise.
 //!
-//! This method is thread safe.
-SL_API bool slSetTag(Resource* resource, BufferType tag, uint32_t id = 0, const Extent* extent = nullptr);
+//! This method is thread safe and requires DX/VK device to be created before calling it.
+SL_API bool slSetTag(const sl::Resource *resource, sl::BufferType tag, uint32_t id = 0, const sl::Extent* extent = nullptr);
 ```
 
 Resource state can be provided by the host or, if not, SL will use internal tracking. Here is an example:
@@ -574,7 +609,7 @@ slSetTag(&depth, sl::eBufferTypeDepth);
 ```
 
 > **NOTE:**
-> There is no need to transition tagged resources to any specific state. When used by your application resources will always be in the state you left them before invoking any SL APIs.
+> There is no need to transition tagged resources to any specific state. When used by the host application resources will always be in the state they where left before invoking any SL APIs.
 
 All SL plugins require access to the following resources:
 
@@ -634,7 +669,7 @@ struct Constants
     //! IMPORTANT: All matrices are row major (see float4x4 definition) and
     //! must NOT contain temporal AA jitter offset (if any). Clip space jitter offset
     //! should be provided as the additional parameter Constants::jitterOffset (see below)
-        
+            
     //! Specifies matrix transformation from the camera view to the clip space.
     float4x4 cameraViewToClip;
     //! Specifies matrix transformation from the clip space to the camera view space.
@@ -647,7 +682,7 @@ struct Constants
     //! Specifies matrix transformation from the previous clip to the current clip space.
     //! prevClipToClip = clipToPrevClip.inverse()
     float4x4 prevClipToClip;
-    
+        
     //! Specifies clip space jitter offset
     float2 jitterOffset;
     //! Specifies scale factors used to normalize motion vectors (so the values are in [-1,1] range)
@@ -662,7 +697,7 @@ struct Constants
     float3 cameraRight;
     //! Specifies camera forward vector in world space.
     float3 cameraFwd;
-    
+        
     //! Specifies camera near view plane distance.
     float cameraNear = INVALID_FLOAT;
     //! Specifies camera far view plane distance.
@@ -672,6 +707,7 @@ struct Constants
     //! Specifies camera aspect ratio defined as view space width divided by height.
     float cameraAspectRatio = INVALID_FLOAT;
     //! Specifies which value represents an invalid (un-initialized) value in the motion vectors buffer
+    //! NOTE: This is only required if `cameraMotionIncluded` is set to false and SL needs to compute it.
     float motionVectorsInvalidValue = INVALID_FLOAT;
 
     //! Specifies if depth values are inverted (value closer to the camera is higher) or not.
@@ -685,9 +721,9 @@ struct Constants
     //! Specifies if application is not currently rendering game frames (paused in menu, playing video cut-scenes)
     Boolean notRenderingGameFrames = Boolean::eInvalid;
     //! Specifies if orthographic projection is used or not.
-    Boolean orthographicProjection = Boolean::eInvalid;
+    Boolean orthographicProjection = Boolean::eFalse;
     //! Specifies if motion vectors are already dilated or not.
-    Boolean motionVectorsDilated = Boolean::eInvalid;
+    Boolean motionVectorsDilated = Boolean::eFalse;
     //! Specifies if motion vectors are jittered or not.
     Boolean motionVectorsJittered = Boolean::eFalse;
 
@@ -695,39 +731,40 @@ struct Constants
     void* ext = {};
 };
 
+
 //! Sets common constants.
 //!
-//! Call this method to provide the required data.
+//! Call this method to provide the required data (SL will keep a copy).
 //!
-//! @param values Common constants required by SL plugins
+//! @param values Common constants required by SL plugins (SL will keep a copy)
 //! @param frameIndex Index of the current frame
 //! @param id Unique id (can be viewport id | instance id etc.)
-//! @return false if constants cannot be set; true otherwise.
+//! @return false if constants cannot be set or if device has not beeing created yet, true otherwise.
 //! 
-//! This method is NOT thread safe.
-SL_API bool slSetConstants(const Constants& values, uint32_t frameIndex, uint32_t id = 0);
+//! This method is thread safe and requires DX/VK device to be created before calling it.
+SL_API bool slSetConstants(const sl::Constants& values, uint32_t frameIndex, uint32_t id = 0);
 ```
 > **NOTE:**
 > Provided projection related matrices `should not` contain any clip space jitter offset. Jitter offset (if any) should be specified as a separate `float2` constant.
 
 #### 2.6.2 FEATURE SPECIFIC CONSTANTS
 
-Each feature requires specific data which is defined in the `sl_consts.h` header file. To provide per feature specific data, use the following method:
+Each feature requires specific data which is defined in a corresponding  `sl_<feature_name>.h` header file (e.g. `sl_dlss.h`, `sl_nrd.h`, etc.). To provide per feature specific data, use the following method:
 
 ```cpp
 //! Sets feature specific constants.
 //!
 //! Call this method to provide the required data
-//! for the specified feature.
+//! for the specified feature (SL will keep a copy).
 //!
 //! @param feature Feature we are working with
-//! @param consts Pointer to the feature specific constants
+//! @param consts Pointer to the feature specific constants (SL will keep a copy)
 //! @param frameIndex Index of the current frame
 //! @param id Unique id (can be viewport id | instance id etc.)
-//! @return false if constants cannot be set; true otherwise.
+//! @return false if constants cannot be set or if device has not beeing created yet, true otherwise.
 //!
-//! This method is NOT thread safe.
-SL_API bool slSetFeatureConstants(Feature feature, const void *consts, uint32_t frameIndex, uint32_t id = 0);
+//! This method is thread safe and requires DX/VK device to be created before calling it.
+SL_API bool slSetFeatureConstants(sl::Feature feature, const void *consts, uint32_t frameIndex, uint32_t id = 0);
 ```
 
 > **NOTE:**
@@ -744,11 +781,11 @@ Some features provide feedback to the host application specifying which renderin
 //!
 //! @param feature Feature we are working with
 //! @param consts Pointer to the feature specific constants
-//! @param settings Pointer to a feature specific settings
-//! @return false if constants cannot be set; true otherwise.
+//! @param settings Pointer to the returned feature specific settings
+//! @return false if feature does not have settings or if device has not beeing created yet, true otherwise.
 //!
-//! This method is NOT thread safe.
-SL_API bool slGetFeatureSettings(Feature feature, const void* consts, void* settings);
+//! This method is NOT thread safe and requires DX/VK device to be created before calling it.
+SL_API bool slGetFeatureSettings(sl::Feature feature, const void* consts, void* settings);
 ```
 
 For example, when using DLSS, it is mandatory to call `getFeatureSettings` to find out at which resolution we should render your game:
@@ -770,7 +807,7 @@ myViewport->setSize(dlssSettings.renderWidth, dlssSettings.renderHeight);
 ```
 
 > **NOTE:**
-> Not all features provide specific/optimal settings. Please refer to the `sl_consts.h` header for more details.
+> Not all features provide specific/optimal settings. Please refer to the appropriate, feature specific header for more details.
 
 ### 2.8 MARKING EVENTS IN THE PIPELINE
 
@@ -779,20 +816,19 @@ By design, SL SDK enables `host assisted replacement or injection of specific re
 ```cpp
 //! Evaluates feature
 //! 
-//! Use this method to mark the section
-//! in your rendering pipeline where a specific feature
-//! should be injected.
+//! Use this method to mark the section in your rendering pipeline 
+//! where specific feature should be injected.
 //!
-//! @param cmdBuffer Command buffer to use - must be created on device where feature is supported but can be null if not needed
+//! @param cmdBuffer Command buffer to use (must be created on device where feature is supported but can be null if not needed)
 //! @param feature Feature we are working with
-//! @param frameIndex Current frame index (must match the corresponding value in the sl::Constants, can be 0 if not needed)
+//! @param frameIndex Current frame index (can be 0 if not needed)
 //! @param id Unique id (can be viewport id | instance id etc.)
-//! @return false if feature event cannot be injected in the command buffer; true otherwise.
+//! @return false if feature event cannot be injected in the command buffer or if device has not beeing created yet, true otherwise.
+//! 
+//! IMPORTANT: frameIndex and id must match whatever is used to set common and or feature constants (if any)
 //!
-//! IMPORTANT: Unique id must match whatever is used to set constants
-//!
-//! This method is NOT thread safe.
-SL_API bool slEvaluateFeature(CommandBuffer* cmdBuffer, Feature feature, uint32_t frameIndex, uint32_t id = 0);
+//! This method is NOT thread safe and requires DX/VK device to be created before calling it.
+SL_API bool slEvaluateFeature(sl::CommandBuffer* cmdBuffer, sl::Feature feature, uint32_t frameIndex, uint32_t id = 0);
 ```
 
 Here is some pseudo code showing how the host application can replace the default up-scaling method with DLSS on hardware which supports it:
@@ -834,14 +870,16 @@ SL_API bool slShutdown();
 > If shutdown is called too early, any SL features which are enabled and running will stop functioning and the host application will fallback to the
 default implementation. For example, if DLSS is enabled and running and shutdown is called, the `sl.dlss` plugin will be unloaded, hence any `evaluateFeature` or `slIsFeatureSupported` calls will return an error and the host application should fallback to the default implementation (for example TAAU)
 
-3 VALIDATING SL INTEGRATION
+3 VALIDATING SL INTEGRATION WHEN REPLACING PLATFORM LIBRARIES
 -----------------------------
 
-To ensure that `sl.interposer.dll` is the only dependency in your application and you did not accidentally link `dxgi.dll`, `d3d12.dll` or `vulkan-1.dll` please do the following:
+If you are integrating Streamline by replacing the standard libraries with sl.interposer.lib, ensure that `sl.interposer.dll` is the only dependency in your application and no dependency on `dxgi.dll`, `d3d11.dll`, `d3d12.dll` or `vulkan-1.dll` remains.  To do so, please do the following:
 
 * Open a Developer Command Prompt for Visual Studio
 * Run "dumpbin /dependents `my engine exe/dll that links sl.interposer.dll`"
-* Look for `dxgi.dll`, `d3d12.dll` or `vulkan-1.dll` in the list of dependents. If you see either of those or if `sl.interposer.dll` is missing in the list then **SL was NOT integrated correctly** in your application.
+* Look for `dxgi.dll`, `d3d11.dll`, `d3d12.dll` or `vulkan-1.dll` in the list of dependents. If you see either of those or if `sl.interposer.dll` is missing in the list then **SL was NOT integrated correctly** in your application.
+
+Note that if you are using a different method of integration where you continue to link to the standard platform libraries, this method does not apply.
 
 4 DISTRIBUTING SL WITH YOUR APPLICATION
 -----------------------------
@@ -867,6 +905,9 @@ The remaining modules are optional depending on which features are enabled in yo
 * Make sure that all matrices are multiplied in the correct order and provided in row-major order **without any jitter**
 * Motion vector scaling factors in `sl::Constants` transform values from `eBufferTypeMvec` to the {-1,1} range
 * Jitter offset should be provided in pixel space
+* If state tracking in `D3D12GraphicsCommandList` causes a problem:
+    * It can be disabled by providing `ePreferenceFlagDisableCLStateTracking` flag in `sl::Preferences`
+    * IMPORTANT: In this scenario CL state must be restored by the host application after each call to `slEvaluateFeature`
 
 6 SUPPORT
 ------------------------------------------------

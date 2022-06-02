@@ -1,4 +1,4 @@
-# Streamline (SL) - Version 1.0.3
+# Streamline (SL) - Version 1.0.4
 Streamline is an open-sourced cross-IHV solution that simplifies integration of the latest NVIDIA and other independent hardware vendors’ super resolution technologies into applications and games. This framework allows developers to easily implement one single integration and enable multiple super-resolution technologies and other graphics effects supported by the hardware vendor.
 
 This repo contains the SDK for integrating Streamline into your application.
@@ -20,11 +20,14 @@ For a high level overview, see the [NVIDIA Developer Streamline page](https://de
 - Install latest graphics driver
 - Install VS Code or VS2017/VS2019 with [SDK 10.17763+](https://go.microsoft.com/fwlink/?LinkID=2023014)
 - Install "git".
-- Install Python 3
 - Clone your fork to a local hard drive, make sure to use a NTFS drive on Windows (SL uses symbolic links)
 - Execute `./setup.bat` with `{vs2017|vs2019}` (`vs2017` is default)
 
 The make/solution files will be found in the generated `_project` directory. 
+#### (Optional) Compiling Shaders
+Most users will not need to compile shaders as they are provided pre-compiled.  If you need to compile HLSL shaders for your own plugin, you will need to place slang in the .\external\slang_internal folder and xxd in the .\tools folder.  Then any *.hlsl files in the .\shaders folder will be compiled at build time.
+
+Additionally, if you would like to recompile the shaders for the NIS plugin, you will need to have Python 3 installed and in the path.
 
 ## Building
 - Execute `./build.bat` with `-{debug|release|production}` (`debug` is default) or use VS IDE and load solution from the `_project` directory

@@ -3,9 +3,10 @@
 Streamline - NIS
 =======================
 
->The focus of this guide is on using Streamline to integrate the NVIDIA Image Scaling (NIS) SDK into an application.  For more information about NIS itself, please visit the [NVIDIA Image Scaling SDK Github Page](https://github.com/NVIDIAGameWorks/NVIDIAImageScaling)
+>The focus of this guide is on using Streamline to integrate the NVIDIA Image Scaling (NIS) SDK into an application.  For more information about NIS itself, please visit the [NVIDIA Image Scaling SDK Github Page](https://github.com/NVIDIAGameWorks/NVIDIAImageScaling)  
+>For information on user interface considerations when using the NIS plugin, please see the "RTX UI Developer Guidelines.pdf" document included in the NIS SDK.
 
-Version 1.0.3
+Version 1.0.4
 ------
 
 ### Introduction
@@ -94,10 +95,8 @@ if(!slSetFeatureConstants(sl::Feature::eFeatureNIS, &nisConsts))
     // Handle error here, check the logs
 }
 ```
-> **NOTE:**
-> To use NIS sharpening only mode (with no upscaling) set `sl::NISConstants.mode` to `sl::NISMode::eNISModeSharpen`
-
-> **NOTE:**
+> **NOTE:**  
+> To use NIS sharpening only mode (with no upscaling) set `sl::NISConstants.mode` to `sl::NISMode::eNISModeSharpen`  
 > To disable NIS set `sl::NISConstants.mode` to `sl::NISMode::eNISModeOff`or simply stop calling `slEvaluateFeature`
 
 

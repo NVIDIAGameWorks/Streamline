@@ -1,4 +1,31 @@
+Streamline SDK 1.0.4 Release Notes
+
+This version of Streamline includes a significant change in behavior with regard to loading features.  Features are no longer loaded by default and must be specified in the "featuresToLoad/numFeaturesToLoad" members of the Preferences structure.  This behavior may optionally be changed when running development and other non-production builds via the sl.interposer.json file (as documented in the Debugging.md guide).  Further, due to reported confusion in some of the naming, the relevant members of the Preferences structure (and associated JSON file entries) have been renamed to use the term "load" rather than "enable".  This naming more accurately reflects their true function and should avoid any confusion.  
+
+To be clear: All features that are loaded are enabled (turned on) by default, but may be enabled/disabled via the slSetFeatureEnabled() method.  
+
+As part of this rename, we have also merged the Preferences and Preferences1 structures, so you no longer need to use the "ext" member of Preferences to retrieve the second structure.
+
+Below is the full list of these and other changes for the 1.0.4 release:
+-- Major Change: Renamed Preferences "enableFeatures" to "loadFeatures"
+-- Major Change: Collapse Preferences1 to Preferences
+-- Renamed Development JSON option "enableAllFeatures" to "loadAllFeatures"
+-- Added Development JSON "loadSpecificFeatures" option to directly specify a subset of features to load
+-- Make development and production sl.interposer.dll builds behave the same way, but continue to allow development builds to override things via JSON configuration files
+-- Added support for 'Present1' hook
+-- Added SL feature lifecycle section to the programming guide to help clarify things such as when features are loaded and when they are initialized
+-- Added support for specifying dependencies and/or incompatibilities between features
+-- Added flags to sl::Preferences to control advanced options.
+-- Allow disabling of CL state tracking via preference flags
+-- Allow disabling of debug text via preference flags
+-- Add new API slIsFeatureEnabled for consistency
+-- Bug-fix: CL state tracking (Reset and ClearState can provide default PSO which was not tracked correctly before)
+-- Bug-fix: sl.common gets unloaded if NGX fails
+-- Bug-fix: CreateSwapChain when input pointer is not initialized to null does not match the standard DX API behavior
+-- Bug-fix: SL console window can sometimes show up on shutdown
+
 Streamline SDK 1.0.3 Release Notes
+
 -- Major Change: Feature plugins are no longer loaded by default; you must explicitly define the features which your app will use via the Preferences1::featuresToEnable field.  In previous versions of the SDK, all available features would be loaded if 'featuresToEnable' was set to NULL.  Leaving the value as NULL will now result in NO feature plugins being loaded.  See ProgrammingGuide.md for more details.
 -- Source code for the Streamline DLSS plugin has been added.
 -- Added support for DLSS NVSDK_NGX_Parameter_DLSS_Indicator_Invert_X_Axis, NVSDK_NGX_Parameter_DLSS_Indicator_Invert_Y_Axis and NVSDK_NGX_Parameter_FreeMemOnReleaseFeature parameters.
@@ -18,3 +45,27 @@ Streamline SDK 1.0.3 Release Notes
 -- Bug-Fix: Fixed a crash when resizing the swapchain in D3D11
 -- Bug-Fix: Fixed a crash when switching between monitors
 -- Bug-Fix: Fixed missing release of a reference when state could not be found in D3D12
+
+Streamline SDK 1.0.2 Release Notes
+
+-- Switch to export C style API (e.g. slInit instead of sl::init and so on).  This will require changing any calls to these methods in existing integrations to the new naming convention.
+-- Renamed some buffer types to be more technique agnostic (e.g. eBufferTypeTAAUInputColor and eBufferTypeTAAUOutputColor have been renamed to eBufferTypeScalingInputColor and eBufferTypeScalingOutputColor, respectively).
+-- The parameters for the Resource Allocation and Release callbacks have been changed to require a device pointer.  Existing integrations utilizing these callbacks will need to be modified to work with the new signatures.
+-- NRD updated to v3.1
+-- Tags and features have been decoupled from the interposer and common plugin (new plugins and new tags can be added without having to recompile interposer or common plugin)
+-- Feature constants have been split into individual header files to simplify adding new features and modifying existing ones.
+-- Added slSetFeatureEnabled() method to allow control over if supported feature is enabled or not.
+-- Shaders are provided pre-compiled.  If you need to compile HLSL shaders for your own plugin, you will need to place slang in the .\external\slang_internal folder and xxd in the .\tools folder.  Then any *.hlsl files in the .\shaders folder will be compiled at build time.
+-- Bug Fix: CreateD3D12Device now handles null device correctly
+-- Bug Fix: Dynamic resize and subRects now work in DLSS plugin
+-- Known Issue: Benign "error" message that gitVersion.h cannot be found upon first build 
+
+Streamline SDK 1.0.1 Release Notes
+
+-- setup.bat now allowing vs2017 and vs2019 build configurations
+-- added source code for the sl.common plugin which includes common SL functionality and basic compute dispatch API
+-- added source code for the sl.template plugin to be used as a starting point when developing new SL plugins
+-- Shaders are provided pre-compiled.  If you need to compile HLSL shaders for your own plugin, you will need to place slang in the .\external\slang_internal folder and xxd in the .\tools folder.  Then any *.hlsl files in the .\shaders folder will be compiled at build time.
+-- Bug Fix: d3d11 not returning feature level
+-- Bug Fix: d3d12 command list RT PSO tracking
+-- Known Issue: Benign "error" message that gitVersion.h cannot be found upon first build 

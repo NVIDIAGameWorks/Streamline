@@ -39,6 +39,11 @@ D3D12GraphicsCommandList::D3D12GraphicsCommandList(D3D12Device* device, ID3D12Gr
     m_device(device)
 {
     assert(m_base != nullptr && m_device != nullptr);
+    m_trackState = (sl::plugin_manager::getInterface()->getPreferences().flags & PreferenceFlags::ePreferenceFlagDisableCLStateTracking) == 0;
+    if (!m_trackState)
+    {
+        SL_LOG_WARN("State tracking for command list 0x%llx has been DISABLED, please ensure to restore CL state correctly on the host side.", this);
+    }
 }
 
 bool D3D12GraphicsCommandList::checkAndUpgradeInterface(REFIID riid)
@@ -167,8 +172,10 @@ HRESULT STDMETHODCALLTYPE D3D12GraphicsCommandList::Reset(ID3D12CommandAllocator
 {
     auto res = m_base->Reset(pAllocator, pInitialState);
 
+    if (m_trackState)
+    {
     m_rootSignature = {};
-    m_pso = {};
+        m_pso = pInitialState;
     m_so = {};
     m_numHeaps = {};
     m_mapHandles = {};
@@ -176,12 +183,25 @@ HRESULT STDMETHODCALLTYPE D3D12GraphicsCommandList::Reset(ID3D12CommandAllocator
     m_mapSRV.clear();
     m_mapUAV.clear();
     m_mapConstants.clear();
+    }
 
     return res;
 }
 
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::ClearState(ID3D12PipelineState* pPipelineState)
 {
+    if (m_trackState)
+    {
+        m_rootSignature = {};
+        m_pso = pPipelineState;
+        m_so = {};
+        m_numHeaps = {};
+        m_mapHandles = {};
+        m_mapCBV.clear();
+        m_mapSRV.clear();
+        m_mapUAV.clear();
+        m_mapConstants.clear();
+    }
     m_base->ClearState(pPipelineState);
 }
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::DrawInstanced(UINT VertexCountPerInstance, UINT InstanceCount, UINT StartVertexLocation, UINT StartInstanceLocation)
@@ -240,7 +260,7 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::OMSetStencilRef(UINT StencilRef
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetPipelineState(ID3D12PipelineState* pPipelineState)
 {
     // This API is very CPU costly so only set when really changed
-    if (m_pso != pPipelineState)
+    if (m_trackState && m_pso != pPipelineState)
     {
         // PSO and RT PSO are mutually exclusive so setting RT PSO to null (see SetPipelineState1)
         m_so = {};
@@ -273,7 +293,7 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetDescriptorHeaps(UINT NumDesc
     {
         SL_LOG_ERROR("Too many descriptor heaps %u", NumDescriptorHeaps);
     }
-    else
+    else if(m_trackState)
     {
         m_numHeaps = (char)NumDescriptorHeaps;
         memcpy(m_heaps, ppDescriptorHeaps, sizeof(ID3D12DescriptorHeap*) * m_numHeaps);
@@ -282,7 +302,7 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetDescriptorHeaps(UINT NumDesc
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetComputeRootSignature(ID3D12RootSignature* pRootSignature)
 {
     // App can set the same root signature multiple times so check
-    if (pRootSignature != m_rootSignature)
+    if (m_trackState && pRootSignature != m_rootSignature)
     {
         m_base->SetComputeRootSignature(pRootSignature);
         m_rootSignature = pRootSignature;
@@ -303,7 +323,10 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetComputeRootDescriptorTable(U
 {
     m_base->SetComputeRootDescriptorTable(RootParameterIndex, BaseDescriptor);
 
+    if (m_trackState)
+    {
     m_mapHandles[RootParameterIndex] = BaseDescriptor;
+    }
 }
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetGraphicsRootDescriptorTable(UINT RootParameterIndex, D3D12_GPU_DESCRIPTOR_HANDLE BaseDescriptor)
 {
@@ -313,9 +336,12 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetComputeRoot32BitConstant(UIN
 {
     m_base->SetComputeRoot32BitConstant(RootParameterIndex, SrcData, DestOffsetIn32BitValues);
 
+    if (m_trackState)
+    {
     auto& entry = m_mapConstants[RootParameterIndex];
     entry.Num32BitValuesToSet = 1;
     entry.SrcData[0] = SrcData;
+    }
 }
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetGraphicsRoot32BitConstant(UINT RootParameterIndex, UINT SrcData, UINT DestOffsetIn32BitValues)
 {
@@ -331,7 +357,7 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetComputeRoot32BitConstants(UI
     {
         SL_LOG_ERROR("Too many 32bit root constants %u", Num32BitValuesToSet);
     }
-    else
+    else if(m_trackState)
     {
         auto& entry = m_mapConstants[RootParameterIndex];
         entry.Num32BitValuesToSet = Num32BitValuesToSet;
@@ -346,7 +372,10 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetComputeRootConstantBufferVie
 {
     m_base->SetComputeRootConstantBufferView(RootParameterIndex, BufferLocation);
 
+    if (m_trackState)
+    {
     m_mapCBV[RootParameterIndex] = BufferLocation;
+    }
 }
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetGraphicsRootConstantBufferView(UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation)
 {
@@ -356,7 +385,10 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetComputeRootShaderResourceVie
 {
     m_base->SetComputeRootShaderResourceView(RootParameterIndex, BufferLocation);
 
+    if (m_trackState)
+    {
     m_mapSRV[RootParameterIndex] = BufferLocation;
+    }
 }
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetGraphicsRootShaderResourceView(UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation)
 {
@@ -366,7 +398,10 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetComputeRootUnorderedAccessVi
 {
     m_base->SetComputeRootUnorderedAccessView(RootParameterIndex, BufferLocation);
 
+    if (m_trackState)
+    {
     m_mapUAV[RootParameterIndex] = BufferLocation;
+    }
 }
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetGraphicsRootUnorderedAccessView(UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation)
 {
@@ -507,7 +542,7 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::CopyRaytracingAccelerationStruc
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetPipelineState1(ID3D12StateObject* pStateObject)
 {
     // This API is very CPU costly so only set when really changed
-    if (m_so != pStateObject)
+    if (m_trackState && m_so != pStateObject)
     {
         // PSO and RT PSO are mutually exclusive so setting PSO to null (see SetPipelineState)
         m_pso = {};

@@ -86,7 +86,7 @@ void moveWindowToAnotherMonitor(HWND hwnd, UINT flags)
 
 struct Log : ILog
 {
-    bool m_console = true;
+    bool m_console = false;
     bool m_pathInvalid = false;
     std::wstring m_path;
     std::wstring m_name;

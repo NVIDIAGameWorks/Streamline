@@ -1,6 +1,7 @@
 {
   "enableInterposer": true,
-  "enableAllFeatures": true,
+  "loadAllFeatures": true,
+  "_loadSpecificFeatures": [0,1],
   "showConsole": true,
   "comment_logLevel": "Log levels are off, on, verbose",
   "logLevel": 2,

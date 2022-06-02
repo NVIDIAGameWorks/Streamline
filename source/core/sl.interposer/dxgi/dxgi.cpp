@@ -106,6 +106,7 @@ HRESULT STDMETHODCALLTYPE IDXGIFactory_CreateSwapChain(IDXGIFactory* pFactory, I
         return DXGI_ERROR_INVALID_CALL;
     }
 
+    *ppSwapChain = nullptr;
     DXGI_SWAP_CHAIN_DESC desc = *pDesc;
 
     Microsoft::WRL::ComPtr<IUnknown> deviceProxy;
@@ -160,6 +161,7 @@ HRESULT STDMETHODCALLTYPE IDXGIFactory2_CreateSwapChainForHwnd(IDXGIFactory2* pF
     {
         return DXGI_ERROR_INVALID_CALL;
     }
+    *ppSwapChain = nullptr;
 
     DXGI_SWAP_CHAIN_DESC1 desc = *pDesc;
     DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullscreenDesc = {};
@@ -221,6 +223,7 @@ HRESULT STDMETHODCALLTYPE IDXGIFactory2_CreateSwapChainForCoreWindow(IDXGIFactor
         return DXGI_ERROR_INVALID_CALL;
     }
 
+    *ppSwapChain = nullptr;
     DXGI_SWAP_CHAIN_DESC1 desc = *pDesc;
 
     Microsoft::WRL::ComPtr<IUnknown> deviceProxy;

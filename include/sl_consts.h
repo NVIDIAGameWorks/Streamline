@@ -24,6 +24,60 @@
 
 #include <stdint.h>
 
+#define SL_ENUM_OPERATORS_64(T)                                                         \
+inline bool operator&(T a, T b)                                                         \
+{                                                                                       \
+    return ((uint64_t)a & (uint64_t)b) != 0;                                            \
+}                                                                                       \
+                                                                                        \
+inline T& operator&=(T& a, T b)                                                         \
+{                                                                                       \
+    a = (T)((uint64_t)a & (uint64_t)b);                                                 \
+    return a;                                                                           \
+}                                                                                       \
+                                                                                        \
+inline T operator|(T a, T b)                                                            \
+{                                                                                       \
+    return (T)((uint64_t)a | (uint64_t)b);                                              \
+}                                                                                       \
+                                                                                        \
+inline T& operator |= (T& lhs, T rhs)                                                   \
+{                                                                                       \
+    lhs = (T)((uint64_t)lhs | (uint64_t)rhs);                                           \
+    return lhs;                                                                         \
+}                                                                                       \
+                                                                                        \
+inline T operator~(T a)                                                                 \
+{                                                                                       \
+    return (T)~((uint64_t)a);                                                           \
+}
+#define SL_ENUM_OPERATORS_32(T)                                                         \
+inline bool operator&(T a, T b)                                                         \
+{                                                                                       \
+    return ((uint32_t)a & (uint32_t)b) != 0;                                            \
+}                                                                                       \
+                                                                                        \
+inline T& operator&=(T& a, T b)                                                         \
+{                                                                                       \
+    a = (T)((uint32_t)a & (uint32_t)b);                                                 \
+    return a;                                                                           \
+}                                                                                       \
+                                                                                        \
+inline T operator|(T a, T b)                                                            \
+{                                                                                       \
+    return (T)((uint32_t)a | (uint32_t)b);                                              \
+}                                                                                       \
+                                                                                        \
+inline T& operator |= (T& lhs, T rhs)                                                   \
+{                                                                                       \
+    lhs = (T)((uint32_t)lhs | (uint32_t)rhs);                                           \
+    return lhs;                                                                         \
+}                                                                                       \
+                                                                                        \
+inline T operator~(T a)                                                                 \
+{                                                                                       \
+    return (T)~((uint32_t)a);                                                           \
+}
 namespace sl
 {
 //! For cases when value has to be provided and we don't have good default

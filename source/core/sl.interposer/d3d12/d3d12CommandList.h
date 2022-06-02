@@ -145,10 +145,11 @@ struct DECLSPEC_UUID("5B2662FB-EB28-4AEC-819E-1C1B4DE060F6") D3D12GraphicsComman
 
     bool checkAndUpgradeInterface(REFIID riid);
 
+    bool m_trackState = true;
     ULONG m_refCount = 1;
-    ID3D12GraphicsCommandList* m_base;
-    unsigned int m_interfaceVersion;
-    D3D12Device* const m_device;
+    ID3D12GraphicsCommandList* m_base{};
+    unsigned int m_interfaceVersion{};
+    D3D12Device* const m_device{};
 
     // Used to restore states
     struct Constants
@@ -157,16 +158,16 @@ struct DECLSPEC_UUID("5B2662FB-EB28-4AEC-819E-1C1B4DE060F6") D3D12GraphicsComman
         uint32_t Num32BitValuesToSet = 0;
         uint32_t SrcData[kMaxComputeRoot32BitConstCount] = {};
     };
-    uint8_t m_numHeaps = {};
-    ID3D12RootSignature* m_rootSignature = {};
-    ID3D12PipelineState* m_pso = {};
-    ID3D12StateObject* m_so = {};
-    ID3D12DescriptorHeap* m_heaps[kMaxHeapCount] = {};
-    std::map<uint32_t, D3D12_GPU_DESCRIPTOR_HANDLE> m_mapHandles;
-    std::map<uint32_t, D3D12_GPU_VIRTUAL_ADDRESS> m_mapCBV;
-    std::map<uint32_t, D3D12_GPU_VIRTUAL_ADDRESS> m_mapSRV;
-    std::map<uint32_t, D3D12_GPU_VIRTUAL_ADDRESS> m_mapUAV;
-    std::map<uint32_t, Constants> m_mapConstants;
+    uint8_t m_numHeaps{};
+    ID3D12RootSignature* m_rootSignature{};
+    ID3D12PipelineState* m_pso{};
+    ID3D12StateObject* m_so{};
+    ID3D12DescriptorHeap* m_heaps[kMaxHeapCount]{};
+    std::map<uint32_t, D3D12_GPU_DESCRIPTOR_HANDLE> m_mapHandles{};
+    std::map<uint32_t, D3D12_GPU_VIRTUAL_ADDRESS> m_mapCBV{};
+    std::map<uint32_t, D3D12_GPU_VIRTUAL_ADDRESS> m_mapSRV{};
+    std::map<uint32_t, D3D12_GPU_VIRTUAL_ADDRESS> m_mapUAV{};
+    std::map<uint32_t, Constants> m_mapConstants{};
 };
 
 }

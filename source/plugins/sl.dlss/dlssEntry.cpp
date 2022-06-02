@@ -83,9 +83,6 @@ struct DLSS
 
     common::NGXContext *ngxContext = {};
     sl::chi::ICompute *compute;
-#ifdef SL_CAPTURE
-    sl::chi::ICapture* capture;
-#endif
     sl::chi::Kernel mvecKernel;
 
     common::PFunRegisterEvaluateCallbacks* registerEvaluateCallbacks{};
@@ -327,32 +324,6 @@ void dlssEndEvent(chi::CommandList pCmdList)
                 return;
             }
 
-
-#ifdef SL_CAPTURE
-
-            // Capture
-            if (extra::keyboard::getInterface()->wasKeyPressed("capture")) s_dlss.capture->startRecording("DLSS");
-
-            if (s_dlss.capture->getIsCapturing()) {
-                double time = s_dlss.capture->getTimeSinceStart();
-                int captureIndex = s_dlss.capture->getCaptureIndex();
-
-                s_dlss.capture->appendGlobalConstantDump(captureIndex, time, consts);
-
-                const std::vector<int> dlssStructureSizes = std::vector<int>{ sizeof(sl::DLSSConstants) , sizeof(sl::DLSSSettings)};
-                s_dlss.capture->appendFeatureStructureDump(captureIndex, 0, &s_dlss.viewport->consts, dlssStructureSizes[0]);
-                s_dlss.capture->appendFeatureStructureDump(captureIndex, 1, &s_dlss.viewport->settings, dlssStructureSizes[1]);
-
-                s_dlss.capture->dumpResource(captureIndex, eBufferTypeScalingInputColor,    colorInExt, pCmdList,   colorIn );
-                s_dlss.capture->dumpResource(captureIndex, eBufferTypeDepth            ,    depthExt  , pCmdList,   depth   );
-                s_dlss.capture->dumpResource(captureIndex, eBufferTypeMVec             ,    mvecExt   , pCmdList,   mvec    );
-
-                s_dlss.capture->incrementCaptureIndex();
-
-            }
-
-            if (s_dlss.capture->getIndexHasReachedMaxCapatureIndex()) s_dlss.capture->dumpPending();
-#endif
 
             /*chi::ResourceDescription desc[4];
             s_dlss.compute->getResourceDescription(depth, desc[0]);
@@ -711,11 +682,6 @@ bool slOnPluginStartup(const char *jsonConfig, void *device, sl::param::IParamet
     extra::keyboard::getInterface()->registerKey("clamp_up", extra::keyboard::VirtKey(VK_OEM_PERIOD, true, true));
 
     param::getPointerParam(parameters, sl::param::common::kComputeAPI, &s_dlss.compute);
-
-#ifdef SL_CAPTURE
-    extra::keyboard::getInterface()->registerKey("capture", extra::keyboard::VirtKey('U', true, true));
-    param::getPointerParam(parameters, sl::param::common::kCaptureAPI, &s_dlss.capture);
-#endif
 
     {
         json& config = *(json*)api::getContext()->loaderConfig;

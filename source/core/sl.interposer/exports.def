@@ -182,6 +182,7 @@ EXPORTS
 	slInit
     slShutdown
     slIsFeatureSupported
+	slIsFeatureEnabled
 	slSetFeatureEnabled
 	slSetTag
 	slSetConstants

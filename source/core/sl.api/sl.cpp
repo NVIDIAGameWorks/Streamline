@@ -60,13 +60,6 @@ bool slInit(const Preferences &pref, int applicationId)
         applicationId = 100721531;
     }
 
-#ifdef SL_PRODUCTION
-    auto* pref1 = (Preferences1*)pref.ext;
-    if (!pref1 || !pref1->featuresToEnable || pref1->numFeaturesToEnable == 0)
-    {
-        SL_LOG_WARN("All features will be DISABLED - the explicit list of features to enable must be specified in production builds");
-    }
-#endif
 
     // Setup logging first
     auto log = log::getInterface();
@@ -111,7 +104,7 @@ bool slInit(const Preferences &pref, int applicationId)
         if (manager->isInitialized())
         {
             SL_LOG_ERROR("slInit must be called before any DXGI/D3D12/D3D11/Vulkan APIs are invoked");
-            return true;
+            return false;
         }
         if (!manager->isSupportedOnThisMachine())
         {
@@ -172,6 +165,16 @@ bool slIsFeatureSupported(Feature feature, uint32_t* adapterBitMask)
     return ctx->supportedAdapters != 0;
 }
 
+bool slIsFeatureEnabled(sl::Feature feature)
+{
+    SL_VALIDATE_STATE
+    auto ctx = plugin_manager::getInterface()->getFeatureContext(feature);
+    if (!ctx)
+    {
+        return false;
+    }
+    return ctx->enabled;
+}
 bool slSetFeatureEnabled(sl::Feature feature, bool enabled)
 {
     SL_VALIDATE_STATE
@@ -186,6 +189,7 @@ bool slSetTag(const Resource *resource, BufferType tag, uint32_t id, const Exten
     auto ctx = plugin_manager::getInterface()->getFeatureContext(eFeatureCommon);
     if (!ctx)
     {
+        SL_LOG_ERROR("'sl.common' plugin failed to load or missing.");
         return false;
     }
 
@@ -205,6 +209,7 @@ bool slSetConstants(const Constants &values, uint32_t frameIndex, uint32_t id)
     auto ctx = plugin_manager::getInterface()->getFeatureContext(eFeatureCommon);
     if (!ctx)
     {
+        SL_LOG_ERROR("'sl.common' plugin failed to load or missing.");
         return false;
     }
     
@@ -222,8 +227,9 @@ bool slSetFeatureConstants(Feature feature, const void *consts, uint32_t frameIn
     SL_VALIDATE_STATE
 
     auto ctx = plugin_manager::getInterface()->getFeatureContext(feature);
-    if (!ctx)
+    if (!ctx || !ctx->enabled)
     {
+        SL_LOG_ERROR("Feature %u is either not supported or disabled", feature);
         return false;
     }
 
@@ -240,8 +246,9 @@ bool slGetFeatureSettings(Feature feature, const void* consts, void* settings)
     SL_VALIDATE_STATE
 
     auto ctx = plugin_manager::getInterface()->getFeatureContext(feature);
-    if (!ctx)
+    if (!ctx || !ctx->enabled)
     {
+        SL_LOG_ERROR("Feature %u is either not supported or disabled", feature);
         return false;
     }
 
@@ -259,8 +266,9 @@ bool slAllocateResources(sl::CommandBuffer* cmdBuffer, sl::Feature feature, uint
     SL_VALIDATE_STATE
 
     auto ctx = plugin_manager::getInterface()->getFeatureContext(feature);
-    if (!ctx)
+    if (!ctx || !ctx->enabled)
     {
+        SL_LOG_ERROR("Feature %u is either not supported or disabled", feature);
         return false;
     }
 
@@ -277,8 +285,9 @@ bool slFreeResources(sl::Feature feature, uint32_t id)
     SL_VALIDATE_STATE
 
     auto ctx = plugin_manager::getInterface()->getFeatureContext(feature);
-    if (!ctx)
+    if (!ctx || !ctx->enabled)
     {
+        SL_LOG_ERROR("Feature %u is either not supported or disabled", feature);
         return false;
     }
 
@@ -295,8 +304,9 @@ bool slEvaluateFeature(CommandBuffer* cmdBuffer, Feature feature, uint32_t frame
     SL_VALIDATE_STATE
 
     auto ctx = plugin_manager::getInterface()->getFeatureContext(feature);
-    if (!ctx)
+    if (!ctx || !ctx->enabled)
     {
+        SL_LOG_ERROR("Feature %u is either not supported or disabled", feature);
         return false;
     }
 
