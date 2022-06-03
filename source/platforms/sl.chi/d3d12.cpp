@@ -2159,6 +2159,7 @@ ComputeStatus D3D12::getResourceState(Resource resource, ResourceState& state)
         res = pageable->GetPrivateData(sResourceStateGUID, &size, &state);
         if (FAILED(res))
         {
+            pageable->Release();
             SL_LOG_ERROR("resource 0x%llx does not have a state", resource);
         }
         pageable->Release();
@@ -2237,6 +2238,7 @@ ComputeStatus D3D12::getResourceDescription(Resource resource, ResourceDescripti
     auto res = pageable->GetPrivateData(sResourceStateGUID, &size, &outDesc.state);
     if (FAILED(res))
     {
+        pageable->Release();
         std::wstring name = getDebugName(resource);
         SL_LOG_ERROR("resource 0x%llx(%S) does not have a state", resource, name.c_str());
     }
