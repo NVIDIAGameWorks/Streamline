@@ -149,11 +149,11 @@ void dlssBeginEvent(chi::CommandList pCmdList, const common::EventData& data)
 
     s_dlss.viewport = &viewport;
     bool modeOrSizeChanged = consts->mode != viewport.consts.mode || consts->outputWidth != viewport.consts.outputWidth || consts->outputHeight != viewport.consts.outputHeight;
+    viewport.consts = *consts;  // mandatory
     if(!viewport.handle || modeOrSizeChanged)
     {
         s_dlss.commonConsts->reset = Boolean::eTrue;
         s_dlss.cachedStates.clear();
-        viewport.consts = *consts;  // mandatory
         slGetSettings(consts, &viewport.settings);
 
         if(s_dlss.ngxContext)
@@ -471,7 +471,6 @@ void dlssEndEvent(chi::CommandList pCmdList)
                     s_dlss.ngxContext->params->Set(NVSDK_NGX_Parameter_Sharpness, s_dlss.viewport->consts.sharpness);
                     s_dlss.ngxContext->params->Set(NVSDK_NGX_Parameter_DLSS_Pre_Exposure, s_dlss.viewport->consts.preExposure);
                     s_dlss.ngxContext->params->Set(NVSDK_NGX_Parameter_DLSS_Exposure_Scale, s_dlss.viewport->consts.exposureScale);
-                    s_dlss.ngxContext->params->Set(NVSDK_NGX_Parameter_Sharpness, s_dlss.viewport->consts.sharpness);
 
                     {
                         s_dlss.ngxContext->params->Set(NVSDK_NGX_Parameter_Color, colorIn);
