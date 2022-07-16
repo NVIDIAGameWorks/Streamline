@@ -99,6 +99,7 @@ protected:
     TimestampedLambdaList m_destroyWithLambdas = {};
 
     std::mutex m_mutex;
+    std::mutex m_mutexDynamicText;
 
     using ResourceStateMap = std::map<Resource, ResourceInfo>;
     ResourceStateMap m_resourceStateMap = {};
@@ -114,6 +115,7 @@ protected:
     PFunGetThreadContext* m_getThreadContext = {};
 
     bool m_bFastUAVClearSupported = false;
+    uint32_t m_preferenceFlags = 0;
 
     std::atomic<uint32_t> m_allocCount = 0; // total number of resource allocations done by this class
     std::atomic<unsigned long long> m_totalAllocatedSize = 0; // total size of all resources allocated by this instance of the class
@@ -203,11 +205,11 @@ public:
     ComputeStatus beginProfilingQueue(CommandQueue cmdList, uint32_t metadata, const char* marker)  override { return eComputeStatusOk; }
     ComputeStatus endProfilingQueue(CommandQueue cmdList)  override { return eComputeStatusOk; }
 
-    virtual ComputeStatus setSleepMode(const LatencyConstants& consts) override;
-    virtual ComputeStatus getSleepStatus(LatencySettings& settings) override;
-    virtual ComputeStatus getLatencyReport(LatencySettings& settings) override;
+    virtual ComputeStatus setSleepMode(const ReflexConstants& consts) override;
+    virtual ComputeStatus getSleepStatus(ReflexSettings& settings) override;
+    virtual ComputeStatus getLatencyReport(ReflexSettings& settings) override;
     virtual ComputeStatus sleep() override;
-    virtual ComputeStatus setLatencyMarker(LatencyMarker marker, uint64_t frameId) override;
+    virtual ComputeStatus setReflexMarker(ReflexMarker marker, uint64_t frameId) override;
 };
 
 }

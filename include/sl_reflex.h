@@ -25,17 +25,17 @@
 namespace sl
 {
 
-enum LatencyMode
+enum ReflexMode
 {
-    eLatencyModeOff,
-    eLatencyModeLowLatency,
-    eLatencyModeLowLatencyWithBoost,
+    eReflexModeOff,
+    eReflexModeLowLatency,
+    eReflexModeLowLatencyWithBoost,
 };
 
-struct LatencyConstants
+struct ReflexConstants
 {
     //! Specifies which mode should be used
-    LatencyMode mode = eLatencyModeOff;
+    ReflexMode mode = eReflexModeOff;
     //! Specifies if frame limiting is enabled (0 to disable, microseconds otherwise)
     uint32_t frameLimitUs = 0;
     //! Specifies if markers are used or not (this should always be true and markers should be placed correctly)
@@ -47,7 +47,7 @@ struct LatencyConstants
     void* ext = {};
 };
 
-struct LatencyReport
+struct ReflexReport
 {
     //! Various latency related stats
     uint64_t frameID{};
@@ -68,33 +68,35 @@ struct LatencyReport
     uint32_t gpuFrameTimeUs{};
 };
 
-struct LatencySettings
+struct ReflexSettings
 {
     //! Specifies if low-latency mode is available or not
     bool lowLatencyAvailable = false;
     //! Specifies if latency report is available or not
     bool latencyReportAvailable = false;
-    //! Specifies low latency Windows message id (if LatencyConstants::virtualKey is 0)
+    //! Specifies low latency Windows message id (if ReflexConstants::virtualKey is 0)
     uint32_t statsWindowMessage;
-    //! Latency report per frame
-    LatencyReport frameReport[64];
+    //! Reflex report per frame
+    ReflexReport frameReport[64];
+    //! Specifies ownership of flash indicator toggle (true = driver, false = application)
+    bool flashIndicatorDriverControlled = false;    
     //! Reserved for future expansion, must be set to null
     void* ext = {};
 };
 
-enum LatencyMarker
+enum ReflexMarker
 {
-    eLatencyMarkerSimulationStart,
-    eLatencyMarkerSimulationEnd,
-    eLatencyMarkerRenderSubmitStart,
-    eLatencyMarkerRenderSubmitEnd,
-    eLatencyMarkerPresentStart,
-    eLatencyMarkerPresentEnd,
-    eLatencyMarkerInputSample,
-    eLatencyMarkerTriggerFlash,    
-    eLatencyMarkerPCLatencyPing,
+    eReflexMarkerSimulationStart,
+    eReflexMarkerSimulationEnd,
+    eReflexMarkerRenderSubmitStart,
+    eReflexMarkerRenderSubmitEnd,
+    eReflexMarkerPresentStart,
+    eReflexMarkerPresentEnd,
+    eReflexMarkerInputSample,
+    eReflexMarkerTriggerFlash,    
+    eReflexMarkerPCLatencyPing,
     //! Special marker
-    eLatencyMarkerSleep = 0x1000,
+    eReflexMarkerSleep = 0x1000,
 };
 
 }

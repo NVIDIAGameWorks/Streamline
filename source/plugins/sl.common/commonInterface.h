@@ -87,23 +87,27 @@ enum BufferType : uint32_t;
 
 namespace common
 {
-struct GPUArch
+struct SystemCaps
 {
     // We cover up to 2 GPUs (iGPU + dGPU on laptops)
     uint32_t gpuCount{};
+    uint32_t osVersionMajor{};
+    uint32_t osVersionMinor{};
+    uint32_t osVersionBuild{};
     uint32_t driverVersionMajor{};
     uint32_t driverVersionMinor{};
     uint32_t architecture[2]{};
     uint32_t implementation[2]{};
     uint32_t revision[2]{};
     uint32_t gpuLoad[2]{}; // percentage
+    bool reserved1{}; // Future use
 };
 
 bool createCompute(void* device, uint32_t deviceType);
 bool destroyCompute();
 
 // Get info about the GPU, id can be null in which case we get info for GPU 0
-using PFunGetGPUInfo = bool(GPUArch& info, LUID* id);
+using PFunGetGPUInfo = bool(SystemCaps& info);
 
 // NGX context
 using PFunNGXCreateFeature = bool(void* cmdList, NVSDK_NGX_Feature feature, NVSDK_NGX_Handle** handle);

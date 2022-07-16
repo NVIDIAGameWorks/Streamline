@@ -419,11 +419,11 @@ uint32_t getSupportedAdapterMask()
     // If always supported across all adapters simply set all bits to 1
     uint32_t adapterMask = 0;
 
-    // NVDA specific GPU info provided by sl.common
-    common::GPUArch* info = {};
-    if (!param::getPointerParam(api::getContext()->parameters, sl::param::common::kGPUInfo, &info))
+    // System capabilities info provided by sl.common
+    common::SystemCaps* info = {};
+    if (!param::getPointerParam(api::getContext()->parameters, sl::param::common::kSystemCaps, &info))
     {
-        // Not running on NVDA, do your own HW checks
+        // Failed, do your own HW checks
     }
     else
     {

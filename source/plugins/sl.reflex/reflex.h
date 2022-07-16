@@ -20,6 +20,8 @@
 * SOFTWARE.
 */
 
-#define VERSION_MAJOR 1
-#define VERSION_MINOR 0
-#define VERSION_PATCH 4
+#pragma once
+
+#include "include/sl_reflex.h"
+
+using PFunSetLatencyStatsMarker = void(sl::ReflexMarker marker, uint32_t frameId);

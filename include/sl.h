@@ -103,6 +103,8 @@ enum BufferType : uint32_t
     eBufferTypeReflectionMotionVectors,
     //! Optional - Position, in same space as eBufferTypeNormals
     eBufferTypePosition,
+    //! Optional - Indicates (via non-zero value) which pixels have motion/depth values that do not match the final color content at that pixel (e.g. overlaid, opaque Picture-in-Picture)
+    eBufferTypeInvalidDepthMotionHint
 };
 
 //! Features supported with this SDK
@@ -117,8 +119,8 @@ enum Feature : uint32_t
     eFeatureNRD = 1,
     //! NVIDIA Image Scaling
     eFeatureNIS = 2,
-    //! Low-Latency (Reflex)
-    eFeatureLatency = 3,
+    //! Low-Latency
+    eFeatureReflex = 3,
     //! Common feature, NOT intended to be used directly
     eFeatureCommon = UINT_MAX
 };
@@ -260,7 +262,7 @@ constexpr int kUniqueApplicationId = 0;
 using PFunSlInit = bool(const sl::Preferences& pref, int applicationId);
 using PFunSlShutdown = bool();
 using PFunSlSetFeatureEnabled = bool(sl::Feature feature, bool enabled);
-using PFunSLIsFeatureEnabled = bool(sl::Feature feature);
+using PFunSlIsFeatureEnabled = bool(sl::Feature feature);
 using PFunSlIsFeatureSupported = bool(sl::Feature feature, uint32_t* adapterBitMask);
 using PFunSlSetTag = bool(const sl::Resource* resource, sl::BufferType tag, uint32_t id, const sl::Extent* extent);
 using PFunSlSetConstants = bool(const sl::Constants& values, uint32_t frameIndex, uint32_t id);

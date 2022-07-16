@@ -144,6 +144,11 @@ ULONG   STDMETHODCALLTYPE DXGISwapChain::Release()
     // Release the explicit reference to device that was added in the DXGISwapChain constructor above
     m_d3dDevice->Release();
 
+    // Inform our plugins that swap-chain has been destroyed
+    using Destroyed_t = void(IDXGISwapChain*);
+    const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eIDXGISwapChain_Destroyed);
+    for (auto hook : hooks) ((Destroyed_t*)hook)(m_base);
+
     // Only release internal reference after the runtime has been destroyed, so any references it held are cleaned up at this point
     const ULONG ref_orig = m_base->Release();
     if (ref_orig != 0)
@@ -305,6 +310,7 @@ HRESULT STDMETHODCALLTYPE DXGISwapChain::Present1(UINT SyncInterval, UINT Presen
     const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eIDXGISwapChain_Present1);
     bool skip = false;
     for (auto hook : hooks) ((Present1_t*)hook)(m_base, SyncInterval, PresentFlags, pPresentParameters, skip);
+
     HRESULT hr = S_OK;
     if (!skip) hr = static_cast<IDXGISwapChain1*>(m_base)->Present1(SyncInterval, PresentFlags, pPresentParameters);
     return hr;

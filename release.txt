@@ -1,3 +1,17 @@
+Streamline SDK 1.1.0 Release Notes
+
+Notes:
+-- The sl.latency plugin has been renamed to sl.reflex, better representing its function.
+
+Minor changes for the 1.1.0 release include:
+-- New BufferType enum, eBufferTypeInvalidDepthMotionHint (optional)
+-- The DLSS settings structure has replaced allocatedBytes with estimatedVRAMUsageInBytes, which clarifies that the value returned (if nonzero) is an estimate of the VRAM the feature will use given the input settings
+-- A new header, sl_helpers.h, includes some app-level utility functions
+
+Known Issues:
+-- When using Streamline with recent versions of the Agility SDK, you may receive CREATERESOURCE_STATE_IGNORED warnings.  These warnings can be ignored for now and will be addressed in a future release.
+
+
 Streamline SDK 1.0.4 Release Notes
 
 This version of Streamline includes a significant change in behavior with regard to loading features.  Features are no longer loaded by default and must be specified in the "featuresToLoad/numFeaturesToLoad" members of the Preferences structure.  This behavior may optionally be changed when running development and other non-production builds via the sl.interposer.json file (as documented in the Debugging.md guide).  Further, due to reported confusion in some of the naming, the relevant members of the Preferences structure (and associated JSON file entries) have been renamed to use the term "load" rather than "enable".  This naming more accurately reflects their true function and should avoid any confusion.  

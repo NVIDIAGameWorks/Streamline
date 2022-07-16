@@ -3,10 +3,10 @@
 Streamline - DLSS
 =======================
 
->The focus of this guide is on using Streamline to integrate DLSS into an application.  For more information about DLSS itself, please visit the [NVIDIA Developer DLSS Page](https://developer.nvidia.com/rtx/dlss)  
+>The focus of this guide is on using Streamline to integrate DLSS into an application.  For more information about DLSS itself, please visit the [NVIDIA Developer DLSS Page](https://developer.nvidia.com/rtx/dlss)
 >For information on user interface considerations when using the DLSS plugin, please see the "RTX UI Developer Guidelines.pdf" document included in the DLSS SDK.
 
-Version 1.0.4
+Version 1.1.0
 ------
 
 ### 1.0 INITIALIZE AND SHUTDOWN
@@ -65,11 +65,15 @@ Next, we need to find out the rendering resolution and the optimal sharpness lev
 
 ```cpp
 sl::DLSSSettings dlssSettings{};
+sl::DLSSSettings1 dlssSettings1{};
+dlssSettings.ext = &dlssSettings1;
+
 sl::DLSSConstants dlssConsts{};
 // These are populated based on user selection in the UI
 dlssConsts.mode = myUI->getDLSSMode(); // e.g. sl::eDLSSModeBalanced;
 dlssConsts.outputWidth = myUI->getOutputWidth();    // e.g 1920;
 dlssConsts.outputHeight = myUI->getOutputHeight(); // e.g. 1080;
+
 // Now let's check what should our rendering resolution be
 if(!slGetFeatureSettings(sl::eFeatureDLSS, &dlssConsts, &dlssSettings))
 {
@@ -78,6 +82,8 @@ if(!slGetFeatureSettings(sl::eFeatureDLSS, &dlssConsts, &dlssSettings))
 // Setup rendering based on the provided values in the sl::DLSSSettings structure
 myViewport->setSize(dlssSettings.optimalRenderWidth, dlssSettings.optimalRenderHeight);
 ```
+
+Note that the structure pointed to by `sl::DLSSSettings::ext`, i.e. `dlssSettings1` above (if ext is non-null) will upon return from `slGetFeatureSettings` contain information pertinent to DLSS dynamic resolution min and max source image sizes (if dynamic resolution is supported).
 
 ### 4.0 TAG ALL REQUIRED RESOURCES
 

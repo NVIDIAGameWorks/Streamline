@@ -447,9 +447,23 @@ struct CommandListContext : public ICommandListContext
         return true;
     }
 
-    bool present(SwapChain chain, uint32_t sync, uint32_t flags)
+    bool present(SwapChain chain, uint32_t sync, uint32_t flags, void* params)
     {
-        if (FAILED(((IDXGISwapChain*)chain)->Present(sync, flags)))
+        BOOL fullscreen = FALSE;
+        ((IDXGISwapChain*)chain)->GetFullscreenState(&fullscreen, nullptr);
+        if (fullscreen)
+        {
+            flags &= ~DXGI_PRESENT_ALLOW_TEARING;
+        }
+        if (params)
+        {
+            if (FAILED(((IDXGISwapChain1*)chain)->Present1(sync, flags, (DXGI_PRESENT_PARAMETERS*)params)))
+            {
+                SL_LOG_ERROR("Present failed");
+                return false;
+            }
+        }
+        else if (FAILED(((IDXGISwapChain*)chain)->Present(sync, flags)))
         {
             SL_LOG_ERROR("Present failed");
             return false;

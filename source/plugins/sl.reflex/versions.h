@@ -20,8 +20,6 @@
 * SOFTWARE.
 */
 
-#pragma once
-
-#include "include/sl_latency.h"
-
-using PFunSetLatencyStatsMarker = void(sl::LatencyMarker marker, uint32_t frameId);
+#define VERSION_MAJOR 1
+#define VERSION_MINOR 1
+#define VERSION_PATCH 0

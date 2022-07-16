@@ -60,7 +60,7 @@ struct CommonInterfaceContext
     NvPhysicalGpuHandle nvGPUHandle[NVAPI_MAX_PHYSICAL_GPUS] = { };
     NvU32 nvGPUCount = 0;
 
-    common::GPUArch gpuInfo{};
+    common::SystemCaps gpuInfo{};
 
     chi::CommonThreadContext& getThreadContext()
     {
@@ -88,7 +88,7 @@ static CommonInterfaceContext ctx = {};
 //! Get GPU information and share with other plugins
 //! 
 //! We need to add support for non-NVIDIA GPUs
-bool getGPUInfo(common::GPUArch*& info, LUID* id)
+bool getGPUInfo(common::SystemCaps*& info)
 {
 #if defined(SL_WINDOWS)    
     NVAPI_VALIDATE_RF(NvAPI_EnumPhysicalGPUs(ctx.nvGPUHandle, &ctx.nvGPUCount));
@@ -104,15 +104,6 @@ bool getGPUInfo(common::GPUArch*& info, LUID* id)
     SL_LOG_INFO("NVIDIA driver %u.%u", ctx.gpuInfo.driverVersionMajor, ctx.gpuInfo.driverVersionMinor);
     for (NvU32 gpu = 0; gpu < ctx.nvGPUCount; ++gpu)
     {
-        if (id)
-        {
-            LUID luidTmp;
-            NVAPI_VALIDATE_RF(NvAPI_GPU_GetAdapterIdFromPhysicalGpu(ctx.nvGPUHandle[gpu], &luidTmp));
-            if (memcmp(&luidTmp, id, sizeof(LUID)) != 0)
-            {
-                continue;
-            }
-        }
         NV_GPU_ARCH_INFO archInfo;
         archInfo.version = NV_GPU_ARCH_INFO_VER;
         NVAPI_VALIDATE_RF(NvAPI_GPU_GetArchInfo(ctx.nvGPUHandle[gpu], &archInfo));

@@ -83,8 +83,8 @@ struct DLSSSettings1
     uint32_t renderWidthMax{};
     //! Specifies maximal render area height
     uint32_t renderHeightMax{};
-    //! Specified the amount of memory used by DLSS
-    uint64_t allocatedBytes{};
+    //! Specified the amount of memory expected to be used
+    uint64_t estimatedVRAMUsageInBytes{};
     //! Reserved for future expansion, must be set to null
     void* ext{};
 };

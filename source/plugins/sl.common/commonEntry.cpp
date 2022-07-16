@@ -60,7 +60,7 @@ extern HRESULT slHookPresent(IDXGISwapChain* swapChain, UINT SyncInterval, UINT 
 extern HRESULT slHookPresent1(IDXGISwapChain* swapChain, UINT SyncInterval, UINT Flags, DXGI_PRESENT_PARAMETERS* params, bool& Skip);
 extern HRESULT slHookResizeSwapChainPre(IDXGISwapChain* swapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags);
 
-extern bool getGPUInfo(common::GPUArch*& info, LUID* id);
+extern bool getGPUInfo(common::SystemCaps*& info);
 
 //! Our common context
 //! 
@@ -530,6 +530,31 @@ static const char* JSON = R"json(
 }
 )json";
 
+using PFunRtlGetVersion = NTSTATUS(WINAPI*)(PRTL_OSVERSIONINFOW);
+
+bool getOSVersion(common::SystemCaps* caps)
+{
+    bool res = false;
+    RTL_OSVERSIONINFOW osVer = {};
+    auto mod = LoadLibraryExW(L"ntdll.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (mod) 
+    {
+        auto rtlGetVersion = (PFunRtlGetVersion)GetProcAddress(mod, "RtlGetVersion");
+        if (rtlGetVersion)
+        {
+            osVer.dwOSVersionInfoSize = sizeof(osVer);
+            if (res = !rtlGetVersion(&osVer))
+            {
+                caps->osVersionMajor = osVer.dwMajorVersion;
+                caps->osVersionMinor = osVer.dwMinorVersion;
+                caps->osVersionBuild = osVer.dwBuildNumber;
+            }
+        }
+    }
+    FreeLibrary(mod);
+    return res;
+}
+
 //! Figure out if we are supported on the current hardware or not
 //! 
 uint32_t getSupportedAdapterMask()
@@ -537,14 +562,23 @@ uint32_t getSupportedAdapterMask()
     // Provide shared interface for keyboard
     api::getContext()->parameters->set(param::common::kKeyboardAPI, extra::keyboard::getInterface());
 
-    // We are always supported but need to provide a way for other plugins to check GPU caps
-    common::GPUArch* arch{};
-    if (getGPUInfo(arch, nullptr))
+    // Now we need to check OS and GPU capabilities
+    common::SystemCaps* caps{};
+    if (getGPUInfo(caps))
     {
-        api::getContext()->parameters->set(sl::param::common::kGPUInfo, (void*)arch);
+        // SL does not work on Win7, only Win10+
+        auto osVersion = getOSVersion(caps);
+        if (caps->osVersionMajor < 10)
+        {
+            SL_LOG_ERROR("Win10 or higher is required to use SL - all features will be disabled");
+            return 0;
+        }
+        SL_LOG_INFO("Detected Windows OS version %u.%u.%u", caps->osVersionMajor, caps->osVersionMinor, caps->osVersionBuild);
+        // Allow other plugins to query system caps
+        api::getContext()->parameters->set(sl::param::common::kSystemCaps, (void*)caps);
     }
 
-    // Always supported across all adapters
+    // Always supported across all adapters assuming all the above checks passed
     return ~0;
 }
 

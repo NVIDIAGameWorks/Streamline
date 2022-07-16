@@ -56,7 +56,7 @@ constexpr const char* kPreferenceFlags = "sl.param.global.prefFlags";
 namespace common
 {
 
-constexpr const char* kGPUInfo = "sl.param.common.gpuInfo";
+constexpr const char* kSystemCaps = "sl.param.common.gpuInfo";
 constexpr const char* kComputeAPI = "sl.param.common.computeAPI";
 constexpr const char* kKeyboardAPI = "sl.param.common.keyboardAPI";
 constexpr const char* kPFunEvaluateFeature = "sl.param.common.evaluateFeature";

@@ -257,17 +257,17 @@ project "sl.nrd"
 	vpaths { ["impl"] = {"./source/plugins/sl.nrd/**.h", "./source/plugins/sl.nrd/**.cpp" }}
 	removefiles {"./source/core/sl.extra/extra.cpp"}
 
-project "sl.latency"
+project "sl.reflex"
 	kind "SharedLib"	
 	targetdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}")
 	objdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}") 
 	characterset ("MBCS")
-	pluginBasicSetup("latency")
+	pluginBasicSetup("reflex")
 	files { 
-		"./source/plugins/sl.latency/**.h", 
-		"./source/plugins/sl.latency/**.cpp"		
+		"./source/plugins/sl.reflex/**.h", 
+		"./source/plugins/sl.reflex/**.cpp"		
 	}
-	vpaths { ["impl"] = {"./source/plugins/sl.latency/**.h", "./source/plugins/sl.latency/**.cpp" }}
+	vpaths { ["impl"] = {"./source/plugins/sl.reflex/**.h", "./source/plugins/sl.reflex/**.cpp" }}
 	removefiles {"./source/core/sl.extra/extra.cpp"}
 project "sl.template"
 	kind "SharedLib"	

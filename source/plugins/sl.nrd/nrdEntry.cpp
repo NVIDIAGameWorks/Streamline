@@ -26,6 +26,7 @@
 #include <future>
 
 #include "include/sl.h"
+#include "include/sl_helpers.h"
 #include "include/sl_nrd.h"
 #include "source/core/sl.api/internal.h"
 #include "source/core/sl.log/log.h"
@@ -727,23 +728,10 @@ void nrdEndEvent(chi::CommandList cmdList)
 
         //SL_LOG_HINT("-----------------------------------------------------------------------------------------------------------------------------------------");
 
-        // Now run NRD
-
-        // NRD SDK states that matrices are column major
-        auto transpose = [](const float4x4& m)->float4x4
-        {
-            float4x4 r;
-            r[0] = { m[0].x, m[1].x, m[2].x, m[3].x };
-            r[1] = { m[0].y, m[1].y, m[2].y, m[3].y };
-            r[2] = { m[0].z, m[1].z, m[2].z, m[3].z };
-            r[3] = { m[0].w, m[1].w, m[2].w, m[3].w };
-            return r;
-        };
-
         nrd::CommonSettings commonSettings{};
-        memcpy(commonSettings.viewToClipMatrix, &transpose(s_nrd.commonConsts->cameraViewToClip), sizeof(float4x4));
+        memcpy(commonSettings.viewToClipMatrix, &sl::transpose(s_nrd.commonConsts->cameraViewToClip), sizeof(float4x4));
         memcpy(commonSettings.viewToClipMatrixPrev, s_nrd.viewport->instance->prevCommonSettings.viewToClipMatrix, sizeof(float4x4));
-        memcpy(commonSettings.worldToViewMatrix, &transpose(s_nrd.nrdConsts->common.worldToViewMatrix), sizeof(float4x4));
+        memcpy(commonSettings.worldToViewMatrix, &sl::transpose(s_nrd.nrdConsts->common.worldToViewMatrix), sizeof(float4x4));
         memcpy(commonSettings.worldToViewMatrixPrev, s_nrd.viewport->instance->prevCommonSettings.worldToViewMatrix, sizeof(float4x4));
         memcpy(commonSettings.cameraJitter, &s_nrd.commonConsts->jitterOffset, sizeof(float2));
 

@@ -51,6 +51,7 @@ inline T operator~(T a)                                                         
 {                                                                                       \
     return (T)~((uint64_t)a);                                                           \
 }
+
 #define SL_ENUM_OPERATORS_32(T)                                                         \
 inline bool operator&(T a, T b)                                                         \
 {                                                                                       \
@@ -78,6 +79,7 @@ inline T operator~(T a)                                                         
 {                                                                                       \
     return (T)~((uint32_t)a);                                                           \
 }
+
 namespace sl
 {
 //! For cases when value has to be provided and we don't have good default
@@ -148,7 +150,7 @@ enum Boolean : char
 struct Constants
 {
     //! IMPORTANT: All matrices are row major (see float4x4 definition) and
-    //! must NOT contain temporal AA jitter offset (if any). Clip space jitter offset
+    //! must NOT contain temporal AA jitter offset (if any). Any jitter offset
     //! should be provided as the additional parameter Constants::jitterOffset (see below)
             
     //! Specifies matrix transformation from the camera view to the clip space.
@@ -164,7 +166,7 @@ struct Constants
     //! prevClipToClip = clipToPrevClip.inverse()
     float4x4 prevClipToClip;
         
-    //! Specifies clip space jitter offset
+    //! Specifies pixel space jitter offset
     float2 jitterOffset;
     //! Specifies scale factors used to normalize motion vectors (so the values are in [-1,1] range)
     float2 mvecScale;

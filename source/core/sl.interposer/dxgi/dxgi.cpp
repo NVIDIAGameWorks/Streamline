@@ -107,6 +107,7 @@ HRESULT STDMETHODCALLTYPE IDXGIFactory_CreateSwapChain(IDXGIFactory* pFactory, I
     }
 
     *ppSwapChain = nullptr;
+
     DXGI_SWAP_CHAIN_DESC desc = *pDesc;
 
     Microsoft::WRL::ComPtr<IUnknown> deviceProxy;
@@ -161,6 +162,7 @@ HRESULT STDMETHODCALLTYPE IDXGIFactory2_CreateSwapChainForHwnd(IDXGIFactory2* pF
     {
         return DXGI_ERROR_INVALID_CALL;
     }
+
     *ppSwapChain = nullptr;
 
     DXGI_SWAP_CHAIN_DESC1 desc = *pDesc;
@@ -224,6 +226,7 @@ HRESULT STDMETHODCALLTYPE IDXGIFactory2_CreateSwapChainForCoreWindow(IDXGIFactor
     }
 
     *ppSwapChain = nullptr;
+
     DXGI_SWAP_CHAIN_DESC1 desc = *pDesc;
 
     Microsoft::WRL::ComPtr<IUnknown> deviceProxy;
@@ -273,6 +276,8 @@ HRESULT STDMETHODCALLTYPE IDXGIFactory2_CreateSwapChainForComposition(IDXGIFacto
 {
     if (pDevice == nullptr || pDesc == nullptr || ppSwapChain == nullptr)
         return DXGI_ERROR_INVALID_CALL;
+
+    *ppSwapChain = nullptr;
 
     DXGI_SWAP_CHAIN_DESC1 desc = *pDesc;
 

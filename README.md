@@ -1,4 +1,4 @@
-# Streamline (SL) - Version 1.0.4
+# Streamline (SL) - Version 1.1.0
 Streamline is an open-sourced cross-IHV solution that simplifies integration of the latest NVIDIA and other independent hardware vendors’ super resolution technologies into applications and games. This framework allows developers to easily implement one single integration and enable multiple super-resolution technologies and other graphics effects supported by the hardware vendor.
 
 This repo contains the SDK for integrating Streamline into your application.
@@ -17,8 +17,8 @@ For a high level overview, see the [NVIDIA Developer Streamline page](https://de
 > **IMPORTANT:**
 > Current version of SDK does not support Vulkan properly, this is still work in progress
 #### Windows
-- Install latest graphics driver
-- Install VS Code or VS2017/VS2019 with [SDK 10.17763+](https://go.microsoft.com/fwlink/?LinkID=2023014)
+- Install latest graphics driver (**if using NVIDIA GPU it MUST be 512.15 or newer**)
+- Install VS Code or VS2017/VS2019 with [SDK 10.0.19041+](https://go.microsoft.com/fwlink/?LinkID=2023014)
 - Install "git".
 - Clone your fork to a local hard drive, make sure to use a NTFS drive on Windows (SL uses symbolic links)
 - Execute `./setup.bat` with `{vs2017|vs2019}` (`vs2017` is default)
@@ -51,8 +51,8 @@ Please read [Debugging.md](docs/Debugging.md) to learn how to debug and troubles
 Please read [ProgrammingGuideDLSS.md](docs/ProgrammingGuideDLSS.md) to learn about DLSS specific integration in games.
 ## Programming Guide - NRD
 Please read [ProgrammingGuideNRD.md](docs/ProgrammingGuideNRD.md) to learn about NRD specific integration in games.
-## Programming Guide - Latency
-Please read [ProgrammingGuideLatency.md](docs/ProgrammingGuideLatency.md) to learn about low-latency specific integration in games.
+## Programming Guide - Reflex
+Please read [ProgrammingGuideReflex.md](docs/ProgrammingGuideReflex.md) to learn about low-latency specific Reflex integration in games.
 ## Programming Guide - NIS
 Please read [ProgrammingGuideNIS.md](docs/ProgrammingGuideNIS.md) to learn about NIS specific integration in games.
 

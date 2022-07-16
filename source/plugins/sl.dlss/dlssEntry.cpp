@@ -147,13 +147,16 @@ void dlssBeginEvent(chi::CommandList pCmdList, const common::EventData& data)
         return;
     }
 
-    s_dlss.viewport = &viewport;
+    // Must check here, before we overwrite viewport.consts
     bool modeOrSizeChanged = consts->mode != viewport.consts.mode || consts->outputWidth != viewport.consts.outputWidth || consts->outputHeight != viewport.consts.outputHeight;
+
+    s_dlss.viewport = &viewport;
+    viewport.consts = *consts;  // mandatory
+
     if(!viewport.handle || modeOrSizeChanged)
     {
         s_dlss.commonConsts->reset = Boolean::eTrue;
         s_dlss.cachedStates.clear();
-        viewport.consts = *consts;  // mandatory
         slGetSettings(consts, &viewport.settings);
 
         if(s_dlss.ngxContext)
@@ -609,7 +612,8 @@ bool slGetSettings(const void *c, void *s)
             SL_LOG_ERROR("DLSS 'getStats' callback failed - error %u", res);
             return false;
         }
-        s_dlss.ngxContext->params->Get(NVSDK_NGX_Parameter_SizeInBytes, &settings1->allocatedBytes);
+        // TODO: This has to return the correct estimate regardless if callback is present or not.
+        s_dlss.ngxContext->params->Get(NVSDK_NGX_Parameter_SizeInBytes, &settings1->estimatedVRAMUsageInBytes);
     }
     return true;
 }
@@ -735,8 +739,8 @@ const char *JSON = R"json(
 uint32_t getSupportedAdapterMask()
 {
     // Check if plugin is supported or not on this platform and set the flag accordingly
-    common::GPUArch* info = {};
-    param::getPointerParam(api::getContext()->parameters, sl::param::common::kGPUInfo, &info);
+    common::SystemCaps* info = {};
+    param::getPointerParam(api::getContext()->parameters, sl::param::common::kSystemCaps, &info);
     uint32_t adapterMask = 0;
     if (info)
     {

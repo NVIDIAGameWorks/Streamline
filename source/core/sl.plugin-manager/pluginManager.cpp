@@ -33,6 +33,7 @@
 #include "source/core/sl.interposer/versions.h"
 #include "source/core/sl.interposer/hook.h"
 #include "_artifacts/gitVersion.h"
+#include "include/sl_helpers.h"
 
 #ifdef SL_WINDOWS
 #include <versionhelpers.h>
@@ -67,25 +68,33 @@ public:
     virtual const HookList& getAfterHooksWithoutLazyInit(FunctionHookID functionHookID) override final;
 
     virtual const Preferences& getPreferences() const override final { return m_pref; }
+
     virtual void setPreferences(const Preferences& pref) override final
     {
         m_pref = pref;
         param::getInterface()->set(param::global::kPreferenceFlags, m_pref.flags);
+
         // Keep a copy since we need it later so host does not have keep these allocations around
         m_pathsToPlugins.resize(pref.numPathsToPlugins);
         for (uint32_t i = 0; i < pref.numPathsToPlugins; i++)
         {
             m_pathsToPlugins[i] = m_pref.pathsToPlugins[i];
         }
+        
+        // Allow override for features to load
 #ifndef SL_PRODUCTION
         auto interposerConfig = sl::interposer::getInterface()->getConfig();
+
+        // Build inclusion list based on preferences
         std::vector<Feature> features =
         {
             Feature::eFeatureDLSS,
             Feature::eFeatureNRD,
             Feature::eFeatureNIS,
-            Feature::eFeatureLatency,
+            Feature::eFeatureReflex
         };
+
+        // Allow override via JSON config file
         if (interposerConfig.contains("loadAllFeatures"))
         {
             bool value = false;
@@ -105,7 +114,7 @@ public:
                 item.get_to(id);
                 if (std::find(features.begin(), features.end(), id) == features.end())
                 {
-                    SL_LOG_WARN("Feature %u in 'loadSpecificFeatures' list is invalid - ignoring", id);
+                    SL_LOG_WARN("Feature '%s' in 'loadSpecificFeatures' list is invalid - ignoring", getFeatureAsStr((Feature)id));
                 }
                 else
                 {
@@ -118,6 +127,8 @@ public:
             }
         }
 #endif
+
+        // This could be already populated from JSON config in development builds
         if (m_featuresToLoad.empty())
         {
             m_featuresToLoad.resize(pref.numFeaturesToLoad);
@@ -126,10 +137,12 @@ public:
                 m_featuresToLoad[i] = pref.featuresToLoad[i];
             }
         }
+
         if (m_featuresToLoad.empty())
         {
             SL_LOG_WARN("No features will be loaded - the explicit list of features to load must be specified in sl::Preferences or provided with 'sl.interposer.json' in development builds");
         }
+
         // These are not safe to touch after we exit here
         m_pref.pathsToPlugins = {};
         m_pref.pathToLogsAndData = {};
@@ -162,21 +175,8 @@ public:
         }
         auto it = m_featurePluginsMap.find(feature);
         if (it != m_featurePluginsMap.end())
-        {
-            if (!(*it).second->context.enabled)
-            {
-                SL_LOG_WARN("Feature '%s' is disabled", (*it).second->name.c_str());
-            }
-            if (!(*it).second->context.supportedAdapters)
-            {
-                SL_LOG_WARN("Feature '%s' is not supported", (*it).second->name.c_str());
-            }
             return &(*it).second->context;
-        }
-        else
-        {
-            SL_LOG_ERROR("Feature %u either missing or unloaded because it is NOT supported on this system.", feature);
-        }
+
         return nullptr;
     }
 
@@ -217,6 +217,7 @@ private:
     void processPluginHooks(const Plugin* plugin);
     void mapPluginCallbacks(Plugin* plugin);
     uint32_t getFunctionHookID(const std::string& name);
+
     Plugin* isPluginLoaded(const std::string& name) const;
     Plugin* isExclusiveHookUsed(const Plugin* exclusivePlugin, const std::string& exclusiveHook) const;
 
@@ -265,6 +266,7 @@ void destroyInterface()
     delete PluginManager::s_manager;
     PluginManager::s_manager = {};
 }
+
 PluginManager::Plugin* PluginManager::isPluginLoaded(const std::string& name) const
 {
     for (auto& plugin : m_plugins)
@@ -276,11 +278,13 @@ PluginManager::Plugin* PluginManager::isPluginLoaded(const std::string& name) co
     }
     return nullptr;
 }
+
 PluginManager::Plugin* PluginManager::isExclusiveHookUsed(const Plugin* exclusivePlugin, const std::string& exclusiveHook) const
 {
     for (auto& plugin : m_plugins)
     {
         if (plugin == exclusivePlugin) continue;
+
         auto hooks = plugin->config.at("hooks");
         for (auto hook : hooks)
         {
@@ -389,8 +393,6 @@ bool PluginManager::mapPlugins(const std::wstring& path, std::vector<std::wstrin
 
     param::IParameters* parameters = param::getInterface();
 
-  
-
     // sl.common is always enabled
     m_featuresToLoad.push_back(Feature::eFeatureCommon);
 
@@ -446,7 +448,6 @@ bool PluginManager::mapPlugins(const std::wstring& path, std::vector<std::wstrin
                     }
                 }
 
-
                 // Now we check if plugin is supported on this system
                 plugin->config.at("supportedAdapters").get_to(plugin->context.supportedAdapters);
                 if (!requested || !plugin->context.supportedAdapters)
@@ -487,6 +488,8 @@ bool PluginManager::mapPlugins(const std::wstring& path, std::vector<std::wstrin
                         SL_LOG_ERROR("Detected plugin '%s' with priority <= 0 which is not allowed", plugin->name.c_str());
                         freePlugin(&plugin);
                     }
+
+                    // Now let's check for special requirements, dependencies to other plugins, exclusive hooks etc.
                     auto extractItems = [plugin](const char* key, std::vector<std::string>& stringList)->void
                     {
                         if (plugin->config.contains(key))
@@ -500,6 +503,7 @@ bool PluginManager::mapPlugins(const std::wstring& path, std::vector<std::wstrin
                             }
                         }
                     };
+                    
                     extractItems("required_plugins", plugin->requiredPlugins);
                     extractItems("exclusive_hooks", plugin->exclusiveHooks);
                     extractItems("incompatible_plugins", plugin->incompatiblePlugins);
@@ -594,11 +598,14 @@ bool PluginManager::loadPlugins()
         return false;
     }
 
+    // Before we can proceed we need to check for plugin dependencies and other special requirements
     {
         std::vector<Plugin*> pluginsToUnload;
         for (auto it = m_plugins.begin(); it != m_plugins.end(); it++)
         {
+            // This is our current plugin
             auto plugin = *it;
+            // First we check if current plugin requires any other plugin(s)
             for (auto& required : plugin->requiredPlugins)
             {
                 if (!isPluginLoaded(required))
@@ -611,6 +618,9 @@ bool PluginManager::loadPlugins()
             }
             if (plugin)
             {
+                // At this point we know that current plugin is not missing any dependencies
+                
+                // Check for incompatible plugins and unload them
                 for (auto& incompatible : plugin->incompatiblePlugins)
                 {
                     if (Plugin* incompatiblePlugin = isPluginLoaded(incompatible))
@@ -619,6 +629,8 @@ bool PluginManager::loadPlugins()
                         pluginsToUnload.push_back(incompatiblePlugin);
                     }
                 }
+
+                // Check if current plugin has any exclusive hooks we don't want others to use
                 for (auto& hook : plugin->exclusiveHooks)
                 {
                     auto collidingPlugin = isExclusiveHookUsed(plugin, hook);
@@ -630,6 +642,8 @@ bool PluginManager::loadPlugins()
                 }
             }
         }
+
+        // Now we go and unload plugins which are either missing dependencies, incompatible or using hooks which are exclusive
         for (auto plugin : pluginsToUnload)
         {
             for (auto it = m_plugins.begin(); it != m_plugins.end();)
@@ -647,6 +661,7 @@ bool PluginManager::loadPlugins()
             }
         }
     }
+
     // Sort by priority so we can execute hooks in the specific order
     std::sort(m_plugins.begin(), m_plugins.end(),
         [](const Plugin* a, const Plugin* b) -> bool
@@ -930,6 +945,7 @@ PluginManager::PluginManager()
     FUNCTION_HOOK_ID_MAP_ENTRY(IDXGIFactory_CreateSwapChain);
     FUNCTION_HOOK_ID_MAP_ENTRY(IDXGIFactory2_CreateSwapChainForHwnd);
     FUNCTION_HOOK_ID_MAP_ENTRY(IDXGIFactory2_CreateSwapChainForCoreWindow);
+    FUNCTION_HOOK_ID_MAP_ENTRY(IDXGISwapChain_Destroyed);
     FUNCTION_HOOK_ID_MAP_ENTRY(IDXGISwapChain_Present);
     FUNCTION_HOOK_ID_MAP_ENTRY(IDXGISwapChain_Present1);
     FUNCTION_HOOK_ID_MAP_ENTRY(IDXGISwapChain_GetBuffer);

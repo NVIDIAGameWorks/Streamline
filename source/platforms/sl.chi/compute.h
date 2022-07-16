@@ -23,7 +23,7 @@
 #pragma once
 
 #include "include/sl.h"
-#include "include/sl_latency.h"
+#include "include/sl_reflex.h"
 #include "source/core/sl.extra/extra.h"
 
 namespace sl
@@ -157,32 +157,7 @@ enum class ResourceState : uint32_t
     eGenericRead = 1 << 19
 };
 
-inline ResourceState operator|(ResourceState a, ResourceState b)
-{
-    return (ResourceState)((uint32_t)a | (uint32_t)b);
-}
-
-inline ResourceState operator|=(ResourceState& a, ResourceState b)
-{
-    a = (ResourceState)((uint32_t)a | (uint32_t)b);
-    return a;
-}
-
-inline ResourceState operator&=(ResourceState& a, ResourceState b)
-{
-    a = (ResourceState)((uint32_t)a & (uint32_t)b);
-    return a;
-}
-
-inline bool operator&(ResourceState a, ResourceState b)
-{
-    return ((uint32_t)a & (uint32_t)b) != 0;
-}
-
-inline ResourceState operator~(ResourceState a)
-{
-    return (ResourceState)~((uint32_t)a);
-}
+SL_ENUM_OPERATORS_32(ResourceState)
 
 enum class ResourceFlags : uint32_t
 {
@@ -204,32 +179,13 @@ enum class ResourceFlags : uint32_t
     eCount
 };
 
-inline bool operator&(ResourceFlags a, ResourceFlags b)
+enum CmdListPipeType
 {
-    return ((uint32_t)a & (uint32_t)b) != 0;
-}
+    eCmdListGraphics = 0,
+    eCmdListCompute = 1
+};
 
-inline ResourceFlags operator&=(ResourceFlags& a, ResourceFlags b)
-{
-    a = (ResourceFlags)((uint32_t)a & (uint32_t)b);
-    return a;
-}
-
-inline ResourceFlags operator|(ResourceFlags a, ResourceFlags b)
-{
-    return (ResourceFlags)((uint32_t)a | (uint32_t)b);
-}
-
-inline ResourceFlags& operator |= (ResourceFlags& lhs, ResourceFlags rhs)
-{
-    lhs = (ResourceFlags)((int)lhs | (int)rhs);
-    return lhs;
-}
-
-inline ResourceFlags operator~(ResourceFlags a)
-{
-    return (ResourceFlags)~((uint32_t)a);
-}
+SL_ENUM_OPERATORS_32(ResourceFlags)
 
 struct CommonThreadContext
 {
@@ -374,7 +330,7 @@ struct ICommandListContext
     virtual CommandQueue getCmdQueue() = 0;
     virtual CommandAllocator getCmdAllocator() = 0;
     virtual Handle getFenceEvent() = 0;
-    virtual bool present(SwapChain chain, uint32_t sync, uint32_t flags) = 0;
+    virtual bool present(SwapChain chain, uint32_t sync, uint32_t flags, void* params = nullptr) = 0;
 };
 
 // Common functions like begin/end event or anything else that just needs command list
@@ -400,7 +356,7 @@ enum ComputeStatus
 #define CHI_CHECK(f) {auto _r = f;if(_r != sl::chi::eComputeStatusOk) { SL_LOG_ERROR("%s failed",#f); return _r;}};
 #define CHI_CHECK_RF(f) {auto _r = f;if(_r != sl::chi::eComputeStatusOk) { SL_LOG_ERROR("%s failed",#f); return false;}};
 #define CHI_CHECK_RV(f) {auto _r = f;if(_r != sl::chi::eComputeStatusOk) { SL_LOG_ERROR("%s failed",#f); return;}};
-#define NVAPI_CHECK(f) {auto r = f; if(r != NVAPI_OK) { SL_LOG_ERROR("%s failed error %d", #f, r); return sl::chi::eComputeStatusError;} };
+#define NVAPI_CHECK(f) {auto r = f; if(r != NVAPI_OK) { SL_LOG_ERROR_ONCE("%s failed error %d", #f, r); return sl::chi::eComputeStatusError;} };
 
 class ICompute
 {
@@ -507,11 +463,11 @@ public:
     virtual ComputeStatus endProfilingQueue(CommandQueue cmdQueue) = 0;
 
     // Latency API
-    virtual ComputeStatus setSleepMode(const LatencyConstants& consts) = 0;
-    virtual ComputeStatus getSleepStatus(LatencySettings& settings) = 0;
-    virtual ComputeStatus getLatencyReport(LatencySettings& settings) = 0;
+    virtual ComputeStatus setSleepMode(const ReflexConstants& consts) = 0;
+    virtual ComputeStatus getSleepStatus(ReflexSettings& settings) = 0;
+    virtual ComputeStatus getLatencyReport(ReflexSettings& settings) = 0;
     virtual ComputeStatus sleep() = 0;
-    virtual ComputeStatus setLatencyMarker(LatencyMarker marker, uint64_t frameId) = 0;
+    virtual ComputeStatus setReflexMarker(ReflexMarker marker, uint64_t frameId) = 0;
 };
 
 ICompute* getD3D11();

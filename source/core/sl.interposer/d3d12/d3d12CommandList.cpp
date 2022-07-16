@@ -170,22 +170,19 @@ HRESULT STDMETHODCALLTYPE D3D12GraphicsCommandList::Close()
 }
 HRESULT STDMETHODCALLTYPE D3D12GraphicsCommandList::Reset(ID3D12CommandAllocator* pAllocator, ID3D12PipelineState* pInitialState)
 {
-    auto res = m_base->Reset(pAllocator, pInitialState);
-
     if (m_trackState)
     {
-    m_rootSignature = {};
+        m_rootSignature = {};
         m_pso = pInitialState;
-    m_so = {};
-    m_numHeaps = {};
-    m_mapHandles = {};
-    m_mapCBV.clear();
-    m_mapSRV.clear();
-    m_mapUAV.clear();
-    m_mapConstants.clear();
+        m_so = {};
+        m_numHeaps = {};
+        m_mapHandles = {};
+        m_mapCBV.clear();
+        m_mapSRV.clear();
+        m_mapUAV.clear();
+        m_mapConstants.clear();
     }
-
-    return res;
+    return m_base->Reset(pAllocator, pInitialState);
 }
 
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::ClearState(ID3D12PipelineState* pPipelineState)
@@ -259,12 +256,12 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::OMSetStencilRef(UINT StencilRef
 }
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetPipelineState(ID3D12PipelineState* pPipelineState)
 {
-    // This API is very CPU costly so only set when really changed
-    if (m_trackState && m_pso != pPipelineState)
+    m_base->SetPipelineState(pPipelineState);
+    
+    if (m_trackState)
     {
         // PSO and RT PSO are mutually exclusive so setting RT PSO to null (see SetPipelineState1)
-        m_so = {};
-        m_base->SetPipelineState(pPipelineState);
+        m_so = {};        
         m_pso = pPipelineState;
     }
 }
@@ -301,12 +298,12 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetDescriptorHeaps(UINT NumDesc
 }
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetComputeRootSignature(ID3D12RootSignature* pRootSignature)
 {
+    m_base->SetComputeRootSignature(pRootSignature);
+
     // App can set the same root signature multiple times so check
     if (m_trackState && pRootSignature != m_rootSignature)
     {
-        m_base->SetComputeRootSignature(pRootSignature);
         m_rootSignature = pRootSignature;
-     
         // Clear root signature cached items
         m_mapCBV.clear();
         m_mapSRV.clear();
@@ -325,7 +322,7 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetComputeRootDescriptorTable(U
 
     if (m_trackState)
     {
-    m_mapHandles[RootParameterIndex] = BaseDescriptor;
+        m_mapHandles[RootParameterIndex] = BaseDescriptor;
     }
 }
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetGraphicsRootDescriptorTable(UINT RootParameterIndex, D3D12_GPU_DESCRIPTOR_HANDLE BaseDescriptor)
@@ -338,9 +335,9 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetComputeRoot32BitConstant(UIN
 
     if (m_trackState)
     {
-    auto& entry = m_mapConstants[RootParameterIndex];
-    entry.Num32BitValuesToSet = 1;
-    entry.SrcData[0] = SrcData;
+        auto& entry = m_mapConstants[RootParameterIndex];
+        entry.Num32BitValuesToSet = 1;
+        entry.SrcData[0] = SrcData;
     }
 }
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetGraphicsRoot32BitConstant(UINT RootParameterIndex, UINT SrcData, UINT DestOffsetIn32BitValues)
@@ -374,7 +371,7 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetComputeRootConstantBufferVie
 
     if (m_trackState)
     {
-    m_mapCBV[RootParameterIndex] = BufferLocation;
+        m_mapCBV[RootParameterIndex] = BufferLocation;
     }
 }
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetGraphicsRootConstantBufferView(UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation)
@@ -387,7 +384,7 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetComputeRootShaderResourceVie
 
     if (m_trackState)
     {
-    m_mapSRV[RootParameterIndex] = BufferLocation;
+        m_mapSRV[RootParameterIndex] = BufferLocation;
     }
 }
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetGraphicsRootShaderResourceView(UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation)
@@ -400,7 +397,7 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetComputeRootUnorderedAccessVi
 
     if (m_trackState)
     {
-    m_mapUAV[RootParameterIndex] = BufferLocation;
+        m_mapUAV[RootParameterIndex] = BufferLocation;
     }
 }
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetGraphicsRootUnorderedAccessView(UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation)
@@ -541,12 +538,12 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::CopyRaytracingAccelerationStruc
 }
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetPipelineState1(ID3D12StateObject* pStateObject)
 {
-    // This API is very CPU costly so only set when really changed
+    static_cast<ID3D12GraphicsCommandList4*>(m_base)->SetPipelineState1(pStateObject);
+
     if (m_trackState && m_so != pStateObject)
     {
         // PSO and RT PSO are mutually exclusive so setting PSO to null (see SetPipelineState)
-        m_pso = {};
-        static_cast<ID3D12GraphicsCommandList4*>(m_base)->SetPipelineState1(pStateObject);
+        m_pso = {};        
         m_so = pStateObject;
     }
 }

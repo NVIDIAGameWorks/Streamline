@@ -35,6 +35,7 @@
 #include "source/core/sl.param/parameters.h"
 #include "source/core/sl.interposer/hook.h"
 #include "source/core/sl.plugin-manager/pluginManager.h"
+#include "include/sl_helpers.h"
 
 using namespace sl;
 
@@ -59,7 +60,6 @@ bool slInit(const Preferences &pref, int applicationId)
         // Use a generic Id for now
         applicationId = 100721531;
     }
-
 
     // Setup logging first
     auto log = log::getInterface();
@@ -154,7 +154,7 @@ bool slIsFeatureSupported(Feature feature, uint32_t* adapterBitMask)
     auto ctx = plugin_manager::getInterface()->getFeatureContext(feature);
     if (!ctx)
     {
-        SL_LOG_ERROR_ONCE("Feature %u is not supported or missing", feature);
+        SL_LOG_ERROR_ONCE("Feature '%s' is not supported or missing", getFeatureAsStr(feature));
         return false;
     }
 
@@ -168,6 +168,7 @@ bool slIsFeatureSupported(Feature feature, uint32_t* adapterBitMask)
 bool slIsFeatureEnabled(sl::Feature feature)
 {
     SL_VALIDATE_STATE
+
     auto ctx = plugin_manager::getInterface()->getFeatureContext(feature);
     if (!ctx)
     {
@@ -175,6 +176,7 @@ bool slIsFeatureEnabled(sl::Feature feature)
     }
     return ctx->enabled;
 }
+
 bool slSetFeatureEnabled(sl::Feature feature, bool enabled)
 {
     SL_VALIDATE_STATE
@@ -229,7 +231,7 @@ bool slSetFeatureConstants(Feature feature, const void *consts, uint32_t frameIn
     auto ctx = plugin_manager::getInterface()->getFeatureContext(feature);
     if (!ctx || !ctx->enabled)
     {
-        SL_LOG_ERROR("Feature %u is either not supported or disabled", feature);
+        SL_LOG_ERROR("Feature '%s' is either not supported or disabled", getFeatureAsStr(feature));
         return false;
     }
 
@@ -248,7 +250,7 @@ bool slGetFeatureSettings(Feature feature, const void* consts, void* settings)
     auto ctx = plugin_manager::getInterface()->getFeatureContext(feature);
     if (!ctx || !ctx->enabled)
     {
-        SL_LOG_ERROR("Feature %u is either not supported or disabled", feature);
+        SL_LOG_ERROR("Feature '%s' is either not supported or disabled", getFeatureAsStr(feature));
         return false;
     }
 
@@ -268,7 +270,7 @@ bool slAllocateResources(sl::CommandBuffer* cmdBuffer, sl::Feature feature, uint
     auto ctx = plugin_manager::getInterface()->getFeatureContext(feature);
     if (!ctx || !ctx->enabled)
     {
-        SL_LOG_ERROR("Feature %u is either not supported or disabled", feature);
+        SL_LOG_ERROR("Feature '%s' is either not supported or disabled", getFeatureAsStr(feature));
         return false;
     }
 
@@ -287,7 +289,7 @@ bool slFreeResources(sl::Feature feature, uint32_t id)
     auto ctx = plugin_manager::getInterface()->getFeatureContext(feature);
     if (!ctx || !ctx->enabled)
     {
-        SL_LOG_ERROR("Feature %u is either not supported or disabled", feature);
+        SL_LOG_ERROR("Feature '%s' is either not supported or disabled", getFeatureAsStr(feature));
         return false;
     }
 
@@ -306,7 +308,7 @@ bool slEvaluateFeature(CommandBuffer* cmdBuffer, Feature feature, uint32_t frame
     auto ctx = plugin_manager::getInterface()->getFeatureContext(feature);
     if (!ctx || !ctx->enabled)
     {
-        SL_LOG_ERROR("Feature %u is either not supported or disabled", feature);
+        SL_LOG_ERROR("Feature '%s' is either not supported or disabled", getFeatureAsStr(feature));
         return false;
     }
 
@@ -320,4 +322,3 @@ bool slEvaluateFeature(CommandBuffer* cmdBuffer, Feature feature, uint32_t frame
     // Callback will return false and log an error if feature is not supported, missing or something else goes wrong
     return fun(cmdBuffer, feature, frameIndex, id);
 }
-

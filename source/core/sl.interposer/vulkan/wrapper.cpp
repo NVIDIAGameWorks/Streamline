@@ -120,11 +120,12 @@ extern "C"
         {
             layers.push_back(createInfo.ppEnabledLayerNames[i]);
         }
-        /*if (std::find(layers.begin(), layers.end(), "VK_LAYER_KHRONOS_validation") == layers.end())
+#if 0
+        if (std::find(layers.begin(), layers.end(), "VK_LAYER_KHRONOS_validation") == layers.end())
         {
             layers.push_back("VK_LAYER_KHRONOS_validation");
-        }*/
-
+        }
+#endif
         createInfo.enabledLayerCount = (uint32_t)layers.size();
         createInfo.ppEnabledLayerNames = layers.data();
 #endif
@@ -261,7 +262,7 @@ extern "C"
             if (createInfo.pQueueCreateInfos[i].queueFamilyIndex == s_vk.graphicsQueueFamily)
             {
                 s_vk.graphicsQueueIndex++;
-                queueCreateInfos.back().queueCount +=2;
+                queueCreateInfos.back().queueCount += 2;
             }
         }
 

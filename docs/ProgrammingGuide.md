@@ -3,7 +3,7 @@
 Streamline - SL
 =======================
 
-Version 1.0.4
+Version 1.1.0
 ------
 
 1 SETTING UP
@@ -102,10 +102,14 @@ All modules provided in the `./bin/x64` SDK folder are digitally signed by NVIDI
 
 ***It is strongly recommended*** to use the provided `sl.interposer.dll` binary and follow the above guidelines. The prebuilt binary automatically performs the above steps when loading SL plugins to ensure maximum security. If you decide to build your own `sl.interposer.dll`, make sure to enforce your own strict security policies.
 
+* Note that if using provided development SL DLLs or if using self-built SL DLLs, they will not be signed.  In these cases (which should be used ONLY in development/debugging situations and never shipped), you will need to temporarily disable the app's signature-checking.
+
 ### 2.2 INITIALIZING SL 
 
 #### 2.2.1 SL FEATURE LIFECYCLE
+
 Here is the typical lifecycle for SL features:
+
 * Requested feature DLLs are loaded during `slInit` call.
     * This is (and must be) done before any DX/VK APIs are invoked (which is why the app must call slInit very early in its initialization)
     * The feature "request" process is detailed in [featuresToLoad in preferences](#222-preferences)
@@ -410,7 +414,7 @@ enabled in development by setting `Preferences::showConsole` to true. In the deb
 
 ### 2.3 CHECKING IF A FEATURE IS SUPPORTED
 
-SL supports the following features:
+SL provides an enum with an entry for each supported feature:
 
 ```cpp
 //! Features supported with this SDK
@@ -423,11 +427,15 @@ enum Feature
     //! NVIDIA Image Scaling
     eFeatureNIS = 2,
     //! Low-Latency
-    eFeatureLatency = 3,
+    eFeatureReflex = 3,
+    .
+    .
+    .
     //! Common feature, NOT intended to be used directly
     eFeatureCommon = UINT_MAX
 };
 ```
+The set of features will change over time, so please see the enum definition in `sl.h` for the list of currently supported features.
 
 To check if a specific feature is available on the specific display adapter(s), you can call:
 
@@ -461,8 +469,8 @@ if((adapterBitMask & (1 << myAdapterIndex)) != 0)
     // It is OK to create a device on this adapter since feature we need is supported
 }
 ```
-> **NOTE:**  
-> If `slIsFeatureSupported` returns false, you can enable the console window or use `logMessagesCallback` to find out why the specific feature is not supported.  
+> **NOTE:**
+> If `slIsFeatureSupported` returns false, you can enable the console window or use `logMessagesCallback` to find out why the specific feature is not supported.
 > If `slIsFeatureSupported` returns true, it means that the feature is supported by some adapter in the system.  In a multi-adapter system, you MUST check the bitmask to determine if the feature is supported on the desired adapter!
 
 ### 2.4 ENABLING OR DISABLING FEATURES
@@ -473,7 +481,8 @@ All loaded features are enabled by default. To explicitly enable or disable a sp
 //! Sets the specified feature to either enabled or disabled state.
 //!
 //! Call this method to enable or disable certain eFeature*. 
-//! All supported features are enabled by default and have to be disabled explicitly if needed.
+//!
+//! NOTE: All loaded features are enabled by default and have to be disabled explicitly if needed.
 //!
 //! @param feature Specifies which feature to check
 //! @param enabled Value specifying if feature should be enabled or disabled.
@@ -494,7 +503,7 @@ You may also query whether a particular feature is currently enabled or not with
 //! Checks if specified feature is enabled or not.
 //!
 //! Call this method to check if feature is enabled.
-//! All supported features are enabled by default and have to be disabled explicitly if needed.
+//! All loaded features are enabled by default and have to be disabled explicitly if needed.
 //!
 //! @param feature Specifies which feature to check
 //! @return false if feature is disabled, not supported on the system or if device has not been created yet, true otherwise.
@@ -578,6 +587,8 @@ enum BufferType : uint32_t
     eBufferTypeReflectionMotionVectors,
     //! Optional - Position, in same space as eBufferTypeNormals
     eBufferTypePosition,
+    //! Optional - Indicates (via non-zero value) which pixels have motion/depth values that do not match the final color content at that pixel (e.g. overlaid, opaque Picture-in-Picture)
+    eBufferTypeInvalidDepthMotionHint
 };
 
 //! Tags resource
@@ -653,6 +664,7 @@ The following hints are optional but should be provided if they are easy to obta
 * `eBufferTypeReflectionHint` - boolean mask indicating which pixels represent the transparency area
 * `eBufferTypeParticleHint` - boolean mask indicating which pixels represent the reflections area
 * `eBufferTypeTransparencyHint` - boolean mask indicating which pixels represent the particles
+* `eBufferTypeInvalidDepthMotionHint` -- boolean mask indicating pixels where the color content does not match the depth and/or motion vector content (e.g. picture-in-picture)
 
 > **NOTE:**
 > Tagged buffers should not be used for other purposes within a frame execution because SL plugins might need them at different stages. If that cannot be guaranteed, please make a copy and tag it instead of the original buffer.
@@ -667,9 +679,9 @@ Some additional information should be provided so that SL features can operate c
 struct Constants
 {
     //! IMPORTANT: All matrices are row major (see float4x4 definition) and
-    //! must NOT contain temporal AA jitter offset (if any). Clip space jitter offset
+    //! must NOT contain temporal AA jitter offset (if any). Any jitter offset
     //! should be provided as the additional parameter Constants::jitterOffset (see below)
-            
+        
     //! Specifies matrix transformation from the camera view to the clip space.
     float4x4 cameraViewToClip;
     //! Specifies matrix transformation from the clip space to the camera view space.
@@ -682,8 +694,8 @@ struct Constants
     //! Specifies matrix transformation from the previous clip to the current clip space.
     //! prevClipToClip = clipToPrevClip.inverse()
     float4x4 prevClipToClip;
-        
-    //! Specifies clip space jitter offset
+    
+    //! Specifies pixel space jitter offset
     float2 jitterOffset;
     //! Specifies scale factors used to normalize motion vectors (so the values are in [-1,1] range)
     float2 mvecScale;
@@ -697,7 +709,7 @@ struct Constants
     float3 cameraRight;
     //! Specifies camera forward vector in world space.
     float3 cameraFwd;
-        
+    
     //! Specifies camera near view plane distance.
     float cameraNear = INVALID_FLOAT;
     //! Specifies camera far view plane distance.
@@ -731,7 +743,6 @@ struct Constants
     void* ext = {};
 };
 
-
 //! Sets common constants.
 //!
 //! Call this method to provide the required data (SL will keep a copy).
@@ -739,7 +750,7 @@ struct Constants
 //! @param values Common constants required by SL plugins (SL will keep a copy)
 //! @param frameIndex Index of the current frame
 //! @param id Unique id (can be viewport id | instance id etc.)
-//! @return false if constants cannot be set or if device has not beeing created yet, true otherwise.
+//! @return false if constants cannot be set or if device has not been created yet, true otherwise.
 //! 
 //! This method is thread safe and requires DX/VK device to be created before calling it.
 SL_API bool slSetConstants(const sl::Constants& values, uint32_t frameIndex, uint32_t id = 0);
@@ -761,7 +772,7 @@ Each feature requires specific data which is defined in a corresponding  `sl_<fe
 //! @param consts Pointer to the feature specific constants (SL will keep a copy)
 //! @param frameIndex Index of the current frame
 //! @param id Unique id (can be viewport id | instance id etc.)
-//! @return false if constants cannot be set or if device has not beeing created yet, true otherwise.
+//! @return false if constants cannot be set or if device has not been created yet, true otherwise.
 //!
 //! This method is thread safe and requires DX/VK device to be created before calling it.
 SL_API bool slSetFeatureConstants(sl::Feature feature, const void *consts, uint32_t frameIndex, uint32_t id = 0);
@@ -782,7 +793,7 @@ Some features provide feedback to the host application specifying which renderin
 //! @param feature Feature we are working with
 //! @param consts Pointer to the feature specific constants
 //! @param settings Pointer to the returned feature specific settings
-//! @return false if feature does not have settings or if device has not beeing created yet, true otherwise.
+//! @return false if feature does not have settings or if device has not been created yet, true otherwise.
 //!
 //! This method is NOT thread safe and requires DX/VK device to be created before calling it.
 SL_API bool slGetFeatureSettings(sl::Feature feature, const void* consts, void* settings);
@@ -823,7 +834,7 @@ By design, SL SDK enables `host assisted replacement or injection of specific re
 //! @param feature Feature we are working with
 //! @param frameIndex Current frame index (can be 0 if not needed)
 //! @param id Unique id (can be viewport id | instance id etc.)
-//! @return false if feature event cannot be injected in the command buffer or if device has not beeing created yet, true otherwise.
+//! @return false if feature event cannot be injected in the command buffer or if device has not been created yet, true otherwise.
 //! 
 //! IMPORTANT: frameIndex and id must match whatever is used to set common and or feature constants (if any)
 //!

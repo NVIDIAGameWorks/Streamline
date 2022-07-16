@@ -1,7 +1,30 @@
 # Debugging
 > **NOTE:**
-> This document applies to non-production, development builds only which can be found in `bin/x64/development` directory.  JSON configuration is disabled in production builds.
+> This document applies to non-production, development builds only.  JSON configuration is disabled in production builds.
 > Additionally, you will need to turn off any checks for signed libraries when loading Streamline libraries in order to be able to load the non-production libraries.
+
+## JSON Config File(s)
+
+### Location of the JSON
+
+Note that the `sl.interposer.json` file is loaded from the current working directory of the app at the point at which the app calls `slInit`.  This may not match the app's executable directory.
+
+### "Commenting-out" Lines
+Note that the example configuration JSON files (located in `./scripts/`) include some tags that are disabled, but visible as a form of "comment"; this is done by prefixing the correct/expected tag name with underscore (_):
+
+Functional:
+```json
+{
+	"enableInterposer": false,	
+}
+```
+
+Non-functional "comment":
+```json
+{
+	"_enableInterposer": false,	
+}
+```
 
 ## How to toggle SL on/off
 
@@ -92,3 +115,5 @@ Place the `sl.common.json` file (located in `./scripts/`) in the game's working 
 	]
 }
 ```
+
+Note that `"key"` lines specify the *decimal* number of the Windows Virtual Key Code (`VK_*`) for the desired key.

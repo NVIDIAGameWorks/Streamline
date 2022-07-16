@@ -34,6 +34,7 @@ struct IDXGISwapChain;
 
 #include "source/core/sl.log/log.h"
 #include "source/core/sl.extra/extra.h"
+#include "source/core/sl.param/parameters.h"
 #include "source/platforms/sl.chi/generic.h"
 #include "external/nvapi/nvapi.h"
 
@@ -245,6 +246,7 @@ ComputeStatus Generic::init(Device device, param::IParameters* params)
 {
     m_parameters = params;
     m_typelessDevice = device;
+    params->get(sl::param::global::kPreferenceFlags, &m_preferenceFlags);
     return eComputeStatusOk;
 }
 
@@ -559,6 +561,13 @@ ComputeStatus Generic::renderText(CommandList cmdList, int x, int y, const char 
 {
     if (!cmdList || !text) return eComputeStatusInvalidPointer;
     
+    if (m_preferenceFlags & ePreferenceFlagDisableDebugText)
+    {
+        return eComputeStatusOk;
+    }
+
+    std::lock_guard<std::mutex> lock(m_mutexDynamicText);
+
     unsigned int textSize = (unsigned int)strlen(text);
     if (textSize >= SL_TEXT_BUFFER_SIZE) return eComputeStatusInvalidArgument;
 
@@ -566,7 +575,6 @@ ComputeStatus Generic::renderText(CommandList cmdList, int x, int y, const char 
 
     uint32_t index = 0;
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
         static bool firstRun = true;
         if (firstRun)
         {
@@ -823,19 +831,19 @@ bool Generic::savePFM(const std::string &path, const char* srcBuffer, const int 
     return true;
 }
 
-ComputeStatus Generic::setSleepMode(const LatencyConstants& consts)
+ComputeStatus Generic::setSleepMode(const ReflexConstants& consts)
 {
     NV_SET_SLEEP_MODE_PARAMS_V1 params = { 0 };
     params.version = NV_SET_SLEEP_MODE_PARAMS_VER1;
-    params.bLowLatencyMode = consts.mode != eLatencyModeOff;
-    params.bLowLatencyBoost = consts.mode == eLatencyModeLowLatencyWithBoost;
+    params.bLowLatencyMode = consts.mode != eReflexModeOff;
+    params.bLowLatencyBoost = consts.mode == eReflexModeLowLatencyWithBoost;
     params.minimumIntervalUs = consts.frameLimitUs;
     params.bUseMarkersToOptimize = consts.useMarkersToOptimize;
     NVAPI_CHECK(NvAPI_D3D_SetSleepMode((IUnknown*)m_typelessDevice, &params));
     return eComputeStatusOk;
 }
 
-ComputeStatus Generic::getSleepStatus(LatencySettings& settings)
+ComputeStatus Generic::getSleepStatus(ReflexSettings& settings)
 {
 
     NV_GET_SLEEP_STATUS_PARAMS_V1 params = {};
@@ -844,7 +852,7 @@ ComputeStatus Generic::getSleepStatus(LatencySettings& settings)
     return eComputeStatusOk;
 }
 
-ComputeStatus Generic::getLatencyReport(LatencySettings& settings)
+ComputeStatus Generic::getLatencyReport(ReflexSettings& settings)
 {
     NV_LATENCY_RESULT_PARAMS params = {};
     params.version = NV_LATENCY_RESULT_PARAMS_VER1;
@@ -879,7 +887,7 @@ ComputeStatus Generic::sleep()
     return eComputeStatusOk;
 }
 
-ComputeStatus Generic::setLatencyMarker(LatencyMarker marker, uint64_t frameId)
+ComputeStatus Generic::setReflexMarker(ReflexMarker marker, uint64_t frameId)
 {
     NV_LATENCY_MARKER_PARAMS_V1 params = { 0 };
     params.version = NV_LATENCY_MARKER_PARAMS_VER1;

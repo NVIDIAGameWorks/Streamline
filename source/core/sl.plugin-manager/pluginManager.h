@@ -37,6 +37,7 @@ enum class FunctionHookID : uint32_t
     eIDXGIFactory_CreateSwapChain,
     eIDXGIFactory2_CreateSwapChainForHwnd,
     eIDXGIFactory2_CreateSwapChainForCoreWindow,
+    eIDXGISwapChain_Destroyed,
     eIDXGISwapChain_Present,
     eIDXGISwapChain_Present1,
     eIDXGISwapChain_GetBuffer,
