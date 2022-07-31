@@ -28,6 +28,8 @@
 #include <atomic>
 #include <map>
 
+using namespace std::chrono_literals;
+
 namespace sl
 {
 namespace thread
@@ -105,6 +107,141 @@ protected:
     std::vector<T*> threads = {};
     std::map<DWORD, T*> threadMap = {};
     std::atomic<uint32_t> threadCount = {};
+};
+
+class WorkerThread
+{
+    std::mutex m_mtx;
+    std::condition_variable m_cv;
+    std::condition_variable m_cvf;
+    std::atomic<bool> m_quit = false;
+    std::atomic<bool> m_flush = false;
+    std::thread m_thread;
+    std::vector<std::function<void(void)>> m_work{};
+
+    void workerFunction()
+    {
+        while (!m_quit)
+        {
+            std::unique_lock<std::mutex> lock(m_mtx);
+            if (m_work.empty())
+            {
+                // Tell threads waiting on flush that we are done
+                m_cvf.notify_all();
+                // Wait and free the lock
+                m_cv.wait(lock);
+            }
+            else
+            {
+                auto func = m_work.front();
+                lock.unlock();
+                func();
+                lock.lock();
+                m_work.erase(m_work.begin());
+            }
+        }
+    }
+
+public:
+
+    WorkerThread(const wchar_t* name, int priority)
+    { 
+        m_thread = std::thread(&WorkerThread::workerFunction, this);
+        if (!SetThreadPriority(m_thread.native_handle(), priority))
+        {
+            SL_LOG_WARN("Failed to set thread priority to %d for thread '%S'", priority, name);
+        }
+        SetThreadDescription(m_thread.native_handle(), name);
+    }
+
+    ~WorkerThread()
+    {
+        m_quit = true;
+        m_cv.notify_all(); // wake up thread if needed
+        m_thread.join();
+    }
+
+    void flush()
+    {
+        if (!m_flush.exchange(true))
+        {
+            std::unique_lock<std::mutex> lock(m_mtx);
+            if (!m_work.empty())
+            {
+                // Wait and free the lock
+                m_cvf.wait(lock);
+            }
+            m_flush = false;
+        }
+    }
+
+    bool scheduleWork(const std::function<void(void)>& func)
+    {
+        std::unique_lock<std::mutex> lock(m_mtx);
+        m_work.push_back(func);
+        m_cv.notify_one();
+        return true;
+    }
+};
+
+struct scoped_lock
+{
+    scoped_lock(CRITICAL_SECTION& criticalSection)
+    {
+        m_criticalSection = &criticalSection;
+        EnterCriticalSection(m_criticalSection);
+    }
+    ~scoped_lock()
+    {
+        LeaveCriticalSection(m_criticalSection);
+    }
+    CRITICAL_SECTION* m_criticalSection;
+};
+
+struct LockAtomic
+{
+    LockAtomic() {};
+    LockAtomic(std::atomic<uint32_t>* l1, std::atomic<uint32_t>* l2)
+    {
+        m_l1 = l1;
+        m_l2 = l2;
+    }
+
+    void lock()
+    {
+        while (true)
+        {
+            m_l1->store(1, std::memory_order_seq_cst);
+            if (m_l2->load(std::memory_order_seq_cst) != 0)
+            {
+                m_l1->store(0, std::memory_order_seq_cst);
+                continue;
+            }
+            break;
+        }
+    }
+
+    void unlock()
+    {
+        m_l1->store(0, std::memory_order_seq_cst);
+    }
+
+    std::atomic<uint32_t>* m_l1{};
+    std::atomic<uint32_t>* m_l2{};
+};
+
+struct ScopedLockAtomic
+{
+    ScopedLockAtomic(std::atomic<uint32_t>* l1, std::atomic<uint32_t>* l2)
+    {
+        m_mutex = LockAtomic(l1, l2);
+        m_mutex.lock();
+    }
+    ~ScopedLockAtomic()
+    {
+        m_mutex.unlock();
+    }
+    LockAtomic m_mutex;
 };
 
 }

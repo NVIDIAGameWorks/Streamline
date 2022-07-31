@@ -176,7 +176,7 @@ struct AverageValueMeter
     AverageValueMeter(const AverageValueMeter& rhs) { operator=(rhs); }
     inline AverageValueMeter& operator=(const AverageValueMeter& rhs)
     {
-        useWindow = rhs.useWindow.load();
+        windowSize = rhs.windowSize.load();
         n = rhs.n.load();
         val = rhs.val.load();
         sum = rhs.sum.load();
@@ -184,13 +184,13 @@ struct AverageValueMeter
         std = rhs.std.load();
         mean_old = rhs.mean_old.load();
         m_s = rhs.m_s.load();
-        median = rhs.median.load();
+        //median = rhs.median.load();
         window = rhs.window;
         start = rhs.start;
         return *this;
     }
 
-    std::atomic<bool> useWindow = true;
+    std::atomic<int> windowSize = 120;
     std::atomic<float> n = 0;
     std::atomic<float> val = 0;
     std::atomic<float> sum = 0;
@@ -198,7 +198,7 @@ struct AverageValueMeter
     std::atomic<float> std = 0;
     std::atomic<float> mean_old = 0;
     std::atomic<float> m_s = 0;
-    std::atomic<float> median = 0;
+    //std::atomic<float> median = 0;
     std::vector<float> window;
     std::chrono::high_resolution_clock::time_point start = {};
 
@@ -211,7 +211,7 @@ struct AverageValueMeter
         std = 0;
         mean_old = 0;
         m_s = 0;
-        median = 0;
+        //median = 0;
         window.clear();
         start = {};
     }
@@ -240,33 +240,38 @@ struct AverageValueMeter
     void add(float value)
     {
         val = value;
-        if (useWindow)
+        sum = sum + value;
+        if (windowSize)
         {
-            if (window.size() == 120)
+            if ((int)window.size() == windowSize)
             {
+                sum = sum - window.front();
                 window.erase(window.begin());
             }
             window.push_back(value);
-            auto tmp = window;
-            std::sort(tmp.begin(), tmp.end());
-            median = tmp[tmp.size() / 2];
-        }
-        sum = sum + value;
-        if (n == 0)
-        {
-            mean = 0.0f + value;
-            std = -1.0f;
-            mean_old.store(mean);
-            m_s = 0.0;
+            //auto tmp = window;
+            //std::sort(tmp.begin(), tmp.end());
+            //median = tmp[tmp.size() / 2];
+            mean = sum / (float)window.size();
         }
         else
         {
-            mean = mean_old + (value - mean_old) / float(n + 1.0f);
-            m_s = m_s + (value - mean_old) * (value - mean);
-            mean_old.store(mean);
-            std = sqrt(m_s / n);
+            if (n == 0)
+            {
+                mean = 0.0f + value;
+                std = -1.0f;
+                mean_old.store(mean);
+                m_s = 0.0;
+            }
+            else
+            {
+                mean = mean_old + (value - mean_old) / float(n + 1.0f);
+                m_s = m_s + (value - mean_old) * (value - mean);
+                mean_old.store(mean);
+                std = sqrt(m_s / n);
+            }
+            n = n + 1.0f;
         }
-        n = n + 1.0f;
     }
 };
 
@@ -275,7 +280,7 @@ struct scopedCPUTimer
     scopedCPUTimer(AverageValueMeter* meter)
     {
         m_meter = meter;
-        meter->useWindow = false;
+        meter->windowSize = 0;
         start = std::chrono::high_resolution_clock::now();
     }
     ~scopedCPUTimer()
@@ -297,18 +302,28 @@ inline void format(std::ostringstream& stream, const char* str)
 template <class Arg, class... Args>
 inline void format(std::ostringstream& stream, const char* str, Arg&& arg, Args&&... args)
 {
-    const char* p = strstr(str, "{}");
+    auto p = strstr(str, "{}");
     if (p)
     {
         stream.write(str, p - str);
+        auto p1 = strstr(p + 2, "%x");
+        if (p1 == p + 2)
+        {
+            stream << std::hex;
+        }
         stream << arg;
+        if (p1 == p + 2)
+        {
+            stream << std::dec;
+            p += 2;
+        }
         format(stream, p + 2, std::forward<Args>(args)...);
     }
     else
     {
         stream << str;
     }
-}
+ }
 
 /**
  * Formats a string similar to the {fmt} library (https://fmt.dev), but header-only and without requiring an external

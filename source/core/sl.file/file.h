@@ -278,6 +278,21 @@ inline bool createDirectoryRecursively(const wchar_t* path)
     return true;
 }
 
+inline std::wstring getExecutablePath()
+{
+#ifdef SL_LINUX
+    char exePath[PATH_MAX] = {};
+    readlink("/proc/self/exe", exePath, sizeof(exePath));
+    return extra::toWStr(exePath);
+#else
+    WCHAR pathAbsW[MAX_PATH] = {};
+    GetModuleFileNameW(GetModuleHandleA(NULL), pathAbsW, ARRAYSIZE(pathAbsW));
+    std::wstring searchPathW = pathAbsW;
+    searchPathW.erase(searchPathW.rfind('\\'));
+    return searchPathW + L"\\";
+#endif
+}
+
 class scoped_dir_change
 {
 public:

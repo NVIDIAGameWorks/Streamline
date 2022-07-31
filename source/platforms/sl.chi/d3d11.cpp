@@ -1252,7 +1252,7 @@ ComputeStatus D3D11::endPerfSection(CommandList cmdList, const char* key, float 
         data->meter.add(delta);
     }
 
-    avgTimeMS = data->meter.median;
+    avgTimeMS = data->meter.mean;
 #else
     avgTimeMS = 0;
 #endif

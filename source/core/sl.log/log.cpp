@@ -220,7 +220,9 @@ struct Log : ILog
 
         va_list args;
         va_start(args, fmt);
-        message.resize(vsprintf_s(message.data(), message.size(), fmt, args));
+        auto size = vsprintf_s(message.data(), message.size(), fmt, args);
+        if (size <= 0) return;
+        message.resize(size);
         bool crlf = message.back() == '\n';
         if (crlf)
         {

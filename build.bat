@@ -29,6 +29,10 @@ IF NOT "%1"=="" (
         SET cfg=Production
         SHIFT
     )
+    IF "%1"=="-profiling" (
+        SET cfg=Profiling
+        SHIFT
+    )
     SHIFT
     GOTO :loop
 )

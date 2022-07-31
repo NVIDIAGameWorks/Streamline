@@ -318,14 +318,15 @@ enum FlushType
 struct ICommandListContext
 {
     virtual uint32_t getBufferCount() = 0;
-    virtual uint32_t getCurrentBufferIndex() = 0;
+    virtual uint32_t getCurrentCommandListIndex() = 0;
     virtual uint32_t acquireNextBufferIndex(SwapChain chain) = 0;
     virtual bool beginCommandList() = 0;
-    virtual void executeCommandList() = 0;
+    virtual bool executeCommandList() = 0;
     virtual bool flushAll() = 0;
     virtual void waitOnGPUForTheOtherQueue(const ICommandListContext* other) = 0;
     virtual bool waitForCommandList(FlushType ft = FlushType::eDefault) = 0;
-    virtual bool didFrameFinish(uint32_t index) = 0;
+    virtual bool didCommandListFinish(uint32_t index) = 0;
+    virtual bool waitForCommandListToFinish(uint32_t index) = 0;
     virtual CommandList getCmdList() = 0;
     virtual CommandQueue getCmdQueue() = 0;
     virtual CommandAllocator getCmdAllocator() = 0;

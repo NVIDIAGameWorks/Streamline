@@ -1,5 +1,5 @@
 # Streamline (SL) - Version 1.1.0
-Streamline is an open-sourced cross-IHV solution that simplifies integration of the latest NVIDIA and other independent hardware vendors’ super resolution technologies into applications and games. This framework allows developers to easily implement one single integration and enable multiple super-resolution technologies and other graphics effects supported by the hardware vendor.
+Streamline is an open-sourced cross-IHV solution that simplifies integration of the latest NVIDIA and other independent hardware vendorsâ€™ super resolution technologies into applications and games. This framework allows developers to easily implement one single integration and enable multiple super-resolution technologies and other graphics effects supported by the hardware vendor.
 
 This repo contains the SDK for integrating Streamline into your application.
 
@@ -17,6 +17,7 @@ For a high level overview, see the [NVIDIA Developer Streamline page](https://de
 > **IMPORTANT:**
 > Current version of SDK does not support Vulkan properly, this is still work in progress
 #### Windows
+- Win10 20H1 (version 2004 - 10.0.19041) or newer
 - Install latest graphics driver (**if using NVIDIA GPU it MUST be 512.15 or newer**)
 - Install VS Code or VS2017/VS2019 with [SDK 10.0.19041+](https://go.microsoft.com/fwlink/?LinkID=2023014)
 - Install "git".

@@ -249,6 +249,7 @@ struct CommandListContext : public ICommandListContext
     std::atomic<uint32_t> lastIndex = UINT_MAX;
     uint32_t bufferCount = 0;
     std::wstring name;
+    std::mutex mtx;
 
     void init(const char* debugName, ID3D12Device* device, ID3D12CommandQueue* queue, uint32_t count)
     {
@@ -267,6 +268,7 @@ struct CommandListContext : public ICommandListContext
             device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence[i]));
         }
 
+        
         device->CreateCommandList(0, cmdQueueDesc.Type, allocator[0], nullptr, IID_PPV_ARGS(&cmdList));
 
         cmdList->Close(); // Immediately close since it will be reset on first use
@@ -329,25 +331,30 @@ struct CommandListContext : public ICommandListContext
         return cmdListIsRecording;
     }
 
-    void executeCommandList()
+    bool executeCommandList()
     {
+        std::lock_guard<std::mutex> lock(mtx);
         assert(cmdListIsRecording);
         cmdListIsRecording = false;
 
         if (FAILED(cmdList->Close()))
-            return;
+            return false;
 
         ID3D12CommandList* const cmd_lists[] = { cmdList };
         cmdQueue->ExecuteCommandLists(ARRAYSIZE(cmd_lists), cmd_lists);
+        return true;
     }
 
     bool flushAll()
     {
+        std::lock_guard<std::mutex> lock(mtx);
         for (uint32_t i = 0; i < bufferCount; i++)
         {
             const UINT64 syncValue = fenceValue[i] + 1;
             if (FAILED(cmdQueue->Signal(fence[i], syncValue)))
+            {
                 return false;
+            }
             if (SUCCEEDED(fence[i]->SetEventOnCompletion(syncValue, fenceEvent)))
             {
                 WaitForSingleObject(fenceEvent, INFINITE);
@@ -365,7 +372,7 @@ struct CommandListContext : public ICommandListContext
         return bufferCount;
     }
 
-    uint32_t getCurrentBufferIndex()
+    uint32_t getCurrentCommandListIndex()
     {
         return index;
     }
@@ -375,8 +382,25 @@ struct CommandListContext : public ICommandListContext
         return ((IDXGISwapChain4*)chain)->GetCurrentBackBufferIndex();
     }
 
-    bool didFrameFinish(uint32_t index)
+    bool waitForCommandListToFinish(uint32_t index)
     {
+        if (fence[index]->GetCompletedValue() < fenceValue[index])
+        {
+            if (SUCCEEDED(fence[index]->SetEventOnCompletion(fenceValue[index], fenceEvent)))
+            {
+                WaitForSingleObject(fenceEvent, INFINITE);
+            }
+            else
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool didCommandListFinish(uint32_t index)
+    {
+        std::lock_guard<std::mutex> lock(mtx);
         if (index >= bufferCount)
         {
             SL_LOG_ERROR("Invalid index");
@@ -387,10 +411,12 @@ struct CommandListContext : public ICommandListContext
 
     void waitOnGPUForTheOtherQueue(const ICommandListContext* other)
     {
+        std::lock_guard<std::mutex> lock(mtx);
         auto tmp = (const CommandListContext*)other;
-        if (tmp->cmdQueue != cmdQueue && tmp->lastIndex != UINT_MAX)
+        auto index = tmp->lastIndex.load();
+        if (tmp->cmdQueue != cmdQueue && index != UINT_MAX)
         {
-            if (FAILED(cmdQueue->Wait(tmp->fence[tmp->lastIndex], tmp->fenceValue[tmp->lastIndex])))
+            if (FAILED(cmdQueue->Wait(tmp->fence[index], tmp->fenceValue[index])))
             {
                 SL_LOG_ERROR("Failed to wait on the command queue");
             }
@@ -402,8 +428,12 @@ struct CommandListContext : public ICommandListContext
         // Flush command list, to avoid it still referencing resources that may be destroyed after this call
         if (cmdListIsRecording)
         {
-            executeCommandList();
+            if (!executeCommandList())
+            {
+                return false;
+            }
         }
+        std::lock_guard<std::mutex> lock(mtx);
         // Increment fence value to ensure it has not been signaled before
         const UINT64 syncValue = fenceValue[index] + 1;
         if (FAILED(cmdQueue->Signal(fence[index], syncValue)))
@@ -417,6 +447,10 @@ struct CommandListContext : public ICommandListContext
             {
                 WaitForSingleObject(fenceEvent, INFINITE);
             }
+            else
+            {
+                return false;
+            }
         }
         else if (ft == ePrevious && lastIndex != UINT_MAX)
         {
@@ -427,6 +461,10 @@ struct CommandListContext : public ICommandListContext
                 {
                     WaitForSingleObject(fenceEvent, INFINITE);
                 }
+                else
+                {
+                    return false;
+                }
             }
         }
         else
@@ -435,7 +473,13 @@ struct CommandListContext : public ICommandListContext
             if (fence[index]->GetCompletedValue() < fenceValue[index])
             {
                 if (SUCCEEDED(fence[index]->SetEventOnCompletion(fenceValue[index], fenceEvent)))
+                {
                     WaitForSingleObject(fenceEvent, INFINITE);
+                }
+                else
+                {
+                    return false;
+                }
             }
         }
         // Update CPU side fence value now that it is guaranteed to have come through
@@ -449,11 +493,16 @@ struct CommandListContext : public ICommandListContext
 
     bool present(SwapChain chain, uint32_t sync, uint32_t flags, void* params)
     {
+        std::lock_guard<std::mutex> lock(mtx);
         BOOL fullscreen = FALSE;
         ((IDXGISwapChain*)chain)->GetFullscreenState(&fullscreen, nullptr);
         if (fullscreen)
         {
             flags &= ~DXGI_PRESENT_ALLOW_TEARING;
+        }
+        else if (sync == 0)
+        {
+            flags |= DXGI_PRESENT_ALLOW_TEARING; // needed for vsync off in windowed mode
         }
         if (params)
         {
@@ -1807,20 +1856,27 @@ ComputeStatus D3D12::cloneResource(Resource resource, Resource &clone, const cha
     }
     if (m_allocateCallback)
     {
-        ResourceDesc desc = { desc1.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER ? ResourceType::eResourceTypeBuffer : ResourceType::eResourceTypeTex2d, &desc1, (uint32_t)initialState, &heapProp, nullptr };
+        uint32_t state;
+        getNativeResourceState(initialState, state);
+        ResourceDesc desc = { desc1.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER ? ResourceType::eResourceTypeBuffer : ResourceType::eResourceTypeTex2d, &desc1, (uint32_t)state, &heapProp, nullptr };
         auto result = m_allocateCallback(&desc, m_device);
         res = (ID3D12Resource*)result.native;
         
-        // We provide native device so in this case we 
-        // need to call onHostResourceCreated manually
-        chi::ResourceInfo info = {};
-        info.desc.width = (uint32_t)desc1.Width;
-        info.desc.height = (uint32_t)desc1.Height;
-        info.desc.nativeFormat = (uint32_t)desc1.Format;
-        info.desc.mips = (uint32_t)desc1.MipLevels;
-        info.desc.flags = desc.type == ResourceType::eResourceTypeBuffer ? chi::ResourceFlags::eShaderResource : chi::ResourceFlags::eRawOrStructuredBuffer;
-        info.desc.state = initialState;
-        onHostResourceCreated(res, info);
+        if (res)
+        {
+            // We provide native device so in this case we 
+            // need to call onHostResourceCreated manually
+            chi::ResourceInfo info = {};
+            info.desc.width = (uint32_t)desc1.Width;
+            info.desc.height = (uint32_t)desc1.Height;
+            info.desc.nativeFormat = (uint32_t)desc1.Format;
+            info.desc.mips = (uint32_t)desc1.MipLevels;
+            info.desc.flags = desc.type == ResourceType::eResourceTypeBuffer ? chi::ResourceFlags::eShaderResource : chi::ResourceFlags::eRawOrStructuredBuffer;
+            info.desc.state = initialState;
+            onHostResourceCreated(res, info);
+
+            setDebugName(res, friendlyName);
+        }
     }
     else
     {        
@@ -2006,7 +2062,7 @@ ComputeStatus D3D12::endPerfSection(CommandList cmdList, const char* key, float 
     ((ID3D12GraphicsCommandList*)cmdList)->EndQuery(data->queryHeap[data->queryIdx], D3D12_QUERY_TYPE_TIMESTAMP, 1);
     data->queryIdx = (data->queryIdx + 1) % SL_READBACK_QUEUE_SIZE;
 
-    avgTimeMS = data->meter.median;
+    avgTimeMS = data->meter.mean;
 #else
     avgTimeMS = 0;
 #endif

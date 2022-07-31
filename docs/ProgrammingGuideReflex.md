@@ -5,7 +5,7 @@ Streamline - Reflex
 
 >The focus of this guide is on using Streamline to integrate Reflex into an application.  For more information about Reflex itself, please visit the [NVIDIA Developer Reflex Page](https://developer.nvidia.com/performance-rendering-tools/reflex)
 
-Version 1.1.0
+Version 1.1.1
 ------
 
 ### 1.0 INITIALIZE AND SHUTDOWN

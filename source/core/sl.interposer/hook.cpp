@@ -41,28 +41,32 @@ struct Hook : public IHook
     Hook()
     {
 #ifndef SL_PRODUCTION
-        const wchar_t* exePath = file::getCurrentDirectoryPath();
-        std::wstring interposerJSONFile = std::wstring(file::getCurrentDirectoryPath()) + L"/sl.interposer.json";
-        if (file::exists(interposerJSONFile.c_str())) try
+        // Hook interface can be called before slInit so we cannot use plugin locations from sl::Preferences
+        std::vector<std::wstring> jsonLocations = { file::getExecutablePath(), file::getCurrentDirectoryPath() };
+        for (auto& path : jsonLocations)
         {
-            SL_LOG_HINT("Found %S", interposerJSONFile.c_str());
-            auto jsonText = file::read(interposerJSONFile.c_str());
-            if (!jsonText.empty())
+            std::wstring interposerJSONFile = path + L"/sl.interposer.json";
+            if (file::exists(interposerJSONFile.c_str())) try
             {
-                // safety null in case the JSON string is not null-terminated (found by AppVerif)
-                jsonText.push_back(0);
-                std::istringstream stream((const char*)jsonText.data());
-                stream >> m_config;
-                if (m_config.contains("enableInterposer"))
+                SL_LOG_HINT("Found %S", interposerJSONFile.c_str());
+                auto jsonText = file::read(interposerJSONFile.c_str());
+                if (!jsonText.empty())
                 {
-                    m_config.at("enableInterposer").get_to(m_enabled);
-                    SL_LOG_HINT("Interposer enabled - %s", m_enabled ? "yes" : "no");
+                    // safety null in case the JSON string is not null-terminated (found by AppVerif)
+                    jsonText.push_back(0);
+                    std::istringstream stream((const char*)jsonText.data());
+                    stream >> m_config;
+                    if (m_config.contains("enableInterposer"))
+                    {
+                        m_config.at("enableInterposer").get_to(m_enabled);
+                        SL_LOG_HINT("Interposer enabled - %s", m_enabled ? "yes" : "no");
+                    }
                 }
             }
-        }
-        catch (std::exception& e)
-        {
-            SL_LOG_ERROR("Failed to parse JSON file - %s", e.what());
+            catch (std::exception& e)
+            {
+                SL_LOG_ERROR("Failed to parse JSON file - %s", e.what());
+            }
         }
 #endif
     };

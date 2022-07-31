@@ -1,3 +1,27 @@
+Streamline SDK 1.1.1 Release Notes
+
+Notes:
+-- Fixes a crash in logging when the text includes unicode characters (e.g. Chinese characters)
+-- Fixes the slSetFeatureConstants handler in DLSS such that per-frame changes to supported parameters (such as sharpness) are now correctly updated to the NGX level
+-- A bug that caused plugins to have issues determining if other plugins are loaded has been fixed
+-- The warning that indicated application constants were not being set per frame is now logged only once, not each frame
+-- Performance reporting (when enabled) has been improved
+-- When using development (i.e. non-production) SL DLLs, the interposer looks for its sl.interposer.json config file in the following locations:
+    1. The app executable's directory
+    2. The current working directory of the application at the time of slInit
+-- Plugins are now sorted by priority before they are processed.  This ensures that a higher-priority plugin is not unloaded by a conflict with a lower-priority plugin
+
+Minor changes for the 1.1.0 release include:
+-- The error that was logged when SL tried to initialize the plugins when there was no 3D device created has been changed to a warning not error
+-- The build.bat file now supports the -profiling option to build the profiling build config
+-- The warning that was printed on each command list when tracking was disabled is now logged only once
+-- For those writing plugins, the function to get constants per frame now returns a three-value status code: found constants for the exact frame requested, found constants for some frame, found no constants
+-- For those writing plugins, the threading classes have been expanded and improved 
+
+Known Issues:
+-- When using Streamline with recent versions of the Agility SDK, you may receive CREATERESOURCE_STATE_IGNORED warnings.  These warnings can be ignored for now and will be addressed in a future release.
+
+
 Streamline SDK 1.1.0 Release Notes
 
 Notes:
@@ -7,9 +31,6 @@ Minor changes for the 1.1.0 release include:
 -- New BufferType enum, eBufferTypeInvalidDepthMotionHint (optional)
 -- The DLSS settings structure has replaced allocatedBytes with estimatedVRAMUsageInBytes, which clarifies that the value returned (if nonzero) is an estimate of the VRAM the feature will use given the input settings
 -- A new header, sl_helpers.h, includes some app-level utility functions
-
-Known Issues:
--- When using Streamline with recent versions of the Agility SDK, you may receive CREATERESOURCE_STATE_IGNORED warnings.  These warnings can be ignored for now and will be addressed in a future release.
 
 
 Streamline SDK 1.0.4 Release Notes

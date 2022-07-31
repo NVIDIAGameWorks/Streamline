@@ -100,7 +100,7 @@ struct SystemCaps
     uint32_t implementation[2]{};
     uint32_t revision[2]{};
     uint32_t gpuLoad[2]{}; // percentage
-    bool reserved1{}; // Future use
+    bool hwSchedulingEnabled{};
 };
 
 bool createCompute(void* device, uint32_t deviceType);
@@ -133,19 +133,37 @@ struct EventData
     }
 };
 
-using PFunGetConstants = bool(const EventData&, Constants** consts);
+struct GetDataResult
+{
+    enum GetDataResultValue
+    {
+        eNotFound = 0,
+        eFound = 1,
+        eFoundExact = 2
+    } value;
+    
+    GetDataResult(GetDataResultValue v = eNotFound) : value(v) {};
+    inline operator bool() const { return value != eNotFound; }
+};
 
-inline bool getConsts(const EventData& data, sl::Constants** consts)
+inline bool operator!(GetDataResult r)
+{
+    return !((uint8_t)r);
+}
+
+using PFunGetConstants = GetDataResult(const EventData&, Constants** consts);
+
+inline GetDataResult getConsts(const EventData& data, sl::Constants** consts)
 {
     auto parameters = api::getContext()->parameters;
     common::PFunGetConstants* getConsts = {};
     param::getPointerParam(parameters, param::global::kPFunGetConsts, &getConsts);
-    if (!getConsts || !getConsts(data, consts))
+    if (!getConsts)
     {
         SL_LOG_ERROR("Cannot obtain common constants");
-        return false;
+        return GetDataResult();
     }
-    return true;
+    return getConsts(data, consts);
 }
 
 using PFunBeginEvent = void(chi::CommandList cmdList, const common::EventData& data);
@@ -262,24 +280,32 @@ struct ViewportIdFrameData
     }
 
     template<typename T, typename... Args>
-    bool get(const common::EventData& ev, T** a)
+    GetDataResult get(const common::EventData& ev, T** a)
     {
         std::vector<uint8_t>* blob{};
-        if (!get(ev, blob)) return false;
-        size_t offset = 0;
-        unpackData(*blob, offset, a);
-        return *a != nullptr;
+        auto res = get(ev, blob);
+        if (res)
+        {
+            size_t offset = 0;
+            unpackData(*blob, offset, a);
+            if (*a == nullptr) return GetDataResult::eNotFound;
+        }
+        return res;
     }
 
     template<typename T, typename... Args>
-    bool get(const common::EventData& ev, T** a, Args... args)
+    GetDataResult get(const common::EventData& ev, T** a, Args... args)
     {
         std::vector<uint8_t>* blob{};
-        if (!get(ev, blob)) return false;
-        size_t offset = 0;
-        unpackData(*blob, offset, a);
-        unpackData(*blob, offset, args...);
-        return *a != nullptr;
+        auto res = get(ev, blob);
+        if (res)
+        {
+            size_t offset = 0;
+            unpackData(*blob, offset, a);
+            unpackData(*blob, offset, args...);
+            if (*a == nullptr) return GetDataResult::eNotFound;
+        }
+        return res;
     }
 
 private:
@@ -297,7 +323,7 @@ private:
         item.index = (item.index + 1) % dataQueueSize;
     }
 
-    bool get(const common::EventData& ev, std::vector<uint8_t>*& outData)
+    GetDataResult get(const common::EventData& ev, std::vector<uint8_t>*& outData)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         auto* item = &m_list[ev.id];
@@ -308,7 +334,7 @@ private:
             if (item->frames.empty())
             {
                 // Not set for 0, this is definitely not allowed
-                return false;
+                return GetDataResult::eNotFound;
             }
         }
         for (uint32_t i = 0; i < dataQueueSize; i++)
@@ -317,7 +343,7 @@ private:
             if (item->frames[n].frame == ev.frame)
             {
                 outData = &item->frames[n].data;
-                return true;
+                return GetDataResult::eFoundExact;
             }
         }
         outData = &item->frames[item->lastIndex].data;
@@ -325,14 +351,14 @@ private:
         {
             if (mustSetEachFrame)
             {
-                SL_LOG_WARN("Unable to find constants for frame %u - id %u - using last set for frame %u", ev.frame, ev.id, item->frames[item->lastIndex].frame);
+                SL_LOG_WARN_ONCE("Unable to find constants for frame %u - id %u - using last set for frame %u - logging just once but this should be fixed", ev.frame, ev.id, item->frames[item->lastIndex].frame);
             }
             else
             {
                 SL_LOG_WARN_ONCE("Unable to find constants for frame %u - id %u - using last set for frame %u - this is OK since consts are flagged as not needed every frame", ev.frame, ev.id, item->frames[item->lastIndex].frame);
             }
         }
-        return true;
+        return GetDataResult::eFound;
     }
 
     std::string m_name = {};

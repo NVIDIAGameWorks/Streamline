@@ -92,6 +92,10 @@ CommonResource* getCommonTag(BufferType tag, uint32_t id)
 
 bool setCommonTag(const sl::Resource* resource, BufferType tag, uint32_t id, const Extent* ext)
 {
+#ifndef SL_PRODUCTION
+    // Temporary hack to disable resetting tags in development builds
+    if (!resource) return true;
+#endif
     uint64_t uid = ((uint64_t)tag << 32) | (uint64_t)id;
     CommonResource cr = {};
     if (resource)
@@ -161,7 +165,7 @@ bool setCommonConstants(const Constants& consts, uint32_t frame, uint32_t id)
     return true;
 }
 
-bool getCommonConstants(const common::EventData& ev, Constants** consts)
+common::GetDataResult getCommonConstants(const common::EventData& ev, Constants** consts)
 {
     return ctx.constants.get(ev, consts);
 }
@@ -330,7 +334,7 @@ bool slOnPluginStartup(const char* jsonConfig, void* device, param::IParameters*
     ctx.platform = (chi::PlatformType)deviceType;
     common::createCompute(device, ctx.platform);
 
-   
+
     // Check if any of the plugins requested NGX
     ctx.needNGX = false;
     parameters->get(param::global::kNeedNGX, &ctx.needNGX);
@@ -392,6 +396,7 @@ bool slOnPluginStartup(const char* jsonConfig, void* device, param::IParameters*
         }
 
         NVSDK_NGX_Result ngxStatus{};
+        
         if (deviceType == chi::ePlatformTypeD3D11)
         {
             ngxStatus = NVSDK_NGX_D3D11_Init(appId, documentsDataPath, (ID3D11Device*)device, &info, NVSDK_NGX_Version_API);
@@ -422,19 +427,19 @@ bool slOnPluginStartup(const char* jsonConfig, void* device, param::IParameters*
 
         if (ngxStatus == NVSDK_NGX_Result_Success)
         {
-        SL_LOG_HINT("NGX loaded - app id %u - logging to %S", appId, documentsDataPath);
-        
-        ctx.needNGX = true;
+            SL_LOG_HINT("NGX loaded - app id %u - logging to %S", appId, documentsDataPath);
 
-        // Register callbacks so we can manage memory for NGX
-        ctx.ngxContext.params->Set(NVSDK_NGX_Parameter_ResourceAllocCallback, ngx::allocateNGXResourceCallback);
-        ctx.ngxContext.params->Set(NVSDK_NGX_Parameter_ResourceReleaseCallback, ngx::releaseNGXResourceCallback);
+            ctx.needNGX = true;
 
-        // Provide NGX context to other plugins
-        ctx.ngxContext.createFeature = ngx::createNGXFeature;
-        ctx.ngxContext.releaseFeature = ngx::releaseNGXFeature;
-        ctx.ngxContext.evaluateFeature = ngx::evaluateNGXFeature;
-        parameters->set(param::global::kNGXContext, &ctx.ngxContext);
+            // Register callbacks so we can manage memory for NGX
+            ctx.ngxContext.params->Set(NVSDK_NGX_Parameter_ResourceAllocCallback, ngx::allocateNGXResourceCallback);
+            ctx.ngxContext.params->Set(NVSDK_NGX_Parameter_ResourceReleaseCallback, ngx::releaseNGXResourceCallback);
+
+            // Provide NGX context to other plugins
+            ctx.ngxContext.createFeature = ngx::createNGXFeature;
+            ctx.ngxContext.releaseFeature = ngx::releaseNGXFeature;
+            ctx.ngxContext.evaluateFeature = ngx::evaluateNGXFeature;
+            parameters->set(param::global::kNGXContext, &ctx.ngxContext);
         }
         else
         {

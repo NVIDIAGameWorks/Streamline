@@ -184,7 +184,6 @@ public:
 
 private:
 
-    std::wstring getExecutablePath() const;
     bool mapPlugins(const std::wstring& path, std::vector<std::wstring>& files);
     bool findPlugins(const std::wstring& path, std::vector<std::wstring>& files);
     
@@ -340,21 +339,6 @@ bool PluginManager::setFeatureEnabled(Feature feature, bool value)
         }
     }
     return true;
-}
-
-std::wstring PluginManager::getExecutablePath() const
-{
-#ifdef SL_LINUX
-    char exePath[PATH_MAX] = {};
-    readlink("/proc/self/exe", exePath, sizeof(exePath));
-    return extra::toWStr(exePath);
-#else
-    WCHAR pathAbsW[MAX_PATH] = {};
-    GetModuleFileNameW(GetModuleHandleA(NULL), pathAbsW, ARRAYSIZE(pathAbsW));
-    std::wstring searchPathW = pathAbsW;
-    searchPathW.erase(searchPathW.rfind('\\'));
-    return searchPathW + L"\\";
-#endif
 }
 
 bool PluginManager::findPlugins(const std::wstring& directory, std::vector<std::wstring>& files)
@@ -565,7 +549,7 @@ bool PluginManager::loadPlugins()
     m_triedToLoadPlugins = true;
 
     // Now let's enumerate SL plugins!
-    std::wstring exePath = getExecutablePath();
+    std::wstring exePath = file::getExecutablePath();
     m_pluginPath = exePath;
     // Two options - look next to the executable or in the specified paths
     std::vector<std::wstring> pluginList;
@@ -598,6 +582,13 @@ bool PluginManager::loadPlugins()
         return false;
     }
 
+    // Sort by priority so we can execute hooks in the specific order and check dependencies and other requirements in the correct order
+    std::sort(m_plugins.begin(), m_plugins.end(),
+        [](const Plugin* a, const Plugin* b) -> bool
+        {
+            return a->priority < b->priority;
+        });
+
     // Before we can proceed we need to check for plugin dependencies and other special requirements
     {
         std::vector<Plugin*> pluginsToUnload;
@@ -605,6 +596,20 @@ bool PluginManager::loadPlugins()
         {
             // This is our current plugin
             auto plugin = *it;
+
+            // Check if it was scheduled to be unloaded by a higher-priority plugin
+            for (auto p : pluginsToUnload)
+            {
+                if (plugin == p)
+                {
+                    plugin = nullptr;
+                    break;
+                }
+            }
+
+            // Nothing to do if plugin if about to be unloaded anyway
+            if (!plugin) continue;
+
             // First we check if current plugin requires any other plugin(s)
             for (auto& required : plugin->requiredPlugins)
             {
@@ -662,13 +667,6 @@ bool PluginManager::loadPlugins()
         }
     }
 
-    // Sort by priority so we can execute hooks in the specific order
-    std::sort(m_plugins.begin(), m_plugins.end(),
-        [](const Plugin* a, const Plugin* b) -> bool
-        {
-            return a->priority < b->priority;
-        });
-
     if (m_plugins.empty())
     {
         SL_LOG_ERROR("Failed to find any plugins!");
@@ -676,10 +674,9 @@ bool PluginManager::loadPlugins()
     else
     {
         SL_LOG_INFO("Plugin execution order based on priority:");
-        uint32_t i = 0;
         for (auto plugin : m_plugins)
         {
-            SL_LOG_INFO("%u: %s", i++, plugin->name.c_str());
+            SL_LOG_INFO("P%u - %s", plugin->priority, plugin->name.c_str());
             m_featurePluginsMap[plugin->id] = plugin;
         }
     }
@@ -786,7 +783,7 @@ bool PluginManager::initializePlugins()
     {
         if (!m_d3d12Device && !m_vkDevice && !m_d3d11Device)
         {
-            SL_LOG_ERROR_ONCE("Trying to initialize plugins but DX/VK device has not been created!");
+            SL_LOG_WARN_ONCE("D3D or VK API hook is activated without device being created - ignoring");
             return false;
         }
 
@@ -873,6 +870,9 @@ bool PluginManager::initializePlugins()
             {
                 // Plugin initialized correctly, let's map callbacks for the core API
                 mapPluginCallbacks(plugin);
+                // Let other plugins know that this plugin is loaded and supported and on which adapters
+                auto supportedAdaptersParam = "sl.param." + plugin->paramNamespace + ".supportedAdapters";
+                parameters->set(supportedAdaptersParam.c_str(), plugin->context.supportedAdapters);
             }
             processPluginHooks(plugin);
         }

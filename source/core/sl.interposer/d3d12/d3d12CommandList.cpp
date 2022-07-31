@@ -42,7 +42,7 @@ D3D12GraphicsCommandList::D3D12GraphicsCommandList(D3D12Device* device, ID3D12Gr
     m_trackState = (sl::plugin_manager::getInterface()->getPreferences().flags & PreferenceFlags::ePreferenceFlagDisableCLStateTracking) == 0;
     if (!m_trackState)
     {
-        SL_LOG_WARN("State tracking for command list 0x%llx has been DISABLED, please ensure to restore CL state correctly on the host side.", this);
+        SL_LOG_WARN_ONCE("State tracking for command list 0x%llx has been DISABLED, please ensure to restore CL state correctly on the host side.", this);
     }
 }
 

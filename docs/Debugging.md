@@ -7,7 +7,9 @@
 
 ### Location of the JSON
 
-Note that the `sl.interposer.json` file is loaded from the current working directory of the app at the point at which the app calls `slInit`.  This may not match the app's executable directory.
+Note that the `sl.interposer.json` file is loaded by finding the first copy in the following ordered list of paths:
+1. The directory containing the application's executable.
+2. The application's current working directory at the point at which the app calls `slInit`.
 
 ### "Commenting-out" Lines
 Note that the example configuration JSON files (located in `./scripts/`) include some tags that are disabled, but visible as a form of "comment"; this is done by prefixing the correct/expected tag name with underscore (_):
