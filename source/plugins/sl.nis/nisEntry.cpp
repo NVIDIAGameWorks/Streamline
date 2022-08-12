@@ -44,17 +44,24 @@
 using json = nlohmann::json;
 namespace sl
 {
+struct NISViewport
+{
+    uint32_t id = {};
+    NISConstants consts = {};
+};
 
 struct NIS
 {
     common::PFunRegisterEvaluateCallbacks* registerEvaluateCallbacks{};
+    common::ViewportIdFrameData<4, false> constsPerViewport = { "nis" };
+    std::unordered_map<uint32_t, NISViewport> viewports;
+    NISViewport* currentViewport = nullptr;
 
     chi::Resource scalerCoef = {};
     chi::Resource usmCoef = {};
     chi::Resource uploadScalerCoef = {};
     chi::Resource uploadUsmCoef = {};
 
-    NISConstants consts;
     NISConfig config;
 
     chi::ICompute* compute = {};
@@ -92,14 +99,10 @@ struct NIS
 
 static NIS nis = {};
 
-void slSetConstants(void* data, uint32_t frameIndex, uint32_t id)
+bool slSetConstants(void* data, uint32_t frameIndex, uint32_t id)
 {
-    memcpy((void*)&nis.consts, data, sizeof(nis.consts));
-}
-
-void getNISConstants(const common::EventData& ev, NISConstants& consts)
-{
-    memcpy(&consts, (void*)&nis.consts, sizeof(consts));
+    nis.constsPerViewport.set(frameIndex, id, static_cast<NISConstants*>(data));
+    return true;
 }
 
 bool initializeNIS(chi::CommandList cmdList, const common::EventData& data)
@@ -154,18 +157,42 @@ bool initializeNIS(chi::CommandList cmdList, const common::EventData& data)
 
 void nisBeginEvaluation(chi::CommandList cmdList, const common::EventData& data)
 {
-    getNISConstants(data, nis.consts);
+	auto iter = nis.viewports.find(data.id);
+	if (iter == nis.viewports.end())
+	{
+		nis.viewports[data.id] = {};
+	}
+    auto& viewport = nis.viewports[data.id];
+    viewport.id = data.id;
+
+	NISConstants* consts{};
+	if (!nis.constsPerViewport.get(data, &consts))
+	{
+		return;
+	}
+
+    viewport.consts = *consts;
+    nis.currentViewport = &viewport;
+
     initializeNIS(cmdList, data);
 }
 
 void nisEndEvaluation(chi::CommandList cmdList)
 {
-    if (nis.consts.mode != NISMode::eNISModeScaler && nis.consts.mode != NISMode::eNISModeSharpen) {
-        SL_LOG_ERROR("Invalid NIS mode %d", nis.consts.mode);
+    if (!nis.currentViewport)
+    {
         return;
     }
-    if (nis.consts.hdrMode != NISHDR::eNISHDRNone && nis.consts.hdrMode != NISHDR::eNISHDRLinear && nis.consts.hdrMode != NISHDR::eNISHDRPQ) {
-        SL_LOG_ERROR("Invalid NIS HDR mode %d", nis.consts.hdrMode);
+
+    const uint32_t id = nis.currentViewport->id;
+    const NISConstants& consts = nis.currentViewport->consts;
+
+    if (consts.mode != NISMode::eNISModeScaler && consts.mode != NISMode::eNISModeSharpen) {
+        SL_LOG_ERROR("Invalid NIS mode %d", consts.mode);
+        return;
+    }
+    if (consts.hdrMode != NISHDR::eNISHDRNone && consts.hdrMode != NISHDR::eNISHDRLinear && consts.hdrMode != NISHDR::eNISHDRPQ) {
+        SL_LOG_ERROR("Invalid NIS HDR mode %d", consts.hdrMode);
         return;
     }
 
@@ -175,13 +202,13 @@ void nisEndEvaluation(chi::CommandList cmdList)
     sl::Extent outExtent{};
     uint32_t colorInNativeState{}, colorOutNativeState{};
 
-    if (!getTaggedResource(eBufferTypeScalingInputColor, colorIn, 0, &inExtent, &colorInNativeState))
+    if (!getTaggedResource(eBufferTypeScalingInputColor, colorIn, id, &inExtent, &colorInNativeState))
     {
         SL_LOG_ERROR("Failed to find resource '%s', please make sure to tag all NIS resources", colorIn);
         return;
     }
 
-    if (!getTaggedResource(eBufferTypeScalingOutputColor, colorOut, 0, &outExtent, &colorOutNativeState))
+    if (!getTaggedResource(eBufferTypeScalingOutputColor, colorOut, id, &outExtent, &colorOutNativeState))
     {
         SL_LOG_ERROR("Failed to find resource '%s', please make sure to tag all NIS resources", colorOut);
         return;
@@ -202,17 +229,17 @@ void nisEndEvaluation(chi::CommandList cmdList)
         outExtent.height = outDesc.height;
     }
 
-    float sharpness = nis.consts.sharpness;
-    NISHDRMode hdrMode = nis.consts.hdrMode == NISHDR::eNISHDRLinear ? NISHDRMode::Linear :
-        nis.consts.hdrMode == NISHDR::eNISHDRPQ ? NISHDRMode::PQ : NISHDRMode::None;
+    float sharpness = consts.sharpness;
+    NISHDRMode hdrMode = consts.hdrMode == NISHDR::eNISHDRLinear ? NISHDRMode::Linear :
+        consts.hdrMode == NISHDR::eNISHDRPQ ? NISHDRMode::PQ : NISHDRMode::None;
 
     uint32_t viewPortsSupport = inExtent.width != inDesc.width || inExtent.height != inDesc.height ||
         outExtent.width != outDesc.width || outExtent.height != outDesc.height;
 
-    chi::Kernel kernel = nis.getKernel(nis.consts.mode, viewPortsSupport, nis.consts.hdrMode);
+    chi::Kernel kernel = nis.getKernel(consts.mode, viewPortsSupport, consts.hdrMode);
     if (!kernel)
     {
-        SL_LOG_ERROR("Failed to find NIS shader permutation mode: %d viewportSupport: %d, hdrMode: %d", nis.consts.mode, viewPortsSupport, nis.consts.hdrMode);
+        SL_LOG_ERROR("Failed to find NIS shader permutation mode: %d viewportSupport: %d, hdrMode: %d", consts.mode, viewPortsSupport, consts.hdrMode);
         return;
     }
 
@@ -228,7 +255,7 @@ void nisEndEvaluation(chi::CommandList cmdList)
         CHI_VALIDATE(nis.compute->getResourceState(colorOut, colorOutState));
     }
 
-    if (nis.consts.mode == NISMode::eNISModeScaler)
+    if (consts.mode == NISMode::eNISModeScaler)
     {
         if (!NVScalerUpdateConfig(nis.config, sharpness,
             inExtent.left, inExtent.top, inExtent.width, inExtent.height, inDesc.width, inDesc.height,
@@ -265,7 +292,7 @@ void nisEndEvaluation(chi::CommandList cmdList)
     CHI_VALIDATE(nis.compute->bindSampler(1, 0, chi::eSamplerLinearClamp));
     CHI_VALIDATE(nis.compute->bindTexture(2, 0, colorIn));
     CHI_VALIDATE(nis.compute->bindRWTexture(3, 0, colorOut));
-    if (nis.consts.mode == NISMode::eNISModeScaler)
+    if (consts.mode == NISMode::eNISModeScaler)
     {
         CHI_VALIDATE(nis.compute->bindTexture(4, 1, nis.scalerCoef));
         CHI_VALIDATE(nis.compute->bindTexture(5, 2, nis.usmCoef));
@@ -289,6 +316,9 @@ void nisEndEvaluation(chi::CommandList cmdList)
     uint32_t frame = 0;
     CHI_VALIDATE(nis.compute->getFinishedFrameIndex(frame));
     parameters->set(sl::param::nis::kCurrentFrame, frame + 1);
+
+    // reset viewport
+    nis.currentViewport = nullptr;
 }
 
 //! -------------------------------------------------------------------------------------------------
