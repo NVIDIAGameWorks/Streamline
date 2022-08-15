@@ -3,6 +3,10 @@
 > This document applies to non-production, development builds only.  JSON configuration is disabled in production builds.
 > Additionally, you will need to turn off any checks for signed libraries when loading Streamline libraries in order to be able to load the non-production libraries.
 
+## Symbols
+
+Symbols matching the production DLLs in `bin/x64` root are provided in `symbols/`, and can be used for basic debugging with production, signed, DLLs.
+
 ## JSON Config File(s)
 
 ### Location of the JSON
