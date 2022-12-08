@@ -474,7 +474,6 @@ void dlssEndEvent(chi::CommandList pCmdList)
                     s_dlss.ngxContext->params->Set(NVSDK_NGX_Parameter_Sharpness, s_dlss.viewport->consts.sharpness);
                     s_dlss.ngxContext->params->Set(NVSDK_NGX_Parameter_DLSS_Pre_Exposure, s_dlss.viewport->consts.preExposure);
                     s_dlss.ngxContext->params->Set(NVSDK_NGX_Parameter_DLSS_Exposure_Scale, s_dlss.viewport->consts.exposureScale);
-                    s_dlss.ngxContext->params->Set(NVSDK_NGX_Parameter_Sharpness, s_dlss.viewport->consts.sharpness);
 
                     {
                         s_dlss.ngxContext->params->Set(NVSDK_NGX_Parameter_Color, colorIn);
