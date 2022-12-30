@@ -1,3 +1,9 @@
+Streamline SDK 1.1.1 Binary Update Release Notes
+
+Notes:
+-- A binary update has been released; the source is unchanged, but the SDK now includes symbols in the symbols/ directory along with signed, production DLLs that match these symbols in bin/x64 root.
+
+
 Streamline SDK 1.1.1 Release Notes
 
 Notes:
@@ -13,7 +19,6 @@ Notes:
 
 Minor changes for the 1.1.0 release include:
 -- The error that was logged when SL tried to initialize the plugins when there was no 3D device created has been changed to a warning not error
--- The build.bat file now supports the -profiling option to build the profiling build config
 -- The warning that was printed on each command list when tracking was disabled is now logged only once
 -- For those writing plugins, the function to get constants per frame now returns a three-value status code: found constants for the exact frame requested, found constants for some frame, found no constants
 -- For those writing plugins, the threading classes have been expanded and improved 
