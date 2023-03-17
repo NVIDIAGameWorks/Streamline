@@ -1,12 +1,12 @@
-﻿
 
 Streamline - NRD
 =======================
 
 >The focus of this guide is on using Streamline to integrate NVIDIA Real-Time Denoisers (NRD) into an application.  For more information about NRD itself, please visit the [NVIDIA Developer NRD Page](https://developer.nvidia.com/rtx/ray-tracing/rt-denoisers)
 
-Version 1.1.1
-------
+Version 2.0
+=======
+
 ### 1.0 INITIALIZE AND SHUTDOWN
 
 Call `slInit` as early as possible (before any d3d11/d3d12/vk APIs are invoked)
@@ -45,15 +45,37 @@ if(!slShutdown())
 As soon as SL is initialized, you can check if NRD is available for the specific adapter you want to use:
 
 ```cpp
-uint32_t adapterBitMask = 0;
-if(!slIsFeatureSupported(sl::Feature::eFeatureNRD, &adapterBitMask))
+Microsoft::WRL::ComPtr<IDXGIFactory> factory;
+if (SUCCEEDED(CreateDXGIFactory(__uuidof(IDXGIFactory), (void**)&factory)))
 {
-    // NRD is not supported on the system, fallback to the default upscaling method
-}
-// Now check your adapter
-if((adapterBitMask & (1 << myAdapterIndex)) != 0)
-{
-    // It is ok to create a device on this adapter since feature we need is supported
+    Microsoft::WRL::ComPtr<IDXGIAdapter> adapter{};
+    uint32_t i = 0;
+    while (factory->EnumAdapters(i, &adapter) != DXGI_ERROR_NOT_FOUND)
+    {
+        DXGI_ADAPTER_DESC desc{};
+        if (SUCCEEDED(adapter->GetDesc(&desc)))
+        {
+            sl::AdapterInfo adapterInfo{};
+            adapterInfo.deviceLUID = (uint8_t*)&desc.AdapterLuid;
+            adapterInfo.deviceLUIDSizeInBytes = sizeof(LUID);
+            if (SL_FAILED(result, slIsFeatureSupported(sl::kFeatureNRD, adapterInfo)))
+            {
+                // Requested feature is not supported on the system, fallback to the default method
+                switch (result)
+                {
+                    case sl::Result::eErrorOSOutOfDate:         // inform user to update OS
+                    case sl::Result::eErrorDriverOutOfDate:     // inform user to update driver
+                    case sl::Result::eErrorNoSupportedAdapter:  // cannot use this adapter (older or non-NVDA GPU etc)
+                    // and so on ...
+                };
+            }
+            else
+            {
+                // Feature is supported on this adapter!
+            }
+        }
+        i++;
+    }
 }
 ```
 
@@ -61,10 +83,10 @@ if((adapterBitMask & (1 << myAdapterIndex)) != 0)
 
 NRD expects inputs in a specific format, so make sure to run a pre-processing pass (simple compute shader) to prepare them:
 
-* `eBufferTypeNormalRoughness`       (RGB normal, A roughness)
-* `eBufferTypeSpecularHitNoisy`      (RGB color,  A reflection ray hitT)
-* `eBufferTypeDiffuseHitNoisy`       (RGB color,  A primary ray hitT)
-* `eBufferTypeAmbientOcclusionNoisy` (R ambient)
+* `eNormalRoughness`       (RGB normal, A roughness)
+* `eSpecularHitNoisy`      (RGB color,  A reflection ray hitT)
+* `eDiffuseHitNoisy`       (RGB color,  A primary ray hitT)
+* `eAmbientOcclusionNoisy` (R ambient)
 
 ### 4.0 PROVIDE NRD CONSTANTS
 
@@ -109,7 +131,7 @@ reblurSettings = {};
 
 // Note that we use method mask as a unique id
 // This allows us to evaluate different NRD denoisers in the same or different viewports but at the different stages with the same frame
-if(!slSetFeatureConstants(sl::eFeatureNRD, &nrdConsts, myFrameIndex, nrdConsts.methodMask))
+if(!slSetFeatureConstants(sl::kFeatureNRD, &nrdConsts, myFrameIndex, nrdConsts.methodMask))
 {
     // Handle error here, check the logs
 }
@@ -118,7 +140,7 @@ if(!slSetFeatureConstants(sl::eFeatureNRD, &nrdConsts, myFrameIndex, nrdConsts.m
 You may need to set additional values in the `NRDConstants` structure, and the NRD method specific constants structures contained within it, depending on the NRD method in use.
 
 > **NOTE:**
-> To disable NRD, set `sl::NRDConstants.methodMask` to `sl::NRDMode::eNRDMethodOff` or simply stop calling `slEvaluateFeature`
+> To disable NRD, set `sl::NRDConstants.methodMask` to `sl::NRDMode::eNRDMethodOff` or simply stop calling `slEvaluate`
 
 ### 5.0 PROVIDE COMMON CONSTANTS
 
@@ -131,8 +153,8 @@ Various per frame camera related constants are required by all Streamline featur
 ```cpp
 sl::Constants consts = {};
 // Set motion vector scaling based on your setup
-consts.mvecScale = {1,1}; // Values in eBufferTypeMVec are in [-1,1] range
-consts.mvecScale = {1.0f / renderWidth,1.0f / renderHeight}; // Values in eBufferTypeMVec are in pixel space
+consts.mvecScale = {1,1}; // Values in eMotionVectors are in [-1,1] range
+consts.mvecScale = {1.0f / renderWidth,1.0f / renderHeight}; // Values in eMotionVectors are in pixel space
 consts.mvecScale = myCustomScaling; // Custom scaling to ensure values end up in [-1,1] range
 // Set all other constants here
 if(!setConstants(consts, myFrameIndex)) // constants are changing per frame so frame index is required
@@ -151,20 +173,20 @@ NRD requires depth, motion vectors, noisy inputs and outputs depending on which 
 // These are required for any denoising method
 
 // Prepare resources (assuming d3d11/d3d12 integration so leaving Vulkan view and device memory as null pointers)
-sl::Resource depth = {sl::ResourceType::eResourceTypeTex2d, myDepthBuffer, nullptr, nullptr, nullptr};
-sl::Resource mvec = {sl::ResourceType::eResourceTypeTex2d, myMotionVectorsBuffer, nullptr, nullptr, nullptr};
+sl::Resource depth = {sl::ResourceType::Tex2d, myDepthBuffer, nullptr, nullptr, nullptr};
+sl::Resource mvec = {sl::ResourceType::Tex2d, myMotionVectorsBuffer, nullptr, nullptr, nullptr};
 // Note that you can also pass unique id (if using multiple viewports) and the extent of the resource if dynamic resolution is active
-setTag(&depth, sl::BufferType::eBufferTypeDepth);
-setTag(&mvec, sl::BufferType::eBufferTypeMVec);
+setTag(&depth, sl::kBufferTypeDepth);
+setTag(&mvec, sl::kBufferTypeMotionVectors);
 
 // Depending on what type of denoising is done tag the remaining resources.
 // Note that we are passing the method mask to map each resource to the appropriate NRD instance
-sl::Resource nroughness = {sl::ResourceType::eResourceTypeTex2d, myNormalRoughness, nullptr, nullptr, nullptr};
-sl::Resource specularIn = {sl::ResourceType::eResourceTypeTex2d, mySpecularInput, nullptr, nullptr, nullptr};
-sl::Resource specularOut = {sl::ResourceType::eResourceTypeTex2d, mySpecularOutput, nullptr, nullptr, nullptr};
-setTag(&nroughness, sl::BufferType::eBufferTypeNormalRoughness, nrdConsts.methodMask);
-setTag(&specularIn, sl::BufferType::eBufferTypeSpecularHitNoisy, nrdConsts.methodMask);
-setTag(&specularOut, sl::BufferType::eBufferTypeSpecularHitDenoised, nrdConsts.methodMask);
+sl::Resource nroughness = {sl::ResourceType::Tex2d, myNormalRoughness, nullptr, nullptr, nullptr};
+sl::Resource specularIn = {sl::ResourceType::Tex2d, mySpecularInput, nullptr, nullptr, nullptr};
+sl::Resource specularOut = {sl::ResourceType::Tex2d, mySpecularOutput, nullptr, nullptr, nullptr};
+setTag(&nroughness, sl::kBufferTypeNormalRoughness, nrdConsts.methodMask);
+setTag(&specularIn, sl::kBufferTypeSpecularHitNoisy, nrdConsts.methodMask);
+setTag(&specularOut, sl::kBufferTypeSpecularHitDenoised, nrdConsts.methodMask);
 // and so on ...
 ```
 > **NOTE:**
@@ -181,8 +203,8 @@ Various per frame camera related constants are required by all Streamline featur
 ```cpp
 sl::Constants consts = {};
 // Set motion vector scaling based on your setup
-consts.mvecScale = {1,1}; // Values in eBufferTypeMVec are in [-1,1] range
-consts.mvecScale = {1.0f / renderWidth,1.0f / renderHeight}; // Values in eBufferTypeMVec are in pixel space
+consts.mvecScale = {1,1}; // Values in eMotionVectors are in [-1,1] range
+consts.mvecScale = {1.0f / renderWidth,1.0f / renderHeight}; // Values in eMotionVectors are in pixel space
 consts.mvecScale = myCustomScaling; // Custom scaling to ensure values end up in [-1,1] range
 sl::Constants consts = {};
 // Set all constants here
@@ -195,20 +217,25 @@ For more details please see [common constants](ProgrammingGuide.md#251-common-co
 
 ### 8.0 ADD NRD TO THE RENDERING PIPELINE
 
-On your rendering thread, call `slEvaluateFeature` at the appropriate location where denoising should happen. Please note that `myFrameIndex` and `myId` used in `slEvaluateFeature` must match the one used when settings constants.
+On your rendering thread, call `slEvaluate` at the appropriate location where denoising should happen. Please note that `myFrameIndex` and `myId` used in `slEvaluate` must match the one used when settings constants.
 
 ```cpp
 // Make sure NRD is available and user selected this option in the UI
-bool useNRD = slIsFeatureSupported(sl::eFeatureNRD) && userSelectedNRDInUI;
+bool useNRD = slIsFeatureSupported(sl::kFeatureNRD) && userSelectedNRDInUI;
 if(useNRD) 
 {
     // Inform SL that NRD should be injected at this point.
     // Note that we are passing the specific id which needs to match the id used when setting constants.
     // This can be method mask or something different (like for example viewport id | method mask etc.)
     auto myId = nrdConsts.methodMask;
-    if(!slEvaluateFeature(myCmdList, sl::Feature::eFeatureNRD, myFrameIndex, myId)) 
+    if(!slEvaluate(myCmdList, sl::kFeatureNRD, myFrameIndex, myId)) 
     {
         // Handle error
+    }
+    else
+    {
+        // IMPORTANT: Host is responsible for restoring state on the command list used
+        restoreState(myCmdList);
     }
 }
 else
@@ -216,3 +243,6 @@ else
     // Default denoising method
 }
 ```
+
+> **IMPORTANT:**
+> Plase note that **host is responsible for restoring the command buffer(list) state** after calling `slEvaluate`. For more details on which states are affected please see [restore pipeline section](./ProgrammingGuideManualHooking.md#80-restoring-command-listbuffer-state)

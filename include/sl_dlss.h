@@ -25,21 +25,37 @@
 namespace sl
 {
 
-enum DLSSMode
+//! Deep Learning Super Sampling
+constexpr Feature kFeatureDLSS = 0;
+
+enum class DLSSMode : uint32_t
 {
-    eDLSSModeOff,
-    eDLSSModeMaxPerformance,
-    eDLSSModeBalanced,
-    eDLSSModeMaxQuality,
-    eDLSSModeUltraPerformance,
-    eDLSSModeUltraQuality,
-    eDLSSModeCount
+    eOff,
+    eMaxPerformance,
+    eBalanced,
+    eMaxQuality,
+    eUltraPerformance,
+    eUltraQuality,
+    eCount
 };
 
-struct DLSSConstants
+enum class DLSSPreset : uint32_t
 {
+    //! Default behavior, may or may not change after an OTA
+    eDefault,
+    //! Fixed DL models
+    ePresetA,
+    ePresetB,
+    ePresetC,
+    ePresetD,
+    ePresetE,
+    ePresetF,
+};
+
+// {6AC826E4-4C61-4101-A92D-638D421057B8}
+SL_STRUCT(DLSSOptions, StructType({ 0x6ac826e4, 0x4c61, 0x4101, { 0xa9, 0x2d, 0x63, 0x8d, 0x42, 0x10, 0x57, 0xb8 } }), kStructVersion1)
     //! Specifies which mode should be used
-    DLSSMode mode = eDLSSModeOff;
+    DLSSMode mode = DLSSMode::eOff;
     //! Specifies output (final) target width
     uint32_t outputWidth = INVALID_UINT;
     //! Specifies output (final) target height
@@ -56,25 +72,24 @@ struct DLSSConstants
     Boolean indicatorInvertAxisX = Boolean::eFalse;
     //! Specifies if indicator on screen should invert axis
     Boolean indicatorInvertAxisY = Boolean::eFalse;
-    //! Reserved for future expansion, must be set to null
-    void* ext{};
+    //! Presets
+    DLSSPreset dlaaPreset = DLSSPreset::eDefault;
+    DLSSPreset qualityPreset = DLSSPreset::eDefault;
+    DLSSPreset balancedPreset = DLSSPreset::eDefault;
+    DLSSPreset performancePreset = DLSSPreset::eDefault;
+    DLSSPreset ultraPerformancePreset = DLSSPreset::eDefault;
 };
 
-//! Returned by DLSS plugin, please see 'getFeatureSettings' API
-struct DLSSSettings
-{
+//! Returned by DLSS plugin
+//! 
+//! {EF1D0957-FD58-4DF7-B504-8B69D8AA6B76}
+SL_STRUCT(DLSSOptimalSettings, StructType({ 0xef1d0957, 0xfd58, 0x4df7, { 0xb5, 0x4, 0x8b, 0x69, 0xd8, 0xaa, 0x6b, 0x76 } }), kStructVersion1)
     //! Specifies render area width
     uint32_t optimalRenderWidth{};
     //! Specifies render area height
     uint32_t optimalRenderHeight{};
     //! Specifies the optimal sharpness value
     float optimalSharpness{};
-    //! Points to DLSSSettings1 or null if not needed
-    void* ext{};
-};
-
-struct DLSSSettings1
-{   
     //! Specifies minimal render area width
     uint32_t renderWidthMin{};
     //! Specifies minimal render area height
@@ -83,9 +98,67 @@ struct DLSSSettings1
     uint32_t renderWidthMax{};
     //! Specifies maximal render area height
     uint32_t renderHeightMax{};
+};
+
+//! Returned by DLSS plugin
+//! 
+//! {9366B056-8C01-463C-BB91-E68782636CE9}
+SL_STRUCT(DLSSState, StructType({ 0x9366b056, 0x8c01, 0x463c, { 0xbb, 0x91, 0xe6, 0x87, 0x82, 0x63, 0x6c, 0xe9 } }), kStructVersion1)
     //! Specified the amount of memory expected to be used
     uint64_t estimatedVRAMUsageInBytes{};
-    //! Reserved for future expansion, must be set to null
-    void* ext{};
 };
+
+}
+
+//! Provides optimal DLSS settings
+//!
+//! Call this method to obtain optimal render target size and other DLSS related settings.
+//!
+//! @param options Specifies DLSS options to use
+//! @param settings Reference to a structure where settings are returned
+//! @return sl::ResultCode::eOk if successful, error code otherwise (see sl_result.h for details)
+//!
+//! This method is NOT thread safe.
+using PFun_slDLSSGetOptimalSettings = sl::Result(const sl::DLSSOptions & options, sl::DLSSOptimalSettings & settings);
+
+//! Provides DLSS state for the given viewport
+//!
+//! Call this method to obtain optimal render target size and other DLSS related settings.
+//!
+//! @param viewport Specified viewport we are working with
+//! @param state Reference to a structure where state is to be returned
+//! @return sl::ResultCode::eOk if successful, error code otherwise (see sl_result.h for details)
+//!
+//! This method is NOT thread safe.
+using PFun_slDLSSGetState = sl::Result(const sl::ViewportHandle & viewport, sl::DLSSState & state);
+
+//! Sets DLSS options
+//!
+//! Call this method to turn DLSS on/off, change mode etc.
+//!
+//! @param viewport Specified viewport we are working with
+//! @param options Specifies DLSS options to use
+//! @return sl::ResultCode::eOk if successful, error code otherwise (see sl_result.h for details)
+//!
+//! This method is NOT thread safe.
+using PFun_slDLSSSetOptions = sl::Result(const sl::ViewportHandle& viewport, const sl::DLSSOptions& options);
+
+//! HELPERS
+//! 
+inline sl::Result slDLSSGetOptimalSettings(const sl::DLSSOptions& options, sl::DLSSOptimalSettings& settings)
+{
+    SL_FEATURE_FUN_IMPORT_STATIC(sl::kFeatureDLSS, slDLSSGetOptimalSettings);
+    return s_slDLSSGetOptimalSettings(options, settings);
+}
+
+inline sl::Result slDLSSGetState(const sl::ViewportHandle& viewport, sl::DLSSState& state)
+{
+    SL_FEATURE_FUN_IMPORT_STATIC(sl::kFeatureDLSS, slDLSSGetState);
+    return s_slDLSSGetState(viewport, state);
+}
+
+inline sl::Result slDLSSSetOptions(const sl::ViewportHandle& viewport, const sl::DLSSOptions& options)
+{
+    SL_FEATURE_FUN_IMPORT_STATIC(sl::kFeatureDLSS, slDLSSSetOptions);
+    return s_slDLSSSetOptions(viewport, options);
 }

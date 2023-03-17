@@ -108,9 +108,30 @@ inline constexpr uint32_t align(uint32_t size, uint32_t alignment)
     return (size + (alignment - 1)) & ~(alignment - 1);
 }
 
+//! If value is null it will remove the environment variable
+inline bool setEnvVar(const char* varName, const char* value)
+{
+    bool result;
+#if SL_WINDOWS
+    result = (SetEnvironmentVariableA(varName, value) != 0);
+#else
+    if (value)
+    {
+        result = (setenv(varName, value, /*overwrite=*/1) == 0);
+    }
+    else
+    {
+        result = (unsetenv(varName) == 0);
+    }
+#endif
+    return result;
+}
+
 struct ScopedTasks
 {
     ScopedTasks() {};
+    ScopedTasks(std::function<void(void)> funIn, std::function<void(void)> funOut) { funIn();  tasks.push_back(funOut); }
+    ScopedTasks(std::function<void(void)> fun) { tasks.push_back(fun); }
     ~ScopedTasks()
     {
         for (auto& task : tasks)
@@ -165,6 +186,7 @@ struct IKeyboard
     virtual void registerKey(const char* name, const VirtKey& key) = 0;
     virtual bool wasKeyPressed(const char* name) = 0;
     virtual const VirtKey& getKey(const char* name) = 0;
+    virtual bool hasFocus() = 0;
 };
 
 IKeyboard* getInterface();
@@ -172,35 +194,28 @@ IKeyboard* getInterface();
 
 struct AverageValueMeter
 {
-    AverageValueMeter() {};
+    AverageValueMeter() 
+    {
+        QueryPerformanceFrequency(&frequency);
+    };
+    
     AverageValueMeter(const AverageValueMeter& rhs) { operator=(rhs); }
+    
     inline AverageValueMeter& operator=(const AverageValueMeter& rhs)
     {
-        windowSize = rhs.windowSize.load();
-        n = rhs.n.load();
+        windowSize = rhs.windowSize;
+        n = rhs.n;
         val = rhs.val.load();
-        sum = rhs.sum.load();
+        sum = rhs.sum;
         mean = rhs.mean.load();
-        std = rhs.std.load();
-        mean_old = rhs.mean_old.load();
-        m_s = rhs.m_s.load();
-        //median = rhs.median.load();
+        std = rhs.std;
+        mean_old = rhs.mean_old;
+        m_s = rhs.m_s;
         window = rhs.window;
-        start = rhs.start;
+        frequency = rhs.frequency;
+        startTime = rhs.startTime;
         return *this;
     }
-
-    std::atomic<int> windowSize = 120;
-    std::atomic<float> n = 0;
-    std::atomic<float> val = 0;
-    std::atomic<float> sum = 0;
-    std::atomic<float> mean = 0;
-    std::atomic<float> std = 0;
-    std::atomic<float> mean_old = 0;
-    std::atomic<float> m_s = 0;
-    //std::atomic<float> median = 0;
-    std::vector<float> window;
-    std::chrono::high_resolution_clock::time_point start = {};
 
     void reset()
     {
@@ -211,23 +226,26 @@ struct AverageValueMeter
         std = 0;
         mean_old = 0;
         m_s = 0;
-        //median = 0;
         window.clear();
-        start = {};
+        startTime = {};
     }
 
     void begin()
     {
-        start = std::chrono::high_resolution_clock::now();
+        QueryPerformanceCounter(&startTime);
     }
 
     void end()
     {
-        if (start.time_since_epoch().count() > 0)
+        if (startTime.QuadPart > 0)
         {
-            auto end = std::chrono::high_resolution_clock::now();
-            std::chrono::duration<float, std::milli> diff = end - start;
-            add(diff.count());
+            LARGE_INTEGER endTime{};
+            QueryPerformanceCounter(&endTime);
+            elapsedUs.QuadPart = endTime.QuadPart - startTime.QuadPart;
+            elapsedUs.QuadPart *= 1000000;
+            elapsedUs.QuadPart /= frequency.QuadPart;
+            auto elapsedMs = elapsedUs.QuadPart / 1000.0;
+            add(elapsedMs);
         }
     }
 
@@ -237,13 +255,13 @@ struct AverageValueMeter
         begin();
     }
 
-    void add(float value)
+    void add(double value)
     {
         val = value;
         sum = sum + value;
-        if (windowSize)
+        if (windowSize > 0)
         {
-            if ((int)window.size() == windowSize)
+            if (window.size() == windowSize)
             {
                 sum = sum - window.front();
                 window.erase(window.begin());
@@ -252,7 +270,7 @@ struct AverageValueMeter
             //auto tmp = window;
             //std::sort(tmp.begin(), tmp.end());
             //median = tmp[tmp.size() / 2];
-            mean = sum / (float)window.size();
+            mean = sum / (double)window.size();
         }
         else
         {
@@ -260,38 +278,56 @@ struct AverageValueMeter
             {
                 mean = 0.0f + value;
                 std = -1.0f;
-                mean_old.store(mean);
+                mean_old = mean;
                 m_s = 0.0;
             }
             else
             {
-                mean = mean_old + (value - mean_old) / float(n + 1.0f);
+                mean = mean_old + (value - mean_old) / (n + 1.0);
                 m_s = m_s + (value - mean_old) * (value - mean);
-                mean_old.store(mean);
+                mean_old = mean;
                 std = sqrt(m_s / n);
             }
-            n = n + 1.0f;
+            n = n + 1.0;
         }
     }
+
+    inline double getMean() const { return mean.load(); }
+    inline double getValue() const { return val.load(); }
+    inline int64_t elapsedTimeUs() const { return elapsedUs.QuadPart; }
+
+private:
+    std::atomic<double> val = 0;
+    std::atomic<double> mean = 0;
+
+    double n{};
+    double sum{};
+    double std{};
+    double mean_old{};
+    double m_s{};
+    double val_oldest{};
+
+    size_t windowSize = 120;
+    std::vector<double> window;
+    
+    LARGE_INTEGER frequency{};
+    LARGE_INTEGER startTime{};
+    LARGE_INTEGER elapsedUs{};
 };
 
-struct scopedCPUTimer
+struct ScopedCPUTimer
 {
-    scopedCPUTimer(AverageValueMeter* meter)
+    ScopedCPUTimer(AverageValueMeter* meter)
     {
         m_meter = meter;
-        meter->windowSize = 0;
-        start = std::chrono::high_resolution_clock::now();
+        meter->begin();
     }
-    ~scopedCPUTimer()
+    ~ScopedCPUTimer()
     {
-        auto end = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<float, std::milli> diff = end - start;
-        m_meter->add(diff.count());
+        m_meter->end();
     }
 
-    std::chrono::high_resolution_clock::time_point start = {};
-    AverageValueMeter* m_meter = {};
+    AverageValueMeter* m_meter{};
 };
 
 inline void format(std::ostringstream& stream, const char* str)

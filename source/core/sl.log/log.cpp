@@ -20,15 +20,14 @@
 * SOFTWARE.
 */
 
-#include <mutex>
-#include <ctime>
 #include <iomanip>
-#include <sstream>
+#include <map>
 
 #include "include/sl.h"
 #include "source/core/sl.log/log.h"
 #include "source/core/sl.extra/extra.h"
 #include "source/core/sl.param/parameters.h"
+#include "source/core/sl.thread/thread.h"
 
 namespace sl
 {
@@ -86,14 +85,21 @@ void moveWindowToAnotherMonitor(HWND hwnd, UINT flags)
 
 struct Log : ILog
 {
-    bool m_console = false;
-    bool m_pathInvalid = false;
+    std::hash<std::string> m_hash;
+    std::atomic<bool> m_console = false;
+    std::atomic<bool> m_pathInvalid = false;
     std::wstring m_path;
     std::wstring m_name;
-    LogLevel m_logLevel = eLogLevelVerbose;
-    bool m_consoleActive = false;
+    LogLevel m_logLevel = LogLevel::eVerbose;
+    std::atomic<bool> m_consoleActive = false;
     FILE* m_file = {};
-    pfunLogMessageCallback* m_logMessageCallback = {};
+    PFun_LogMessageCallback* m_logMessageCallback = {};
+    thread::WorkerThread* m_worker{};
+
+    Log()
+    {
+        m_worker = new thread::WorkerThread(L"sl.log", THREAD_PRIORITY_BELOW_NORMAL);
+    }
 
     void enableConsole(bool flag) override
     {
@@ -110,6 +116,8 @@ struct Log : ILog
         m_logLevel = level;
     }
 
+    const wchar_t* getLogPath() override { return m_path.c_str(); }
+
     void setLogPath(const wchar_t *path) override
     {
         if (m_file)
@@ -120,6 +128,7 @@ struct Log : ILog
         }
         // Passing nullptr will disable logging to a file
         m_path = path ? path : L"";
+        m_pathInvalid = false;
     }
 
     void setLogName(const wchar_t *name) override
@@ -129,11 +138,24 @@ struct Log : ILog
 
     void setLogCallback(void* logMessageCallback) override
     {
-        m_logMessageCallback = (pfunLogMessageCallback*)logMessageCallback;
+        m_logMessageCallback = (PFun_LogMessageCallback*)logMessageCallback;
+    }
+
+    void setLogMessageDelay(float messageDelayMs) override
+    {
+        m_messageDelayMs = messageDelayMs;
     }
 
     void shutdown() override
     {
+        if (m_worker)
+        {
+            //! IMPORTANT: During shutdown there could be a LOT of 
+            //! exit logging so default timeout does not always make sense.
+            m_worker->flush(UINT_MAX);
+            delete m_worker;
+            m_worker = nullptr;
+        }
         if (m_file)
         {
             fflush(m_file);
@@ -141,6 +163,9 @@ struct Log : ILog
             m_file = nullptr;
             m_pathInvalid = true; // prevent log file reopening
         }
+        m_consoleActive = false;
+        // Win32 API does not require us to close this handle
+        m_outHandle = {};
     }
 
     void print(ConsoleForeground color, const std::string &logMessage)
@@ -148,13 +173,12 @@ struct Log : ILog
         // Set attribute for newly written text
         if (m_consoleActive)
         {
-            auto handle = GetStdHandle(STD_OUTPUT_HANDLE);
-            SetConsoleTextAttribute(handle, color);
+            SetConsoleTextAttribute(m_outHandle, color);
             DWORD OutChars;
-            WriteConsoleA(handle, logMessage.c_str(), (DWORD)logMessage.length(), &OutChars, nullptr);
+            WriteConsoleA(m_outHandle, logMessage.c_str(), (DWORD)logMessage.length(), &OutChars, nullptr);
             if (color != sl::log::WHITE)
             {
-                SetConsoleTextAttribute(handle, sl::log::WHITE);
+                SetConsoleTextAttribute(m_outHandle, sl::log::WHITE);
             }
         }
 
@@ -171,95 +195,141 @@ struct Log : ILog
         }
     }
 
-    void logva(int level, ConsoleForeground color, const char *file, int line, const char *func, int type, const char *fmt, ...) override
+    void logva(uint32_t level, ConsoleForeground color, const char *_file, int line, const char *_func, int type, const char *_fmt, ...) override
     {
-        if (level > m_logLevel)
+        if (level > (uint32_t)m_logLevel)
         {
             // Higher level than requested, bail out
             return;
         }
-        if (m_console && !m_consoleActive)
+
+        std::string file(_file);
+        std::string func(_func);
+        std::string fmt(_fmt);
+        std::string msg;
+
+        // Incoming message can be un-formatted if provided by 3rd party like NGX
+        bool formatted = fmt.back() != '\n';
+        if (formatted)
         {
-            startConsole();
-            m_consoleActive = isConsoleActive();
-        }
-        std::string logMessage;
-        if (!m_file && !m_path.empty() && !m_pathInvalid)
-        {
-            // Allow other process to read log file
-            auto path = m_path + L"\\" + m_name;
-            m_file = _wfsopen(path.c_str(), L"wt", _SH_DENYWR);
-            if (!m_file)
+            va_list args;
+            va_start(args, _fmt);
+            msg.resize(1024);
+            auto size = vsprintf_s(msg.data(), msg.size(), _fmt, args);
+            va_end(args);
+            if (size <= 0)
             {
-                m_pathInvalid = true;
-                std::wstring tmp = L"[streamline][error]log.cpp:125[logva] Failed to open log file " + path + L"\n";
-                logMessage = extra::toStr(tmp);
-                print(RED, logMessage);
+                // Something went wrong, invalid character in the string etc.
+                return;
+            }
+            msg.resize(size);
+        }
+
+        auto logLambda = [this, msg, level, color, file, line, func, type, fmt, formatted]()->void
+        {
+            if (m_console && !m_consoleActive)
+            {
+                startConsole();
+                m_consoleActive = isConsoleActive();
+            }
+            std::string logMessage;
+
+            if (!m_file && !m_path.empty() && !m_pathInvalid)
+            {
+                // Allow other process to read log file
+                auto path = m_path + L"\\" + m_name;
+                m_file = _wfsopen(path.c_str(), L"wt", _SH_DENYWR);
+                if (!m_file)
+                {
+                    m_pathInvalid = true;
+                    std::wstring tmp = L"[streamline][error]log.cpp:125[logva] Failed to open log file " + path + L"\n";
+                    logMessage = extra::toStr(tmp);
+                    print(RED, logMessage);
+                }
+                else
+                {
+                    std::wstring tmp = L"[streamline][info]log.cpp:131[logva] Log file " + path + L" opened\n";
+                    logMessage = extra::toStr(tmp);
+                    print(WHITE, logMessage);
+                }
+            }
+
+            std::string message;
+            if (formatted)
+            {
+                message = msg;
             }
             else
             {
-                std::wstring tmp = L"[streamline][info]log.cpp:131[logva] Log file " + path + L" opened\n";
-                logMessage = extra::toStr(tmp);
-                print(WHITE, logMessage);
-            }
-        }
-        std::string message;
-        message.resize(16 * 1024);
-
-        std::string f(file);
-        // file is constexpr so always valid and always will have at least one '\'
-        f = file + f.rfind('\\') + 1;
-        std::string prefix[] = { "info","warn","error" };
-        static_assert(countof(prefix) == eLogTypeCount);
-        auto t = std::time(nullptr);
-        tm time = {};
-        localtime_s(&time, &t);
-        std::ostringstream oss;
-        oss << std::put_time(&time, "[%d.%m.%Y %H-%M-%S]");
-        logMessage = oss.str() + "[streamline][" + prefix[type] + "]" + f + ":" + std::to_string(line) + "[" + std::string(func) + "] ";
-
-        va_list args;
-        va_start(args, fmt);
-        auto size = vsprintf_s(message.data(), message.size(), fmt, args);
-        if (size <= 0) return;
-        message.resize(size);
-        bool crlf = message.back() == '\n';
-        if (crlf)
-        {
-            // Message coming from 3rd party (NGX) so remove the time stamp
-            auto p = message.find("]");
-            if (p != std::string::npos)
-            {
-                p = message.find("]", p + 1);
+                message = fmt;
+                // Message coming from 3rd party (NGX) so remove the time stamp
+                auto p = message.find("]");
                 if (p != std::string::npos)
                 {
-                    message = message.substr(p + 1);
+                    p = message.find("]", p + 1);
+                    if (p != std::string::npos)
+                    {
+                        message = message.substr(p + 1);
+                    }
                 }
             }
-        }
-        va_end(args);
-        logMessage += message;
-        
-        if (!crlf)
-        {
-            logMessage += '\n';
-        }
+            
+            std::string f(file);
+            // file is constexpr so always valid and always will have at least one '\'
+            f = f.substr(f.rfind('\\') + 1);
+            std::string prefix[] = { "info","warn","error" };
+            static_assert(countof(prefix) == (size_t)LogType::eCount);
+            auto t = std::time(nullptr);
+            tm time = {};
+            localtime_s(&time, &t);
+            std::ostringstream oss;
+            oss << std::put_time(&time, "[%d.%m.%Y %H-%M-%S]");
+            logMessage = oss.str() + "[streamline][" + prefix[type] + "]" + f + ":" + std::to_string(line) + "[" + std::string(func) + "] ";
 
-        print(color, logMessage);
+            // Safety in case map grows too big like 10K unique messages (which is highly unlikely ever to happen but ...)
+            if (m_logTimes.size() > 10000)
+            {
+                m_logTimes.clear();
+            }
+            auto id = m_hash(message);
+            auto lastLogTime = m_logTimes[id];
+            if (lastLogTime.time_since_epoch().count() > 0)
+            {
+                // Already logged before, make sure not to spam the log
+                std::chrono::duration<float, std::milli> diff = std::chrono::system_clock::now() - lastLogTime;
+                if (diff.count() < m_messageDelayMs)
+                {
+                    // Show frequent messages every 'messageDelayMs'
+                    return;
+                }
+            }
+            m_logTimes[id] = std::chrono::system_clock::now();
 
-        if (m_logMessageCallback)
-        {
-            m_logMessageCallback((LogType)type, logMessage.c_str());
-        }
+            logMessage += message;
+
+            if (formatted)
+            {
+                logMessage += '\n';
+            }
+
+            print(color, logMessage);
+
+            if (m_logMessageCallback)
+            {
+                m_logMessageCallback((LogType)type, logMessage.c_str());
+            }
+        };
+        m_worker->scheduleWork(logLambda);
     }
 
     void startConsole()
     {
-        if (!isConsoleActive())
+        if (!isConsoleActive() || !m_outHandle)
         {
             AllocConsole();
             SetConsoleTitleA("Streamline");
             moveWindowToAnotherMonitor(GetConsoleWindow(), 0);
+            m_outHandle = GetStdHandle(STD_OUTPUT_HANDLE);
         }
     }
 
@@ -268,8 +338,13 @@ struct Log : ILog
         HWND consoleWnd = GetConsoleWindow();
         return consoleWnd != NULL;
     }
+    
+    float m_messageDelayMs = 5000.0f;
+
+    std::map<size_t, std::chrono::time_point<std::chrono::system_clock>> m_logTimes{};
 
     inline static Log* s_log = {};
+    HANDLE m_outHandle{};
 };
 
 ILog* getInterface()

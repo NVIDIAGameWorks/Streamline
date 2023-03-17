@@ -60,21 +60,38 @@ extern "C" HRESULT WINAPI D3D12CreateDevice(
         return hr;
     }
 
-    if (ppDevice && *ppDevice && sl::interposer::getInterface()->isEnabled())
+    if (ppDevice && *ppDevice)
     {
-        auto deviceProxy = new sl::interposer::D3D12Device(static_cast<ID3D12Device*>(*ppDevice));
-
-        // Upgrade to the actual interface version requested here
-        if (deviceProxy->checkAndUpgradeInterface(riid))
+        //! Note that proxies for command list or command queue cannot be created without a proxy device
+        bool proxyRequested = sl::plugin_manager::getInterface()->isProxyNeeded("ID3D12Device") ||
+                              sl::plugin_manager::getInterface()->isProxyNeeded("ID3D12CommandQueue") ||
+                              sl::plugin_manager::getInterface()->isProxyNeeded("ID3D12GraphicsCommandList");
+        if (sl::interposer::getInterface()->isEnabled() && proxyRequested)
         {
-            *ppDevice = deviceProxy;
-        }
-        else // Do not hook object if we do not support the requested interface
-        {
-            delete deviceProxy; // Delete instead of release to keep reference count untouched
-        }
+            auto deviceProxy = new sl::interposer::D3D12Device(static_cast<ID3D12Device*>(*ppDevice));
 
-        sl::plugin_manager::getInterface()->setD3D12Device(deviceProxy->m_base);
+            // Upgrade to the actual interface version requested here
+            if (deviceProxy->checkAndUpgradeInterface(riid))
+            {
+                *ppDevice = deviceProxy;
+            }
+            else // Do not hook object if we do not support the requested interface
+            {
+                delete deviceProxy; // Delete instead of release to keep reference count untouched
+                deviceProxy = {};
+            }
+            // Legacy way of automatic device selection, in SL 2.0+ host must do it explicitly
+            if (deviceProxy && sl::plugin_manager::getInterface()->getHostSDKVersion() < sl::Version(2, 0, 0))
+            {
+                sl::plugin_manager::getInterface()->setD3D12Device(deviceProxy->m_base);
+            }
+        }
+        else if (sl::plugin_manager::getInterface()->getHostSDKVersion() < sl::Version(2, 0, 0))
+        {
+            SL_LOG_INFO("ID3D12Device proxy not required, skipping");
+            // Legacy way of automatic device selection, in SL 2.0+ host must do it explicitly
+            sl::plugin_manager::getInterface()->setD3D12Device((ID3D12Device*)*ppDevice);
+        }
     }
     
     return hr;

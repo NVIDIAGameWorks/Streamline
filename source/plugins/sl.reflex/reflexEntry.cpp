@@ -23,6 +23,7 @@
 #include <dxgi1_6.h>
 #include <future>
 #include <map>
+#include <assert.h>
 
 #include "include/sl.h"
 #include "include/sl_consts.h"
@@ -34,6 +35,7 @@
 #include "source/plugins/sl.template/versions.h"
 #include "source/plugins/sl.common/commonInterface.h"
 #include "source/plugins/sl.reflex/latencystats.h"
+#include "source/plugins/sl.imgui/imgui.h"
 #include "_artifacts/gitVersion.h"
 #include "external/nvapi/nvapi.h"
 #include "external/json/include/nlohmann/json.hpp"
@@ -45,20 +47,47 @@ NVSTATS_DEFINE();
 namespace sl
 {
 
+namespace reflex
+{
+
+struct UIStats
+{
+    std::mutex mtx;
+    std::string mode;
+    std::string markers;
+    std::string fpsCap;
+    std::string presentFrame;
+    std::string sleeping;
+};
+
 //! Our common context
 //! 
 //! Here we can keep whatever global state we need
 //! 
 struct LatencyContext
 {
+    SL_PLUGIN_CONTEXT_CREATE_DESTROY(LatencyContext);
+
+    void onDestroyContext() {};
+
     common::PFunRegisterEvaluateCallbacks* registerEvaluateCallbacks{};
 
     // Compute API
-    chi::PlatformType platform = chi::ePlatformTypeD3D12;
+    RenderAPI platform = RenderAPI::eD3D12;
     chi::ICompute* compute{};
 
+    UIStats uiStats{};
+
+    // Engine type (Unity, UE etc)
+    EngineType engine{};
+
     //! Latest constants
-    ReflexConstants constants{};
+    ReflexOptions constants{};
+
+    //! Can be overridden via sl.reflex.json config
+    uint32_t frameLimitUs = UINT_MAX;
+    bool useMarkersToOptimizeOverride = false;
+    bool useMarkersToOptimizeOverrideValue = false;
 
     //! Specifies if low-latency mode is available or not
     bool lowLatencyAvailable = false;
@@ -67,215 +96,15 @@ struct LatencyContext
     //! Specifies ownership of flash indicator toggle (true = driver, false = application)
     bool flashIndicatorDriverControlled = false;
 
-    //! Present marker
-    std::map<ReflexMarker, common::EventData> markerData{};
-
     extra::AverageValueMeter sleepMeter{};
 
     //! Stats initialized or not
-    bool initialized = false;
+    std::atomic<bool> initialized = false;
+    std::atomic<bool> enabled = false;
 
     //! Debug text stats
     std::string stats;
 };
-static LatencyContext s_ctx = {};
-
-//! Update stats shown on screen
-void updateStats()
-{
-    auto v = api::getContext()->pluginVersion;
-    std::string mode[] = { "off", "on", "on with boost" };
-    s_ctx.stats = extra::format("sl.reflex {} - mode {} - using markers {} - fps cap {}us - present marker frame {} - sleeping {}ms - {}", v.toStr(), mode[s_ctx.constants.mode], s_ctx.constants.useMarkersToOptimize, s_ctx.constants.frameLimitUs, 
-        s_ctx.markerData[eReflexMarkerPresentStart].frame, s_ctx.sleepMeter.mean, GIT_LAST_COMMIT);
-    api::getContext()->parameters->set(sl::param::latency::kStats, (void*)s_ctx.stats.c_str());
-}
-
-//! Set constants for our plugin (if any, this is optional and should be thread safe)
-bool slSetConstants(const void* data, uint32_t frameIndex, uint32_t id)
-{
-    auto consts = (const ReflexConstants*)data;
-    if (!consts)
-    {
-        return false;
-    }
-    if (!s_ctx.lowLatencyAvailable)
-    {
-        // At the moment low latency is only possible on NVDA hw
-        if (consts->mode == ReflexMode::eReflexModeLowLatency || consts->mode == ReflexMode::eReflexModeLowLatencyWithBoost)
-        {
-            SL_LOG_WARN_ONCE("Low-latency modes are only supported on NVIDIA hardware through Reflex, collecting latency stats only");
-        }
-    }
-
-    if (!s_ctx.initialized)
-    {
-        if (consts->virtualKey && (consts->virtualKey != VK_F13 && consts->virtualKey != VK_F14 && consts->virtualKey != VK_F15))
-        {
-            SL_LOG_ERROR("Latency virtual key can only be assigned to VK_F13, VK_F14 or VK_F15");
-            return false;
-        }
-        //! GPU agnostic latency stats initialization
-        s_ctx.initialized = true;
-        NVSTATS_INIT(consts->virtualKey, 0);
-    }
-    
-    g_ReflexStatsVirtualKey = consts->virtualKey;
-
-    if (consts->mode != s_ctx.constants.mode || consts->useMarkersToOptimize != s_ctx.constants.useMarkersToOptimize || consts->frameLimitUs != s_ctx.constants.frameLimitUs)
-    {
-        s_ctx.constants = *consts;
-        if (s_ctx.lowLatencyAvailable)
-        {
-            CHI_VALIDATE(s_ctx.compute->setSleepMode(*consts));
-        }
-
-        updateStats();
-    }
-    else
-    {
-        SL_LOG_WARN_ONCE("Latency constants did not change, there is no need to call slSetFeatureConstants unless settings changed.");
-    }
-    return true;
-}
-
-//! Get settings for our plugin (optional and depending on if we need to provide any settings back to the host)
-bool slGetSettings(const void* cdata, void* sdata)
-{
-    //auto consts = (const ReflexConstants*)cdata;
-    auto settings = (ReflexSettings*)sdata;
-    if (!settings)
-    {
-        return false;
-    }
-    // Based on hw and driver we assume that low latency should be available
-    if (s_ctx.lowLatencyAvailable)
-    {
-        // NVAPI call can still fail so adjust flags
-        s_ctx.lowLatencyAvailable = s_ctx.compute->getSleepStatus(*settings) == chi::ComputeStatus::eComputeStatusOk;
-        s_ctx.latencyReportAvailable = s_ctx.compute->getLatencyReport(*settings) == chi::ComputeStatus::eComputeStatusOk;
-    }
-    settings->lowLatencyAvailable = s_ctx.lowLatencyAvailable;
-    settings->latencyReportAvailable = s_ctx.latencyReportAvailable;
-    settings->flashIndicatorDriverControlled = s_ctx.flashIndicatorDriverControlled;
-    // Allow host to check Windows messages for the special low latency message
-    settings->statsWindowMessage = g_ReflexStatsWindowMessage;
-    return true;
-}
-
-//! Begin evaluation for our plugin (if we use evalFeature mechanism to inject functionality in to the command buffer)
-//! 
-void latencyBeginEvaluation(chi::CommandList pCmdList, const common::EventData& evd)
-{
-    // Special 'marker' for low latency mode
-    if (evd.id == eReflexMarkerSleep)
-    {
-        if (s_ctx.lowLatencyAvailable)
-        {
-            s_ctx.sleepMeter.begin();
-            s_ctx.lowLatencyAvailable = s_ctx.compute->sleep() == chi::ComputeStatus::eComputeStatusOk;
-            s_ctx.sleepMeter.end();
-        }
-    }
-    else
-    {
-        if (s_ctx.lowLatencyAvailable && evd.id != NVSTATS_PC_LATENCY_PING)
-        {
-            CHI_VALIDATE(s_ctx.compute->setReflexMarker((ReflexMarker)evd.id, evd.frame));
-        }
-
-        s_ctx.markerData[(ReflexMarker)evd.id] = evd;
-
-        if (evd.id == eReflexMarkerPresentStart)
-        {
-            api::getContext()->parameters->set(sl::param::latency::kMarkerFrame, evd.frame);
-            updateStats();
-        }
-
-        NVSTATS_MARKER((NVSTATS_LATENCY_MARKER_TYPE)evd.id, evd.frame);
-    } 
-
-    // Mark the last frame we were active
-    uint32_t frame = 0;
-    CHI_VALIDATE(s_ctx.compute->getFinishedFrameIndex(frame));
-    api::getContext()->parameters->set(sl::param::latency::kCurrentFrame, frame + 1);
-}
-
-//! End evaluation for our plugin (if we use evalFeature mechanism to inject functionality in to the command buffer)
-//! 
-void latencyEndEvaluation(chi::CommandList cmdList)
-{
-    // Nothing to do here really
-}
-
-//! Allows other plugins to set GPU agnostic stats
-void setLatencyStatsMarker(ReflexMarker marker, uint32_t frameId)
-{
-    NVSTATS_MARKER(marker, frameId);
-}
-
-//! Main entry point - starting our plugin
-//! 
-//! IMPORTANT: Plugins are started based on their priority.
-//! sl.common always starts first since it has priority 0
-//!
-bool slOnPluginStartup(const char* jsonConfig, void* device, param::IParameters* parameters)
-{
-    //! Common startup and setup
-    //!     
-    SL_PLUGIN_COMMON_STARTUP();
-
-    //! Register our evaluate callbacks
-    //!
-    //! Note that sl.common handles evaluateFeature calls from the host
-    //! and distributes eval calls to the right plugin based on the feature id
-    //! 
-    if (!param::getPointerParam(parameters, param::common::kPFunRegisterEvaluateCallbacks, &s_ctx.registerEvaluateCallbacks))
-    {
-        SL_LOG_ERROR("Cannot obtain `registerEvaluateCallbacks` interface - check that sl.common was initialized correctly");
-        return false;
-    }
-    s_ctx.registerEvaluateCallbacks(eFeatureReflex, latencyBeginEvaluation, latencyEndEvaluation);
-
-    //! Allow other plugins to set latency stats
-    parameters->set(param::latency::kPFunSetLatencyStatsMarker, setLatencyStatsMarker);
-
-    //! Plugin manager gives us the device type and the application id
-    //! 
-    json& config = *(json*)api::getContext()->loaderConfig;
-    uint32_t deviceType{};
-    int appId{};
-    config.at("appId").get_to(appId);
-    config.at("deviceType").get_to(deviceType);
-
-    //! Now let's obtain compute interface if we need to dispatch some compute work
-    //! 
-    s_ctx.platform = (chi::PlatformType)deviceType;
-    if (!param::getPointerParam(parameters, sl::param::common::kComputeAPI, &s_ctx.compute))
-    {
-        SL_LOG_ERROR("Cannot obtain compute interface - check that sl.common was initialized correctly");
-        return false;
-    }
-
-    updateStats();
-
-    return true;
-}
-
-//! Main exit point - shutting down our plugin
-//! 
-//! IMPORTANT: Plugins are shutdown in the inverse order based to their priority.
-//! sl.common always shuts down LAST since it has priority 0
-//!
-void slOnPluginShutdown()
-{
-    // If we used 'evaluateFeature' mechanism reset the callbacks here
-    s_ctx.registerEvaluateCallbacks(eFeatureReflex, nullptr, nullptr);
-
-    //! GPU agnostic latency stats shutdown
-    NVSTATS_SHUTDOWN();
-
-    // Common shutdown
-    plugin::onShutdown(api::getContext());
 }
 
 //! These are the hooks we need to do whatever our plugin is trying to do
@@ -291,65 +120,404 @@ void slOnPluginShutdown()
 static const char* JSON = R"json(
 {
     "id" : 3,
-    "priority" : 1,
+    "priority" : 100,
     "namespace" : "reflex",
+    "required_plugins" : ["sl.common"],
     "incompatible_plugins" : ["sl.latency"],
+    "rhi" : ["d3d11", "d3d12", "vk"],
     "hooks" :
     [
     ]
 }
 )json";
 
+void updateEmbeddedJSON(json& config);
+
+//! Define our plugin, make sure to update version numbers in versions.h
+SL_PLUGIN_DEFINE("sl.reflex", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON, updateEmbeddedJSON, reflex, LatencyContext)
+
 //! Figure out if we are supported on the current hardware or not
 //! 
-uint32_t getSupportedAdapterMask()
+void updateEmbeddedJSON(json& config)
 {
     // Latency can be GPU agnostic to some degree
     uint32_t adapterMask = ~0;
 
+    auto& ctx = (*reflex::getContext());
+
     // Defaults everything to false
-    s_ctx.lowLatencyAvailable = false;
-    s_ctx.latencyReportAvailable = false;
-    s_ctx.flashIndicatorDriverControlled = false;
+    ctx.lowLatencyAvailable = false;
+    ctx.latencyReportAvailable = false;
+    ctx.flashIndicatorDriverControlled = false;
+
+    // Check if plugin is supported or not on this platform and set the flag accordingly
+    common::SystemCaps* caps = {};
+    param::getPointerParam(api::getContext()->parameters, sl::param::common::kSystemCaps, &caps);
+    common::PFunUpdateCommonEmbeddedJSONConfig* updateCommonEmbeddedJSONConfig{};
+    param::getPointerParam(api::getContext()->parameters, sl::param::common::kPFunUpdateCommonEmbeddedJSONConfig, &updateCommonEmbeddedJSONConfig);
+    if (caps && updateCommonEmbeddedJSONConfig)
+    {
+        // All defaults since sl.reflex can run on any adapter
+        common::PluginInfo info{};
+        info.SHA = GIT_LAST_COMMIT_SHORT;
+        updateCommonEmbeddedJSONConfig(&config, info);
+    }
 
     // Figure out if we should use NVAPI or not
-    common::SystemCaps* info{};
-    param::getPointerParam(api::getContext()->parameters, sl::param::common::kSystemCaps, &info);
-    // NVDA driver has to be 455+ otherwise Reflex won't work
-    if (info && info->driverVersionMajor > 455)
+    // 
+    // NVDA driver has to be 455+ otherwise Reflex low-latency won't work
+    sl::Version minDriver(455, 0, 0);
+    if (caps && caps->driverVersionMajor > 455)
     {
         // We start with Pascal+ then later check again if GetSleepStatus returns error or not
-        for (uint32_t i = 0; i < info->gpuCount; i++)
+        for (uint32_t i = 0; i < caps->gpuCount; i++)
         {
-            s_ctx.lowLatencyAvailable |= info->architecture[i] >= NV_GPU_ARCHITECTURE_ID::NV_GPU_ARCHITECTURE_GP100;
+            ctx.lowLatencyAvailable |= caps->adapters[i].architecture >= NV_GPU_ARCHITECTURE_ID::NV_GPU_ARCHITECTURE_GP100;
             // Starting since 511.23 flash indicator should be controlled by GFE instead of application
-            s_ctx.flashIndicatorDriverControlled |= (info->driverVersionMajor * 100 + info->driverVersionMinor) >= 51123;
+            ctx.flashIndicatorDriverControlled |= (caps->driverVersionMajor * 100 + caps->driverVersionMinor) >= 51123;
         }
     }
-    return adapterMask;
+
+    config["external"]["reflex"]["lowLatencyAvailable"] = ctx.lowLatencyAvailable;
+    config["external"]["reflex"]["flashIndicatorDriverControlled"] = ctx.flashIndicatorDriverControlled;
 }
 
-//! Define our plugin, make sure to update version numbers in versions.h
-SL_PLUGIN_DEFINE("sl.reflex", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON, getSupportedAdapterMask())
+//! Update stats shown on screen
+void updateStats(uint32_t presentFrameIndex)
+{
+#ifndef SL_PRODUCTION
+    auto& ctx = (*reflex::getContext());
+    std::string mode[] = { "Off", "On", "On with boost" };
+
+    std::scoped_lock lock(ctx.uiStats.mtx);
+    ctx.uiStats.mode = "Mode: " + mode[ctx.constants.mode];
+    ctx.uiStats.markers = extra::format("Optimize with markers: {}", (ctx.constants.useMarkersToOptimize ? "Yes" : "No"));
+    ctx.uiStats.fpsCap = extra::format("FPS cap: {}us", ctx.constants.frameLimitUs);
+    if(presentFrameIndex) ctx.uiStats.presentFrame = extra::format("Present marker frame: {}", presentFrameIndex);
+    ctx.uiStats.sleeping = extra::format("Sleeping: {}ms", ctx.sleepMeter.getMean());
+#endif
+}
+
+//! Set constants for our plugin (if any, this is optional and should be thread safe)
+Result slSetData(const BaseStructure* inputs, CommandBuffer* cmdBuffer)
+{
+    auto& ctx = (*reflex::getContext());
+
+    if (!ctx.compute)
+    {
+        return Result::eErrorInvalidIntegration;
+    }
+
+    auto marker = findStruct<ReflexHelper>(inputs);
+    auto consts = findStruct<ReflexOptions>(inputs);
+    auto frame = findStruct<FrameToken>(inputs);
+    
+    if (marker && frame)
+    {
+        common::EventData evd = { (uint32_t)*marker, *frame };
+
+        // Special 'marker' for low latency mode
+        if (*marker == (ReflexMarker)kReflexMarkerSleep)
+        {
+            if (ctx.lowLatencyAvailable)
+            {
+#ifdef SL_PRODUCTION
+                ctx.lowLatencyAvailable = ctx.compute->sleep() == chi::ComputeStatus::eOk;
+#else
+                ctx.sleepMeter.begin();
+                ctx.lowLatencyAvailable = ctx.compute->sleep() == chi::ComputeStatus::eOk;
+                ctx.sleepMeter.end();
+#endif
+            }
+        }
+        else
+        {
+            // According to Cody we want markers set even when Reflex is off
+            if (ctx.lowLatencyAvailable && evd.id != NVSTATS_PC_LATENCY_PING)
+            {
+                CHI_VALIDATE(ctx.compute->setReflexMarker((ReflexMarker)evd.id, evd.frame));
+            }
+
+            // Special case for Unity, it is hard to provide present markers so using render markers
+            if (evd.id == ReflexMarker::ePresentStart || (ctx.engine == EngineType::eUnity && evd.id == ReflexMarker::eRenderSubmitStart))
+            {
+                api::getContext()->parameters->set(sl::param::latency::kMarkerFrame, evd.frame);
+                updateStats(evd.frame);
+
+                // Mark the last frame we were active
+                //
+                // NOTE: We do this on present marker only to prevent
+                // scenarios where simulation marker for new frame comes in
+                // and advances the frame index
+                if (ctx.enabled.load())
+                {
+                    uint32_t frame = 0;
+                    CHI_VALIDATE(ctx.compute->getFinishedFrameIndex(frame));
+                    api::getContext()->parameters->set(sl::param::latency::kCurrentFrame, frame + 1);
+                }
+            }
+
+            NVSTATS_MARKER((NVSTATS_LATENCY_MARKER_TYPE)evd.id, evd.frame);
+        }
+    }
+    else
+    {
+        if (!consts)
+        {
+            return Result::eErrorMissingInputParameter;
+        }
+        if (!ctx.lowLatencyAvailable)
+        {
+            // At the moment low latency is only possible on NVDA hw
+            if (consts->mode == ReflexMode::eLowLatency || consts->mode == ReflexMode::eLowLatencyWithBoost)
+            {
+                SL_LOG_WARN_ONCE("Low-latency modes are only supported on NVIDIA hardware through Reflex, collecting latency stats only");
+            }
+        }
+
+
+        bool expected = false;
+        if (ctx.initialized.compare_exchange_weak(expected, true))
+        {
+            if (consts->virtualKey && (consts->virtualKey != VK_F13 && consts->virtualKey != VK_F14 && consts->virtualKey != VK_F15))
+            {
+                SL_LOG_ERROR("Latency virtual key can only be assigned to VK_F13, VK_F14 or VK_F15");
+                return Result::eErrorInvalidParameter;
+            }
+            //! GPU agnostic latency stats initialization
+
+            uint32_t idThread = 0;
+            idThread = consts->idThread;
+
+            NVSTATS_INIT(consts->virtualKey, 0, idThread);
+        }
+
+        {
+            uint32_t idThread = 0;
+            idThread = consts->idThread;
+
+            g_ReflexStatsIdThread = idThread;
+        }
+
+        g_ReflexStatsVirtualKey = consts->virtualKey;
+
+        {
+            ctx.constants = *consts;
+            ctx.enabled.store(consts->mode != ReflexMode::eOff);
+#ifndef SL_PRODUCTION
+            // Override from config (if any)
+            if (ctx.frameLimitUs != UINT_MAX)
+            {
+                ctx.constants.frameLimitUs = ctx.frameLimitUs;
+            }
+            if (ctx.useMarkersToOptimizeOverride)
+            {
+                ctx.constants.useMarkersToOptimize = ctx.useMarkersToOptimizeOverrideValue;
+            }
+            if (ctx.lowLatencyAvailable)
+            {
+                CHI_VALIDATE(ctx.compute->setSleepMode(ctx.constants));
+            }
+#endif
+            updateStats(0);
+        }
+    }
+    
+    return Result::eOk;
+}
+
+Result slGetData(const BaseStructure* inputs, BaseStructure* outputs, CommandBuffer* cmdBuffer)
+{
+    auto& ctx = (*reflex::getContext());
+    
+    auto settings = findStruct<ReflexState>(outputs);
+    if (!settings)
+    {
+        return Result::eErrorMissingInputParameter;
+    }
+    // Based on hw and driver we assume that low latency should be available
+    if (ctx.compute && ctx.lowLatencyAvailable)
+    {
+        // NVAPI call can still fail so adjust flags
+        ctx.lowLatencyAvailable = ctx.compute->getSleepStatus(*settings) == chi::ComputeStatus::eOk;
+        ctx.latencyReportAvailable = ctx.compute->getLatencyReport(*settings) == chi::ComputeStatus::eOk;
+    }
+    settings->lowLatencyAvailable = ctx.lowLatencyAvailable;
+    settings->latencyReportAvailable = ctx.latencyReportAvailable;
+    settings->flashIndicatorDriverControlled = ctx.flashIndicatorDriverControlled;
+    // Allow host to check Windows messages for the special low latency message
+    settings->statsWindowMessage = g_ReflexStatsWindowMessage;
+    return Result::eOk;
+}
+
+//! Allows other plugins to set GPU agnostic stats
+void setLatencyStatsMarker(ReflexMarker marker, uint32_t frameId)
+{
+    NVSTATS_MARKER(marker, frameId);
+}
+
+//! Main entry point - starting our plugin
+//! 
+//! IMPORTANT: Plugins are started based on their priority.
+//! sl.common always starts first since it has priority 0
+//!
+bool slOnPluginStartup(const char* jsonConfig, void* device)
+{
+    //! Common startup and setup
+    //!     
+    SL_PLUGIN_COMMON_STARTUP();
+
+    auto& ctx = (*reflex::getContext());
+
+    auto parameters = api::getContext()->parameters;
+
+    //! Register our evaluate callbacks
+    //!
+    //! Note that sl.common handles evaluate calls from the host
+    //! and distributes eval calls to the right plugin based on the feature id
+    //! 
+    if (!param::getPointerParam(parameters, param::common::kPFunRegisterEvaluateCallbacks, &ctx.registerEvaluateCallbacks))
+    {
+        SL_LOG_ERROR( "Cannot obtain `registerEvaluateCallbacks` interface - check that sl.common was initialized correctly");
+        return false;
+    }
+
+    //! Allow other plugins to set latency stats
+    parameters->set(param::latency::kPFunSetLatencyStatsMarker, setLatencyStatsMarker);
+
+    //! Plugin manager gives us the device type and the application id
+    //! 
+    json& config = *(json*)api::getContext()->loaderConfig;
+    uint32_t deviceType{};
+    int appId{};
+    config.at("appId").get_to(appId);
+    config.at("deviceType").get_to(deviceType);
+    if (config.contains("ngx"))
+    {
+        config.at("ngx").at("engineType").get_to(ctx.engine);
+        if (ctx.engine == EngineType::eUnity)
+        {
+            SL_LOG_INFO("Detected Unity engine - using render submit markers instead of present to detect current frame");
+        }
+    }
+    //! Now let's obtain compute interface if we need to dispatch some compute work
+    //! 
+    ctx.platform = (RenderAPI)deviceType;
+    if (!param::getPointerParam(parameters, sl::param::common::kComputeAPI, &ctx.compute))
+    {
+        SL_LOG_ERROR( "Cannot obtain compute interface - check that sl.common was initialized correctly");
+        return false;
+    }
+
+    json& extraConfig = *(json*)api::getContext()->extConfig;
+    if (extraConfig.contains("frameLimitUs"))
+    {
+        extraConfig.at("frameLimitUs").get_to(ctx.frameLimitUs);
+        SL_LOG_HINT("Read 'frameLimitUs' %u from JSON config", ctx.frameLimitUs);
+    }
+    if (extraConfig.contains("useMarkersToOptimize"))
+    {
+        extraConfig.at("useMarkersToOptimize").get_to(ctx.useMarkersToOptimizeOverrideValue);
+        ctx.useMarkersToOptimizeOverride = true;
+        SL_LOG_HINT("Read 'useMarkersToOptimize' %u from JSON config", ctx.useMarkersToOptimizeOverrideValue);
+    }
+
+    updateStats(0);
+
+#ifndef SL_PRODUCTION
+    // Check for UI and register our callback
+    imgui::ImGUI* ui{};
+    param::getPointerParam(parameters, param::imgui::kInterface, &ui);
+    if (ui)
+    {
+        // Runs async from the present thread where UI is rendered just before frame is presented
+        auto renderUI = [&ctx](imgui::ImGUI* ui, bool finalFrame)->void
+        {
+            auto v = api::getContext()->pluginVersion;
+            if (ui->collapsingHeader(extra::format("sl.reflex v{}", (v.toStr() + "." + GIT_LAST_COMMIT_SHORT)).c_str(), imgui::kTreeNodeFlagDefaultOpen))
+            {
+                std::scoped_lock lock(ctx.uiStats.mtx);
+                ui->text(ctx.uiStats.mode.c_str());
+                ui->text(ctx.uiStats.markers.c_str());
+                ui->text(ctx.uiStats.fpsCap.c_str());
+                ui->text(ctx.uiStats.presentFrame.c_str());
+                ui->text(ctx.uiStats.sleeping.c_str());
+                if (finalFrame) ctx.stats = {};
+            }
+        };
+        ui->registerRenderCallbacks(renderUI, nullptr);
+    }
+#endif
+
+    return true;
+}
+
+//! Main exit point - shutting down our plugin
+//! 
+//! IMPORTANT: Plugins are shutdown in the inverse order based to their priority.
+//! sl.common always shuts down LAST since it has priority 0
+//!
+void slOnPluginShutdown()
+{
+    auto& ctx = (*reflex::getContext());
+
+    // If we used 'evaluate' mechanism reset the callbacks here
+    ctx.registerEvaluateCallbacks(kFeatureReflex, nullptr, nullptr);
+
+    //! GPU agnostic latency stats shutdown
+    NVSTATS_SHUTDOWN();
+
+    // Common shutdown
+    plugin::onShutdown(api::getContext());
+}
+
+//! Exports from sl_reflex.h
+//! 
+sl::Result slReflexGetState(sl::ReflexState& state)
+{
+    return slGetData(nullptr, &state, nullptr);
+}
+
+sl::Result slReflexSetMarker(sl::ReflexMarker marker, const sl::FrameToken& frame)
+{
+    sl::ReflexHelper inputs(marker);
+    inputs.next = (BaseStructure*)&frame;
+    return slSetData(&inputs, nullptr);
+}
+
+sl::Result slReflexSleep(const sl::FrameToken& frame)
+{
+    sl::ReflexHelper inputs((sl::ReflexMarker)0x1000);
+    inputs.next = (BaseStructure*)&frame;
+    return slSetData(&inputs,nullptr);
+}
+
+sl::Result slReflexSetOptions(const sl::ReflexOptions& options)
+{
+    return slSetData(&options, nullptr);
+}
 
 //! The only exported function - gateway to all functionality
 SL_EXPORT void* slGetPluginFunction(const char* functionName)
 {
     //! Forward declarations
-    const char* slGetPluginJSONConfig();
-    void slSetParameters(sl::param::IParameters * p);
+    bool slOnPluginLoad(sl::param::IParameters * params, const char* loaderJSON, const char** pluginJSON);
 
     //! Redirect to OTA if any
     SL_EXPORT_OTA;
 
     //! Core API
-    SL_EXPORT_FUNCTION(slSetParameters);
+    SL_EXPORT_FUNCTION(slOnPluginLoad);
     SL_EXPORT_FUNCTION(slOnPluginShutdown);
     SL_EXPORT_FUNCTION(slOnPluginStartup);
-    SL_EXPORT_FUNCTION(slGetPluginJSONConfig);
-    SL_EXPORT_FUNCTION(slSetConstants);
-    SL_EXPORT_FUNCTION(slGetSettings);
+    SL_EXPORT_FUNCTION(slSetData);
+    SL_EXPORT_FUNCTION(slGetData);
     
+    SL_EXPORT_FUNCTION(slReflexGetState);
+    SL_EXPORT_FUNCTION(slReflexSetMarker);
+    SL_EXPORT_FUNCTION(slReflexSleep);
+    SL_EXPORT_FUNCTION(slReflexSetOptions);
+
     return nullptr;
 }
 

@@ -22,16 +22,20 @@
 
 #include <wrl/client.h>
 
+#include "include/sl.h"
 #include "source/core/sl.interposer/d3d12/d3d12Device.h"
 #include "source/core/sl.interposer/d3d12/d3d12CommandList.h"
 #include "source/core/sl.log/log.h"
 #include "source/core/sl.api/internal.h"
 #include "source/core/sl.plugin-manager/pluginManager.h"
+#include "include/sl_hooks.h"
 
 namespace sl
 {
 namespace interposer
 {
+
+static_assert(offsetof(D3D12GraphicsCommandList, m_base) == 16, "This location must be maintained to keep compatibility with Nsight tools");
 
 D3D12GraphicsCommandList::D3D12GraphicsCommandList(D3D12Device* device, ID3D12GraphicsCommandList* original) :
     m_base(original),
@@ -39,11 +43,14 @@ D3D12GraphicsCommandList::D3D12GraphicsCommandList(D3D12Device* device, ID3D12Gr
     m_device(device)
 {
     assert(m_base != nullptr && m_device != nullptr);
-    m_trackState = (sl::plugin_manager::getInterface()->getPreferences().flags & PreferenceFlags::ePreferenceFlagDisableCLStateTracking) == 0;
+    m_trackState = (sl::plugin_manager::getInterface()->getPreferences().flags & PreferenceFlags::eDisableCLStateTracking) == 0;
     if (!m_trackState)
     {
         SL_LOG_WARN_ONCE("State tracking for command list 0x%llx has been DISABLED, please ensure to restore CL state correctly on the host side.", this);
     }
+    // Same ref count as base interface to start with
+    m_base->AddRef();
+    m_refCount.store(m_base->Release());
 }
 
 bool D3D12GraphicsCommandList::checkAndUpgradeInterface(REFIID riid)
@@ -62,6 +69,8 @@ bool D3D12GraphicsCommandList::checkAndUpgradeInterface(REFIID riid)
       __uuidof(ID3D12GraphicsCommandList4),
       __uuidof(ID3D12GraphicsCommandList5),
       __uuidof(ID3D12GraphicsCommandList6),
+      __uuidof(ID3D12GraphicsCommandList7),
+      __uuidof(ID3D12GraphicsCommandList8),
     };
 
     for (uint32_t version = 0; version < uint32_t(iidLookup.size()); ++version)
@@ -95,7 +104,7 @@ HRESULT STDMETHODCALLTYPE D3D12GraphicsCommandList::QueryInterface(REFIID riid, 
     }
 
     // SL Special case, we are requesting base interface
-    if (riid == __uuidof(StreamlineRetreiveBaseInterface))
+    if (riid == __uuidof(StreamlineRetrieveBaseInterface))
     {
         *ppvObj = m_base;
         m_base->AddRef();
@@ -115,25 +124,16 @@ HRESULT STDMETHODCALLTYPE D3D12GraphicsCommandList::QueryInterface(REFIID riid, 
 ULONG   STDMETHODCALLTYPE D3D12GraphicsCommandList::AddRef()
 {
     m_base->AddRef();
-    return InterlockedIncrement(&m_refCount);
+    return ++m_refCount;
 }
 
 ULONG   STDMETHODCALLTYPE D3D12GraphicsCommandList::Release()
 {
-    const ULONG ref = InterlockedDecrement(&m_refCount);
-    if (ref != 0)
-    {
-        return m_base->Release(), ref;
-    }
-
-    const ULONG refOrig = m_base->Release();
-    if (refOrig != 0)
-    {
-        SL_LOG_WARN("Reference count for ID3D12GraphicsCommandList 0xllx is incorrect.", this);
-    }
-
+    auto refOrig = m_base->Release();
+    auto ref = --m_refCount;
+    if (ref > 0) return ref;
+    // Base and our interface don't start with identical reference counts so no point in comparing them
     delete this;
-
     return 0;
 }
 
@@ -268,9 +268,6 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetPipelineState(ID3D12Pipeline
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::ResourceBarrier(UINT NumBarriers, const D3D12_RESOURCE_BARRIER* pBarriers)
 {
     m_base->ResourceBarrier(NumBarriers, pBarriers);
-    using ResourceBarrier_t = void(ID3D12GraphicsCommandList*, UINT NumBarriers, const D3D12_RESOURCE_BARRIER* pBarriers);
-    const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooksWithoutLazyInit(FunctionHookID::eID3D12GraphicsCommandList_ResourceBarrier);
-    for (auto hook : hooks) ((ResourceBarrier_t*)hook)(m_base, NumBarriers, pBarriers);
 }
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::ExecuteBundle(ID3D12GraphicsCommandList* pCommandList)
 {
@@ -288,7 +285,7 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetDescriptorHeaps(UINT NumDesc
 
     if (NumDescriptorHeaps > kMaxHeapCount)
     {
-        SL_LOG_ERROR("Too many descriptor heaps %u", NumDescriptorHeaps);
+        SL_LOG_WARN("Too many descriptor heaps %u", NumDescriptorHeaps);
     }
     else if(m_trackState)
     {
@@ -352,7 +349,7 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::SetComputeRoot32BitConstants(UI
 
     if (Num32BitValuesToSet > kMaxComputeRoot32BitConstCount)
     {
-        SL_LOG_ERROR("Too many 32bit root constants %u", Num32BitValuesToSet);
+        SL_LOG_WARN("Too many 32bit root constants %u", Num32BitValuesToSet);
     }
     else if(m_trackState)
     {
@@ -564,6 +561,16 @@ void STDMETHODCALLTYPE D3D12GraphicsCommandList::RSSetShadingRateImage(ID3D12Res
 void STDMETHODCALLTYPE D3D12GraphicsCommandList::DispatchMesh(UINT ThreadGroupCountX, UINT ThreadGroupCountY, UINT ThreadGroupCountZ)
 {
     static_cast<ID3D12GraphicsCommandList6*>(m_base)->DispatchMesh(ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ);
+}
+
+void STDMETHODCALLTYPE D3D12GraphicsCommandList::Barrier(UINT32 NumBarrierGroups, const D3D12_BARRIER_GROUP* pBarrierGroups)
+{
+    static_cast<ID3D12GraphicsCommandList7*>(m_base)->Barrier(NumBarrierGroups, pBarrierGroups);
+}
+
+void STDMETHODCALLTYPE D3D12GraphicsCommandList::OMSetFrontAndBackStencilRef(UINT FrontStencilRef, UINT BackStencilRef)
+{
+    static_cast<ID3D12GraphicsCommandList8*>(m_base)->OMSetFrontAndBackStencilRef(FrontStencilRef, BackStencilRef);
 }
 
 }

@@ -26,11 +26,15 @@
 
 #include "source/core/sl.interposer/hook.h"
 #include "source/core/sl.interposer/dxgi/dxgiSwapchain.h"
+#include "source/core/sl.interposer/dxgi/dxgiFactory.h"
+#include "source/core/sl.interposer/d3d12/d3d12.h"
+#include "source/core/sl.interposer/d3d12/d3d12Device.h"
 #include "source/core/sl.interposer/d3d12/d3d12CommandQueue.h"
 #include "source/core/sl.log/log.h"
 #include "source/core/sl.api/internal.h"
 #include "source/core/sl.param/parameters.h"
 #include "source/core/sl.plugin-manager/pluginManager.h"
+#include "include/sl_hooks.h"
 
 namespace sl
 {
@@ -50,54 +54,11 @@ static sl::interposer::ExportedFunction hookCreateSwapChainForComposition("IDXGI
 
 void loadDXGIModule();
 
-UINT queryDevice(IUnknown*& device, Microsoft::WRL::ComPtr<IUnknown>& deviceProxy)
-{
-    if (Microsoft::WRL::ComPtr<ID3D11Device> d3d11Device; SUCCEEDED(device->QueryInterface(__uuidof(ID3D11Device), &d3d11Device)))
-    {
-        device = d3d11Device.Get();
-        deviceProxy = device;
-        return 11;
-    }
-    if (Microsoft::WRL::ComPtr<D3D12CommandQueue> cmdQueueD3D12Proxy; SUCCEEDED(device->QueryInterface(__uuidof(D3D12CommandQueue), &cmdQueueD3D12Proxy)))
-    {
-        device = cmdQueueD3D12Proxy->m_base;
-        deviceProxy = std::move(reinterpret_cast<Microsoft::WRL::ComPtr<IUnknown> &>(cmdQueueD3D12Proxy));
-        return 12;
-    }
 
-    // This can happen when we get called with standard interfaces like ID3D12CommandQueue - most likely another interposer is present
-    return 0;
-}
+extern UINT queryDevice(IUnknown*& device, Microsoft::WRL::ComPtr<IUnknown>& deviceProxy);
 
 template <typename T>
-static void setupSwapchainProxy(T*& swapchain, UINT d3dVersion, const Microsoft::WRL::ComPtr<IUnknown>& deviceProxy, DXGI_USAGE usage)
-{
-    DXGISwapChain* swapchainProxy = nullptr;
-
-    if (d3dVersion == 11)
-    {
-        const Microsoft::WRL::ComPtr<ID3D11Device>& device = reinterpret_cast<const Microsoft::WRL::ComPtr<ID3D11Device> &>(deviceProxy);
-        swapchainProxy = new DXGISwapChain((ID3D11Device*)device.Get(), swapchain);
-    }
-    else
-    {
-        // d3d12
-        if (Microsoft::WRL::ComPtr<IDXGISwapChain3> swapchain3; SUCCEEDED(swapchain->QueryInterface(__uuidof(IDXGISwapChain3), &swapchain3)))
-        {
-            auto& cmdQueue = reinterpret_cast<const Microsoft::WRL::ComPtr<D3D12CommandQueue> &>(deviceProxy);
-            swapchainProxy = new DXGISwapChain(cmdQueue->m_device, swapchain3.Get());
-        }
-        else
-        {
-            SL_LOG_WARN("Skipping swap chain because it is missing support for the IDXGISwapChain3 interface.");
-        }
-    }
-
-    if (swapchainProxy != nullptr)
-    {
-        swapchain = swapchainProxy;
-    }
-}
+extern void setupSwapchainProxy(T*& swapchain, UINT d3dVersion, const Microsoft::WRL::ComPtr<IUnknown>& deviceProxy, DXGI_USAGE usage);
 
 HRESULT STDMETHODCALLTYPE IDXGIFactory_CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI_SWAP_CHAIN_DESC* pDesc, IDXGISwapChain** ppSwapChain)
 {
@@ -124,31 +85,34 @@ HRESULT STDMETHODCALLTYPE IDXGIFactory_CreateSwapChain(IDXGIFactory* pFactory, I
         return hr;
     }
 
-    using CreateSwapChain_t = HRESULT(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI_SWAP_CHAIN_DESC* pDesc, IDXGISwapChain** ppSwapChain);
-
+    HRESULT hr = S_OK;
+    bool skip = false;
     {
         const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eIDXGIFactory_CreateSwapChain);
-        for (auto hook : hooks) ((CreateSwapChain_t*)hook)(pFactory, pDevice, &desc, ppSwapChain);
+        for (auto [hook, feature] : hooks)
+        {
+            hr = ((PFunCreateSwapChainBefore*)hook)(pFactory, pDevice, &desc, ppSwapChain, skip);
+            if (FAILED(hr))
+            {
+                SL_LOG_WARN("PFunCreateSwapChainBefore failed %s", std::system_category().message(hr).c_str());
+                return hr;
+            }
+        }
     }
 
-    HRESULT hr{};
-    if (*ppSwapChain)
-    {
-        // Handled by one of the plugins
-        hr = S_OK;
-    }
-    else
+    if (!skip)
     {
         hr = sl::interposer::call(IDXGIFactory_CreateSwapChain, hookCreateSwapChain)(pFactory, pDevice, &desc, ppSwapChain);
         if (FAILED(hr))
         {
+            SL_LOG_WARN("CreateSwapChain failed %s", std::system_category().message(hr).c_str());
             return hr;
         }
     }
 
     {
         const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooks(FunctionHookID::eIDXGIFactory_CreateSwapChain);
-        for (auto hook : hooks) ((CreateSwapChain_t*)hook)(pFactory, pDevice, &desc, ppSwapChain);
+        for (auto [hook, feature] : hooks) ((PFunCreateSwapChainAfter*)hook)(pFactory, pDevice, &desc, ppSwapChain);
     }
 
     setupSwapchainProxy(*ppSwapChain, d3dVersion, deviceProxy, desc.BufferUsage);
@@ -189,30 +153,35 @@ HRESULT STDMETHODCALLTYPE IDXGIFactory2_CreateSwapChainForHwnd(IDXGIFactory2* pF
         sl::interposer::getInterface()->restoreCurrentCode(hookCreateSwapChainForHwnd);
         return hr;
     }
-    using CreateSwapChainForHwnd_t = HRESULT(IDXGIFactory* pFactory, IUnknown* pDevice, HWND hWnd, const DXGI_SWAP_CHAIN_DESC1* pDesc, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC*, IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain);
+
+    HRESULT hr = S_OK;
+    bool skip = false;
     {
-        const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eIDXGIFactory2_CreateSwapChainForHwnd);
-        for (auto hook : hooks) ((CreateSwapChainForHwnd_t*)hook)(pFactory, pDevice, hWnd, &desc, pFullscreenDesc, pRestrictToOutput, ppSwapChain);
+        const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eIDXGIFactory_CreateSwapChainForHwnd);
+        for (auto [hook, feature] : hooks)
+        {
+            hr = ((PFunCreateSwapChainForHwndBefore*)hook)(pFactory, pDevice, hWnd, &desc, pFullscreenDesc, pRestrictToOutput, ppSwapChain, skip);
+            if (FAILED(hr))
+            {
+                SL_LOG_WARN("PFunCreateSwapChainForHwndBefore failed %s", std::system_category().message(hr).c_str());
+                return hr;
+            }
+        }
     }
 
-    HRESULT hr{};
-    if (*ppSwapChain)
-    {
-        // Handled by one of the plugins
-        hr = S_OK;
-    }
-    else
+    if (!skip)
     {
         hr = sl::interposer::call(IDXGIFactory2_CreateSwapChainForHwnd, hookCreateSwapChainForHwnd)(pFactory, pDevice, hWnd, &desc, fullscreenDesc.Windowed ? nullptr : &fullscreenDesc, pRestrictToOutput, ppSwapChain);
         if (FAILED(hr))
         {
+            SL_LOG_WARN("CreateSwapChainForHwnd failed %s", std::system_category().message(hr).c_str());
             return hr;
         }
     }
 
     {
-        const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooks(FunctionHookID::eIDXGIFactory2_CreateSwapChainForHwnd);
-        for (auto hook : hooks) ((CreateSwapChainForHwnd_t*)hook)(pFactory, pDevice, hWnd, &desc, pFullscreenDesc, pRestrictToOutput, ppSwapChain);
+        const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooks(FunctionHookID::eIDXGIFactory_CreateSwapChainForHwnd);
+        for (auto [hook, feature] : hooks) ((PFunCreateSwapChainForHwndAfter*)hook)(pFactory, pDevice, hWnd, &desc, pFullscreenDesc, pRestrictToOutput, ppSwapChain);
     }
     setupSwapchainProxy(*ppSwapChain, d3dVersion, deviceProxy, desc.BufferUsage);
 
@@ -243,29 +212,35 @@ HRESULT STDMETHODCALLTYPE IDXGIFactory2_CreateSwapChainForCoreWindow(IDXGIFactor
         return hr;
     }
 
-    using CreateSwapChainForCoreWindow_t = HRESULT(IDXGIFactory* pFactory, IUnknown* pDevice, IUnknown* pWindow, const DXGI_SWAP_CHAIN_DESC1* pDesc, IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain);
+    HRESULT hr = S_OK;
+    bool skip = false;
     {
-        const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eIDXGIFactory2_CreateSwapChainForCoreWindow);
-        for (auto hook : hooks) ((CreateSwapChainForCoreWindow_t*)hook)(pFactory, pDevice, pWindow, &desc, pRestrictToOutput, ppSwapChain);
-    }
-
-    HRESULT hr{};
-    if (*ppSwapChain)
-    {
-        hr = S_OK;
-    }
-    else
-    {
-        hr = sl::interposer::call(IDXGIFactory2_CreateSwapChainForCoreWindow, hookCreateSwapChainForCoreWindow)(pFactory, pDevice, pWindow, &desc, pRestrictToOutput, ppSwapChain);
-        if (FAILED(hr) || !d3dVersion)
+        const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eIDXGIFactory_CreateSwapChainForCoreWindow);
+        for (auto [hook, feature] : hooks)
         {
-            return hr;
+            hr = ((PFunCreateSwapChainForCoreWindowBefore*)hook)(pFactory, pDevice, pWindow, &desc, pRestrictToOutput, ppSwapChain, skip);
+            if (FAILED(hr))
+            {
+                SL_LOG_WARN("PFunCreateSwapChainForCoreWindowBefore failed %s", std::system_category().message(hr).c_str());
+                return hr;
+            }
         }
     }
 
+    
+    if (!skip)
     {
-        const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooks(FunctionHookID::eIDXGIFactory2_CreateSwapChainForCoreWindow);
-        for (auto hook : hooks) ((CreateSwapChainForCoreWindow_t*)hook)(pFactory, pDevice, pWindow, &desc, pRestrictToOutput, ppSwapChain);
+        hr = sl::interposer::call(IDXGIFactory2_CreateSwapChainForCoreWindow, hookCreateSwapChainForCoreWindow)(pFactory, pDevice, pWindow, &desc, pRestrictToOutput, ppSwapChain);
+        if (FAILED(hr))
+        {
+            SL_LOG_WARN("CreateSwapChainForCoreWindow failed %s", std::system_category().message(hr).c_str());
+            return hr;
+        }
+    }
+    
+    {
+        const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooks(FunctionHookID::eIDXGIFactory_CreateSwapChainForCoreWindow);
+        for (auto [hook, feature] : hooks) ((PFunCreateSwapChainForCoreWindowAfter*)hook)(pFactory, pDevice, pWindow, &desc, pRestrictToOutput, ppSwapChain);
     }
 
     setupSwapchainProxy(*ppSwapChain, d3dVersion, deviceProxy, desc.BufferUsage);
@@ -311,6 +286,65 @@ HRESULT STDMETHODCALLTYPE IDXGIFactory2_CreateSwapChainForComposition(IDXGIFacto
 
 using namespace sl::interposer;
 
+void CreateDXGIFactoryInternal(REFIID riid, void**& ppFactory)
+{
+    if (sl::interposer::getInterface()->isEnabled())
+    {
+        //! IMPORTANT: Check if any plugin required hook into the factory or swap-chain
+        //! 
+        //! Note that swap-chain proxy cannot be created without a proxy factory hence the dependency.
+        if (!sl::plugin_manager::getInterface()->isProxyNeeded("IDXGIFactory") &&
+            !sl::plugin_manager::getInterface()->isProxyNeeded("IDXGISwapChain"))
+        {
+            SL_LOG_INFO("IDXGIFactory proxy not required, skipping");
+            return;
+        }
+
+        auto config = sl::interposer::getInterface()->getConfig();
+        if (config.useDXGIProxy)
+        {
+            SL_LOG_VERBOSE("Using DXGI proxy interface");
+            IDXGIFactory* const factory = static_cast<IDXGIFactory*>(*ppFactory);
+            auto proxy = new DXGIFactory(factory);
+            if (proxy->checkAndUpgradeInterface(riid))
+            {
+                *ppFactory = proxy;
+            }
+            else
+            {
+                delete proxy;
+                proxy = {};
+            }
+        }
+        else
+        {
+            // No proxy, inject hooks directly to DXGI factory virtual table
+
+            SL_LOG_VERBOSE("Injecting hooks into DXGI proxy virtual table");
+
+            IDXGIFactory* const factory = static_cast<IDXGIFactory*>(*ppFactory);
+
+            hookCreateSwapChain.replacement = IDXGIFactory_CreateSwapChain;
+            sl::interposer::getInterface()->registerHookForClassInstance(factory, 10, hookCreateSwapChain);
+
+            // Check for DXGI 1.2 support and install IDXGIFactory2 hooks if it exists
+            if (Microsoft::WRL::ComPtr<IDXGIFactory2> factory2; SUCCEEDED(factory->QueryInterface(__uuidof(IDXGIFactory2), &factory2)))
+            {
+                hookCreateSwapChainForHwnd.replacement = IDXGIFactory2_CreateSwapChainForHwnd;
+                sl::interposer::getInterface()->registerHookForClassInstance(factory2.Get(), 15, hookCreateSwapChainForHwnd);
+                hookCreateSwapChainForCoreWindow.replacement = IDXGIFactory2_CreateSwapChainForCoreWindow;
+                sl::interposer::getInterface()->registerHookForClassInstance(factory2.Get(), 16, hookCreateSwapChainForCoreWindow);
+                hookCreateSwapChainForComposition.replacement = IDXGIFactory2_CreateSwapChainForComposition;
+                sl::interposer::getInterface()->registerHookForClassInstance(factory2.Get(), 24, hookCreateSwapChainForComposition);
+            }
+        }
+    }
+    else
+    {
+        SL_LOG_WARN_ONCE("Streamline interposer has been disabled");
+    }
+}
+
 extern "C" HRESULT WINAPI CreateDXGIFactory(REFIID riid, void** ppFactory)
 {
     // Factory1 always exists
@@ -327,28 +361,7 @@ extern "C" HRESULT WINAPI CreateDXGIFactory1(REFIID riid, void** ppFactory)
         return hr;
     }
 
-    if (sl::interposer::getInterface()->isEnabled())
-    {
-        IDXGIFactory* const factory = static_cast<IDXGIFactory*>(*ppFactory);
-
-        hookCreateSwapChain.replacement = IDXGIFactory_CreateSwapChain;
-        sl::interposer::getInterface()->registerHookForClassInstance(factory, 10, hookCreateSwapChain);
-
-        // Check for DXGI 1.2 support and install IDXGIFactory2 hooks if it exists
-        if (Microsoft::WRL::ComPtr<IDXGIFactory2> factory2; SUCCEEDED(factory->QueryInterface(__uuidof(IDXGIFactory2), &factory2)))
-        {
-            hookCreateSwapChainForHwnd.replacement = IDXGIFactory2_CreateSwapChainForHwnd;
-            sl::interposer::getInterface()->registerHookForClassInstance(factory2.Get(), 15, hookCreateSwapChainForHwnd);
-            hookCreateSwapChainForCoreWindow.replacement = IDXGIFactory2_CreateSwapChainForCoreWindow;
-            sl::interposer::getInterface()->registerHookForClassInstance(factory2.Get(), 16, hookCreateSwapChainForCoreWindow);
-            hookCreateSwapChainForComposition.replacement = IDXGIFactory2_CreateSwapChainForComposition;
-            sl::interposer::getInterface()->registerHookForClassInstance(factory2.Get(), 24, hookCreateSwapChainForComposition);
-        }
-    }
-    else
-    {
-        SL_LOG_WARN_ONCE("Streamline interposer has been disabled");
-    }
+    CreateDXGIFactoryInternal(riid, ppFactory);
 
     return hr;
 }
@@ -356,33 +369,13 @@ extern "C" HRESULT WINAPI CreateDXGIFactory2(UINT Flags, REFIID riid, void** ppF
 {
     loadDXGIModule();
 
-    const HRESULT hr = sl::interposer::call(CreateDXGIFactory2, hookCreateDXGIFactory2)(Flags, riid, ppFactory); //trampoline(Flags, riid, ppFactory);
+    const HRESULT hr = sl::interposer::call(CreateDXGIFactory2, hookCreateDXGIFactory2)(Flags, riid, ppFactory);
     if (FAILED(hr))
     {
         return hr;
     }
 
-    if (sl::interposer::getInterface()->isEnabled())
-    {
-        IDXGIFactory* const factory = static_cast<IDXGIFactory*>(*ppFactory);
-
-        hookCreateSwapChain.replacement = IDXGIFactory_CreateSwapChain;
-        sl::interposer::getInterface()->registerHookForClassInstance(factory, 10, hookCreateSwapChain);
-
-        if (Microsoft::WRL::ComPtr<IDXGIFactory2> factory2; SUCCEEDED(factory->QueryInterface(__uuidof(IDXGIFactory2), &factory2)))
-        {
-            hookCreateSwapChainForHwnd.replacement = IDXGIFactory2_CreateSwapChainForHwnd;
-            sl::interposer::getInterface()->registerHookForClassInstance(factory2.Get(), 15, hookCreateSwapChainForHwnd);
-            hookCreateSwapChainForCoreWindow.replacement = IDXGIFactory2_CreateSwapChainForCoreWindow;
-            sl::interposer::getInterface()->registerHookForClassInstance(factory2.Get(), 16, hookCreateSwapChainForCoreWindow);
-            hookCreateSwapChainForComposition.replacement = IDXGIFactory2_CreateSwapChainForComposition;
-            sl::interposer::getInterface()->registerHookForClassInstance(factory2.Get(), 24, hookCreateSwapChainForComposition);
-        }
-    }
-    else
-    {
-        SL_LOG_WARN_ONCE("Streamline interposer has been disabled");
-    }
+    CreateDXGIFactoryInternal(riid, ppFactory);
 
     return hr;
 }
@@ -429,8 +422,8 @@ static void loadDXGIModule()
         return;
     }
 
-    sl::interposer::ExportedFunctionList dxgiFunctions;
-    sl::interposer::getInterface()->enumerateModuleExports(L"dxgi.dll", dxgiFunctions);
+    ExportedFunctionList dxgiFunctions;
+    getInterface()->enumerateModuleExports(L"dxgi.dll", dxgiFunctions);
     for (auto& f : dxgiFunctions)
     {
         if (f == hookCreateDXGIFactory)

@@ -40,8 +40,8 @@ constexpr size_t countof(T const (&)[N]) noexcept
 namespace sl
 {
 
-enum LogLevel;
-enum LogType;
+enum class LogLevel : uint32_t;
+enum class LogType : uint32_t;
 
 namespace log
 {
@@ -75,13 +75,15 @@ enum ConsoleForeground
 
 struct ILog
 {
-    virtual void logva(int level, ConsoleForeground color, const char *file, int line, const char *func, int type, const char *fmt, ...) = 0;
+    virtual void logva(uint32_t level, ConsoleForeground color, const char *file, int line, const char *func, int type, const char *fmt, ...) = 0;
     virtual void enableConsole(bool flag) = 0;
     virtual LogLevel getLogLevel() const = 0;
     virtual void setLogLevel(LogLevel level) = 0;
     virtual void setLogPath(const wchar_t *path) = 0;
     virtual void setLogName(const wchar_t *name) = 0;
     virtual void setLogCallback(void* logMessageCallback) = 0;
+    virtual void setLogMessageDelay(float logMessageDelayMS) = 0;
+    virtual const wchar_t* getLogPath() = 0;
     virtual void shutdown() = 0;
 };
 

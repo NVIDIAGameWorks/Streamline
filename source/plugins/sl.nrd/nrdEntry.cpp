@@ -37,19 +37,19 @@
 #include "source/core/sl.security/secureLoadLibrary.h"
 #include "external/json/include/nlohmann/json.hpp"
 
-#include "source/platforms/sl.chi/d3d12.h"
+#include "source/platforms/sl.chi/compute.h"
 #include "source/plugins/sl.common/commonInterface.h"
 #include "source/plugins/sl.nrd/versions.h"
 
 #include "external/nrd/Include/NRD.h"
-#include "shaders/nrd_prep_cs.h"
-#include "shaders/nrd_pack_cs.h"
-#include "shaders/nrd_prep_spv.h"
-#include "shaders/nrd_pack_spv.h"
+#include "_artifacts/shaders/nrd_prep_cs.h"
+#include "_artifacts/shaders/nrd_pack_cs.h"
+#include "_artifacts/shaders/nrd_prep_spv.h"
+#include "_artifacts/shaders/nrd_pack_spv.h"
 #include "_artifacts/gitVersion.h"
 
-#define NRD_CHECK(f) {nrd::Result r = f;if(r != nrd::Result::SUCCESS) { SL_LOG_ERROR("%s failed error %u",#f,r); return false;}};
-#define NRD_CHECK1(f) {nrd::Result r = f;if(r != nrd::Result::SUCCESS) { SL_LOG_ERROR("%s failed error %u",#f,r); return;}};
+#define NRD_CHECK(f) {nrd::Result r = f;if(r != nrd::Result::SUCCESS) { SL_LOG_ERROR( "%s failed error %u",#f,r); return false;}};
+#define NRD_CHECK1(f) {nrd::Result r = f;if(r != nrd::Result::SUCCESS) { SL_LOG_ERROR( "%s failed error %u",#f,r); return Result::eErrorNRDAPI;}};
 
 using json = nlohmann::json;
 namespace sl
@@ -94,8 +94,13 @@ struct NRDViewport
     std::string description = "";
 };
 
-struct NRD
+namespace nrdsl
 {
+struct NRDContext
+{
+    SL_PLUGIN_CONTEXT_CREATE_DESTROY(NRDContext);
+    void onDestroyContext() {};
+
     HMODULE lib{};
     PFunGetLibraryDesc* getLibraryDesc{};
     PFunCreateDenoiser* createDenoiser{};
@@ -104,10 +109,10 @@ struct NRD
     PFunGetComputeDispatches* getComputeDispatches{};
     PFunDestroyDenoiser* destroyDenoiser{};
 
-    operator bool() const 
-    { 
-        return getLibraryDesc && createDenoiser && getDenoiserDesc && 
-               setMethodSettings && getComputeDispatches && destroyDenoiser; 
+    operator bool() const
+    {
+        return getLibraryDesc && createDenoiser && getDenoiserDesc &&
+            setMethodSettings && getComputeDispatches && destroyDenoiser;
     }
 
     chi::Kernel prepareDataKernel = {};
@@ -123,7 +128,7 @@ struct NRD
     NRDConstants* nrdConsts{};
 
     // We store incoming constants here
-    common::ViewportIdFrameData<> constsPerViewport = {"nrd"};
+    common::ViewportIdFrameData<> constsPerViewport = { "nrd" };
 
     chi::ICompute* compute = {};
 
@@ -146,32 +151,64 @@ struct NRD
         }
     }
 };
-NRD s_nrd = {};
+}
+
+const char* JSON = R"json(
+{
+    "id" : 1,
+    "priority" : 100,
+    "namespace" : "nrd",
+    "required_plugins" : ["sl.common"],
+    "rhi" : ["d3d11", "d3d12", "vk"],
+    "hooks" :
+    [
+    ]
+}
+)json";
+
+void updateEmbeddedJSON(json& config)
+{
+    // Check if plugin is supported or not on this platform and set the flag accordingly
+    common::SystemCaps* caps = {};
+    param::getPointerParam(api::getContext()->parameters, sl::param::common::kSystemCaps, &caps);
+    common::PFunUpdateCommonEmbeddedJSONConfig* updateCommonEmbeddedJSONConfig{};
+    param::getPointerParam(api::getContext()->parameters, sl::param::common::kPFunUpdateCommonEmbeddedJSONConfig, &updateCommonEmbeddedJSONConfig);
+    if (caps && updateCommonEmbeddedJSONConfig)
+    {
+        // Our plugin runs on any system so use all defaults
+        common::PluginInfo info{};
+        info.SHA = GIT_LAST_COMMIT_SHORT;
+        updateCommonEmbeddedJSONConfig(&config, info);
+    }
+}
+
+SL_PLUGIN_DEFINE("sl.nrd", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON, updateEmbeddedJSON, nrdsl, NRDContext)
 
 void destroyNRDViewport(NRDViewport*);
 
 bool slSetConstants(const void* data, uint32_t frameIndex, uint32_t id)
 {
+    auto& ctx = (*nrdsl::getContext());
     auto consts = (const sl::NRDConstants*)data;
-    s_nrd.constsPerViewport.set(frameIndex, id, consts);
+    ctx.constsPerViewport.set(frameIndex, id, consts);
 #ifndef SL_PRODUCTION
-    if (consts->methodMask == 0 && !s_nrd.viewports.empty())
+    if (consts->methodMask == 0 && !ctx.viewports.empty())
     {
-        auto viewports = s_nrd.viewports;
-        auto lambda = [viewports](void)->void
+        auto viewports = ctx.viewports;
+        auto lambda = [&ctx, viewports](void)->void
         {
             for (auto& v : viewports)
             {
                 destroyNRDViewport(v.second);
                 delete v.second;
             }
-            s_nrd.viewports.clear();
+            ctx.viewports.clear();
 
-            CHI_VALIDATE(s_nrd.compute->destroyKernel(s_nrd.prepareDataKernel));
-            CHI_VALIDATE(s_nrd.compute->destroyKernel(s_nrd.packDataKernel));
+            CHI_VALIDATE(ctx.compute->destroyKernel(ctx.prepareDataKernel));
+            CHI_VALIDATE(ctx.compute->destroyKernel(ctx.packDataKernel));
         };
-        CHI_VALIDATE(s_nrd.compute->destroy(lambda));
-        s_nrd.viewports.clear();
+        CHI_VALIDATE(ctx.compute->destroy(lambda));
+        ctx.viewports.clear();
     }
 #endif
     return true;
@@ -179,7 +216,7 @@ bool slSetConstants(const void* data, uint32_t frameIndex, uint32_t id)
 
 bool nrdGetConstants(const common::EventData& data, NRDConstants** consts)
 {
-    return s_nrd.constsPerViewport.get(data, consts);
+    return (*nrdsl::getContext()).constsPerViewport.get(data, consts);
 }
 
 chi::Format convertNRDFormat(nrd::Format format)
@@ -237,22 +274,23 @@ chi::Format convertNRDFormat(nrd::Format format)
 
 void destroyNRDInstance(NRDInstance* inst)
 {
-    SL_LOG_INFO("Destroying NRD instance with method mask %u", inst->methodMask);
-    s_nrd.destroyDenoiser(*inst->denoiser);
+    auto& ctx = (*nrdsl::getContext());
+    SL_LOG_INFO("Destroying NRDContext instance with method mask %u", inst->methodMask);
+    ctx.destroyDenoiser(*inst->denoiser);
     
     for (auto& shader : inst->shaders)
     {
-        CHI_VALIDATE(s_nrd.compute->destroyKernel(shader));
+        CHI_VALIDATE(ctx.compute->destroyKernel(shader));
     }
     inst->shaders.clear();
     for (auto& res : inst->permanentTextures)
     {
-        CHI_VALIDATE(s_nrd.compute->destroyResource(res));
+        CHI_VALIDATE(ctx.compute->destroyResource(res));
     }
     inst->permanentTextures.clear();
     for (auto& res : inst->transientTextures)
     {
-        CHI_VALIDATE(s_nrd.compute->destroyResource(res));
+        CHI_VALIDATE(ctx.compute->destroyResource(res));
     }
     inst->transientTextures.clear();
     delete inst;
@@ -260,6 +298,8 @@ void destroyNRDInstance(NRDInstance* inst)
 
 void destroyNRDViewport(NRDViewport* viewport)
 {
+    auto& ctx = (*nrdsl::getContext());
+
     for (auto& inst : viewport->instances)
     {
         destroyNRDInstance(inst.second);
@@ -269,65 +309,69 @@ void destroyNRDViewport(NRDViewport* viewport)
 
     viewport->description = "";
 
-    CHI_VALIDATE(s_nrd.compute->destroyResource(viewport->viewZ));
-    CHI_VALIDATE(s_nrd.compute->destroyResource(viewport->mvec));
-    CHI_VALIDATE(s_nrd.compute->destroyResource(viewport->packedAO));
-    CHI_VALIDATE(s_nrd.compute->destroyResource(viewport->packedSpec));
-    CHI_VALIDATE(s_nrd.compute->destroyResource(viewport->packedDiff));
+    CHI_VALIDATE(ctx.compute->destroyResource(viewport->viewZ));
+    CHI_VALIDATE(ctx.compute->destroyResource(viewport->mvec));
+    CHI_VALIDATE(ctx.compute->destroyResource(viewport->packedAO));
+    CHI_VALIDATE(ctx.compute->destroyResource(viewport->packedSpec));
+    CHI_VALIDATE(ctx.compute->destroyResource(viewport->packedDiff));
 
-    s_nrd.cachedStates.clear();
+    ctx.cachedStates.clear();
 }
 
 void destroyNRD()
 {
-    for (auto& v : s_nrd.viewports)
+    auto& ctx = (*nrdsl::getContext());
+
+    for (auto& v : ctx.viewports)
     {
         destroyNRDViewport(v.second);
         delete v.second;
     }
-    s_nrd.viewports.clear();
+    ctx.viewports.clear();
 
-    CHI_VALIDATE(s_nrd.compute->destroyKernel(s_nrd.prepareDataKernel));
-    CHI_VALIDATE(s_nrd.compute->destroyKernel(s_nrd.packDataKernel));
+    CHI_VALIDATE(ctx.compute->destroyKernel(ctx.prepareDataKernel));
+    CHI_VALIDATE(ctx.compute->destroyKernel(ctx.packDataKernel));
 }
 
-bool initializeNRD(chi::CommandList cmdList, const common::EventData& data)
+Result initializeNRD(chi::CommandList cmdList, const common::EventData& data, const sl::BaseStructure** inputs, uint32_t numInputs)
 {
+    auto& ctx = (*nrdsl::getContext());
+
     {
-        auto it = s_nrd.viewports.find(data.id);
-        if (it == s_nrd.viewports.end())
+        auto it = ctx.viewports.find(data.id);
+        if (it == ctx.viewports.end())
         {
-            s_nrd.viewports[data.id] = new NRDViewport{};
+            ctx.viewports[data.id] = new NRDViewport{};
         }
-        s_nrd.viewport = s_nrd.viewports[data.id];
-        s_nrd.viewport->id = data.id;
-        s_nrd.viewport->frameIndex = data.frame;
+        ctx.viewport = ctx.viewports[data.id];
+        ctx.viewport->id = data.id;
+        ctx.viewport->frameIndex = data.frame;
     }
 
-    if (!s_nrd.nrdConsts->methodMask)
+    if (!ctx.nrdConsts->methodMask)
     {
-        SL_LOG_WARN("NRD disabled, if this is not intentional please update methodMask bit field.");
-        return true; // NRD disabled which is OK
+        SL_LOG_WARN("NRDContext disabled, if this is not intentional please update methodMask bit field.");
+        return Result::eOk; // NRDContext disabled which is OK
     }
 
-    s_nrd.cachedStates[nullptr] = chi::ResourceState::eGeneral;
+    ctx.cachedStates[nullptr] = chi::ResourceState::eGeneral;
 
-    s_nrd.viewport->instance = {};
-    auto it = s_nrd.viewport->instances.find(s_nrd.nrdConsts->methodMask);
-    if (it != s_nrd.viewport->instances.end())
+    ctx.viewport->instance = {};
+    auto it = ctx.viewport->instances.find(ctx.nrdConsts->methodMask);
+    if (it != ctx.viewport->instances.end())
     {
-        s_nrd.viewport->instance = (*it).second;
+        ctx.viewport->instance = (*it).second;
     }
     else
     {
-        s_nrd.viewport->instance = new NRDInstance();
-        *s_nrd.viewport->instance = {};
-        s_nrd.viewport->instances[s_nrd.nrdConsts->methodMask] = s_nrd.viewport->instance;
+        ctx.viewport->instance = new NRDInstance();
+        *ctx.viewport->instance = {};
+        ctx.viewport->instances[ctx.nrdConsts->methodMask] = ctx.viewport->instance;
     }
 
     auto parameters = api::getContext()->parameters;
 
-    uint32_t mask = s_nrd.nrdConsts->methodMask;
+    uint32_t mask = ctx.nrdConsts->methodMask;
     uint32_t i = 0;
     nrd::Method allMethods[] = 
     { 
@@ -377,104 +421,104 @@ bool initializeNRD(chi::CommandList cmdList, const common::EventData& data)
             switch(allMethods[i])
             {
                 case nrd::Method::RELAX_DIFFUSE_SPECULAR:
-                    s_nrd.viewport->instance->relax = true;
+                    ctx.viewport->instance->relax = true;
                 case nrd::Method::REBLUR_DIFFUSE_SPECULAR:
-                    s_nrd.viewport->instance->enableSpecular = true;
-                    s_nrd.viewport->instance->enableDiffuse = true;
-                    pname = eBufferTypeDiffuseHitNoisy;
+                    ctx.viewport->instance->enableSpecular = true;
+                    ctx.viewport->instance->enableDiffuse = true;
+                    pname = kBufferTypeDiffuseHitNoisy;
                     break;
                 case nrd::Method::RELAX_DIFFUSE: 
-                    s_nrd.viewport->instance->relax = true;
+                    ctx.viewport->instance->relax = true;
                 case nrd::Method::REBLUR_DIFFUSE: 
-                    pname = eBufferTypeDiffuseHitNoisy;
-                    s_nrd.viewport->instance->enableDiffuse = true;
+                    pname = kBufferTypeDiffuseHitNoisy;
+                    ctx.viewport->instance->enableDiffuse = true;
                     break;
                 case nrd::Method::RELAX_SPECULAR:
-                    s_nrd.viewport->instance->relax = true;
+                    ctx.viewport->instance->relax = true;
                 case nrd::Method::REBLUR_SPECULAR:
-                    pname = eBufferTypeSpecularHitNoisy;
-                    s_nrd.viewport->instance->enableSpecular = true;
+                    pname = kBufferTypeSpecularHitNoisy;
+                    ctx.viewport->instance->enableSpecular = true;
                     break;
                 case nrd::Method::SIGMA_SHADOW_TRANSLUCENCY:
                 case nrd::Method::SIGMA_SHADOW:
-                    pname = eBufferTypeShadowNoisy; 
+                    pname = kBufferTypeShadowNoisy;
                     break;
                 case nrd::Method::REBLUR_DIFFUSE_OCCLUSION:
-                    pname = eBufferTypeAmbientOcclusionNoisy;
-                    s_nrd.viewport->instance->enableAO = true;
+                    pname = kBufferTypeAmbientOcclusionNoisy;
+                    ctx.viewport->instance->enableAO = true;
                     break;
             };
  
-            chi::Resource res = {};
-            if (!getTaggedResource(pname, res, s_nrd.viewport->id))
-            {
-                SL_LOG_ERROR("Failed to find resource '%s', please make sure to tag all NRD resources", pname);
-                return false;
-            }
-            chi::ResourceDescription desc = {};
-            CHI_CHECK_RF(s_nrd.compute->getResourceDescription(res, desc));
+            CommonResource res{};
+            SL_CHECK(getTaggedResource(pname, res, ctx.viewport->id, false, inputs, numInputs));
+            chi::ResourceDescription desc{};
+            CHI_CHECK_RR(ctx.compute->getResourceState(res.getState(), desc.state));
+            CHI_CHECK_RR(ctx.compute->getResourceDescription(res, desc));
             
-            if (s_nrd.viewport->instance->denoiser && (s_nrd.viewport->width != desc.width || s_nrd.viewport->height != desc.height))
+            if (ctx.viewport->instance->denoiser && (ctx.viewport->width != desc.width || ctx.viewport->height != desc.height))
             {
                 auto viewport = new NRDViewport{};
-                viewport->id = s_nrd.viewport->id;
+                viewport->id = ctx.viewport->id;
                 auto instance = new NRDInstance{};
-                instance->enableAO = s_nrd.viewport->instance->enableAO;
-                instance->enableSpecular = s_nrd.viewport->instance->enableSpecular;
-                instance->enableDiffuse = s_nrd.viewport->instance->enableDiffuse;
-                destroyNRDViewport(s_nrd.viewport);
-                s_nrd.viewports[viewport->id] = viewport;
-                s_nrd.viewport = viewport;
-                s_nrd.viewport->instances[s_nrd.nrdConsts->methodMask] = instance;
-                s_nrd.viewport->instance = instance;
+                instance->enableAO = ctx.viewport->instance->enableAO;
+                instance->enableSpecular = ctx.viewport->instance->enableSpecular;
+                instance->enableDiffuse = ctx.viewport->instance->enableDiffuse;
+                destroyNRDViewport(ctx.viewport);
+                ctx.viewports[viewport->id] = viewport;
+                ctx.viewport = viewport;
+                ctx.viewport->instances[ctx.nrdConsts->methodMask] = instance;
+                ctx.viewport->instance = instance;
             }
 
-            s_nrd.viewport->instance->methodDescs[methodCount++] = nrd::MethodDesc{ allMethods[i], (uint16_t)desc.width, (uint16_t)desc.height };
-            s_nrd.viewport->width = desc.width;
-            s_nrd.viewport->height = desc.height;
+            ctx.viewport->instance->methodDescs[methodCount++] = nrd::MethodDesc{ allMethods[i], (uint16_t)desc.width, (uint16_t)desc.height };
+            ctx.viewport->width = desc.width;
+            ctx.viewport->height = desc.height;
         }
         mask = mask >> 1;
         i++;
     }
 
     // Nothing to do, bail out
-    if (s_nrd.viewport->instance->denoiser)
+    if (ctx.viewport->instance->denoiser)
     {
-        return true;
+        return Result::eOk;
     }
 
-    if (!s_nrd.prepareDataKernel)
+    if (!ctx.prepareDataKernel)
     {
-        chi::PlatformType platform = chi::ePlatformTypeD3D12;
-        s_nrd.compute->getPlatformType(platform);
-        if (platform == chi::ePlatformTypeVK)
+        RenderAPI platform = RenderAPI::eD3D12;
+        ctx.compute->getRenderAPI(platform);
+        if (platform == RenderAPI::eVulkan)
         {
-            CHI_CHECK_RF(s_nrd.compute->createKernel((void*)nrd_prep_spv, nrd_prep_spv_len, "nrd_prep.cs", "main", s_nrd.prepareDataKernel));
-            CHI_CHECK_RF(s_nrd.compute->createKernel((void*)nrd_pack_spv, nrd_pack_spv_len, "nrd_pack.cs", "main", s_nrd.packDataKernel));
+            CHI_CHECK_RR(ctx.compute->createKernel((void*)nrd_prep_spv, nrd_prep_spv_len, "nrd_prep.cs", "main", ctx.prepareDataKernel));
+            CHI_CHECK_RR(ctx.compute->createKernel((void*)nrd_pack_spv, nrd_pack_spv_len, "nrd_pack.cs", "main", ctx.packDataKernel));
         }
         else
         {
-            CHI_CHECK_RF(s_nrd.compute->createKernel((void*)nrd_prep_cs, nrd_prep_cs_len, "nrd_prep.cs", "main", s_nrd.prepareDataKernel));
-            CHI_CHECK_RF(s_nrd.compute->createKernel((void*)nrd_pack_cs, nrd_pack_cs_len, "nrd_pack.cs", "main", s_nrd.packDataKernel));
+            CHI_CHECK_RR(ctx.compute->createKernel((void*)nrd_prep_cs, nrd_prep_cs_len, "nrd_prep.cs", "main", ctx.prepareDataKernel));
+            CHI_CHECK_RR(ctx.compute->createKernel((void*)nrd_pack_cs, nrd_pack_cs_len, "nrd_pack.cs", "main", ctx.packDataKernel));
         }
     }
 
     for (uint32_t i = 0; i < methodCount; i++)
     {
-        SL_LOG_HINT("Requested NRD method %s (%u,%u) for viewport %u", allMethodNames[(int)s_nrd.viewport->instance->methodDescs[i].method], s_nrd.viewport->instance->methodDescs[i].fullResolutionWidth, s_nrd.viewport->instance->methodDescs[i].fullResolutionHeight, s_nrd.viewport->id);
-        s_nrd.viewport->description += extra::format(" - {} ({},{})", allMethodNames[(int)s_nrd.viewport->instance->methodDescs[i].method], s_nrd.viewport->instance->methodDescs[i].fullResolutionWidth, s_nrd.viewport->instance->methodDescs[i].fullResolutionHeight);
+        SL_LOG_HINT("Requested NRDContext method %s (%u,%u) for viewport %u", allMethodNames[(int)ctx.viewport->instance->methodDescs[i].method], ctx.viewport->instance->methodDescs[i].fullResolutionWidth, ctx.viewport->instance->methodDescs[i].fullResolutionHeight, ctx.viewport->id);
+        ctx.viewport->description += extra::format(" - {} ({},{})", allMethodNames[(int)ctx.viewport->instance->methodDescs[i].method], ctx.viewport->instance->methodDescs[i].fullResolutionWidth, ctx.viewport->instance->methodDescs[i].fullResolutionHeight);
     }
 
-    s_nrd.viewport->instance->methodMask = s_nrd.nrdConsts->methodMask;
-    s_nrd.viewport->instance->methodCount = methodCount;
+    ctx.viewport->instance->methodMask = ctx.nrdConsts->methodMask;
+    ctx.viewport->instance->methodCount = methodCount;
 
     nrd::DenoiserCreationDesc denoiserCreationDesc = {};
-    denoiserCreationDesc.requestedMethods = s_nrd.viewport->instance->methodDescs;
+    denoiserCreationDesc.requestedMethods = ctx.viewport->instance->methodDescs;
     denoiserCreationDesc.requestedMethodNum = methodCount;
-    NRD_CHECK(s_nrd.createDenoiser(denoiserCreationDesc, s_nrd.viewport->instance->denoiser));
+    if (ctx.createDenoiser(denoiserCreationDesc, ctx.viewport->instance->denoiser) != nrd::Result::SUCCESS)
+    {
+        return Result::eErrorNRDAPI;
+    }
 
     nrd::DenoiserDesc denoiserDesc = {};
-    denoiserDesc = s_nrd.getDenoiserDesc(*s_nrd.viewport->instance->denoiser);
+    denoiserDesc = ctx.getDenoiserDesc(*ctx.viewport->instance->denoiser);
 
     auto convertNRDTextureDesc = [](const nrd::TextureDesc& nrdTexDesc) -> chi::ResourceDescription
     {
@@ -487,137 +531,137 @@ bool initializeNRD(chi::CommandList cmdList, const common::EventData& data)
         return texDesc;
     };
 
-    s_nrd.viewport->instance->permanentTextures.resize(denoiserDesc.permanentPoolSize);
+    ctx.viewport->instance->permanentTextures.resize(denoiserDesc.permanentPoolSize);
     for (uint32_t texID = 0; texID < denoiserDesc.permanentPoolSize; ++texID)
     {
         char buffer[64];
-        snprintf(buffer, 64, "sl.s_nrd.permanentTexture[%d]", texID);
+        snprintf(buffer, 64, "sl.ctx.permanentTexture[%d]", texID);
         auto texDesc = convertNRDTextureDesc(denoiserDesc.permanentPool[texID]);
-        CHI_VALIDATE(s_nrd.compute->createTexture2D(texDesc, s_nrd.viewport->instance->permanentTextures[texID], buffer));
+        CHI_VALIDATE(ctx.compute->createTexture2D(texDesc, ctx.viewport->instance->permanentTextures[texID], buffer));
     }
 
-    s_nrd.viewport->instance->transientTextures.resize(denoiserDesc.transientPoolSize);
+    ctx.viewport->instance->transientTextures.resize(denoiserDesc.transientPoolSize);
     for (uint32_t texID = 0; texID < denoiserDesc.transientPoolSize; ++texID)
     {
         char buffer[64];
-        snprintf(buffer, 64, "sl.s_nrd.transientTexture[%d]", texID);
+        snprintf(buffer, 64, "sl.ctx.transientTexture[%d]", texID);
         auto texDesc = convertNRDTextureDesc(denoiserDesc.transientPool[texID]);
-        CHI_VALIDATE(s_nrd.compute->createTexture2D(texDesc, s_nrd.viewport->instance->transientTextures[texID], buffer));
+        CHI_VALIDATE(ctx.compute->createTexture2D(texDesc, ctx.viewport->instance->transientTextures[texID], buffer));
     }
 
-    chi::PlatformType platform = chi::ePlatformTypeD3D12;
-    s_nrd.compute->getPlatformType(platform);
+    RenderAPI platform = RenderAPI::eD3D12;
+    ctx.compute->getRenderAPI(platform);
     
-    s_nrd.viewport->instance->shaders.resize(denoiserDesc.pipelineNum);
+    ctx.viewport->instance->shaders.resize(denoiserDesc.pipelineNum);
     for (uint32_t shaderID = 0; shaderID < denoiserDesc.pipelineNum; ++shaderID)
     {
         const nrd::PipelineDesc& pipeline = denoiserDesc.pipelines[shaderID];
-        if (platform == chi::ePlatformTypeVK)
+        if (platform == RenderAPI::eVulkan)
         {
-            CHI_VALIDATE(s_nrd.compute->createKernel((void*)pipeline.computeShaderSPIRV.bytecode, (uint32_t)pipeline.computeShaderSPIRV.size, pipeline.shaderFileName, pipeline.shaderEntryPointName, s_nrd.viewport->instance->shaders[shaderID]));
+            CHI_VALIDATE(ctx.compute->createKernel((void*)pipeline.computeShaderSPIRV.bytecode, (uint32_t)pipeline.computeShaderSPIRV.size, pipeline.shaderFileName, pipeline.shaderEntryPointName, ctx.viewport->instance->shaders[shaderID]));
         }
         else
         {
-            CHI_VALIDATE(s_nrd.compute->createKernel((void*)pipeline.computeShaderDXBC.bytecode, (uint32_t)pipeline.computeShaderDXBC.size, pipeline.shaderFileName, pipeline.shaderEntryPointName, s_nrd.viewport->instance->shaders[shaderID]));
+            CHI_VALIDATE(ctx.compute->createKernel((void*)pipeline.computeShaderDXBC.bytecode, (uint32_t)pipeline.computeShaderDXBC.size, pipeline.shaderFileName, pipeline.shaderEntryPointName, ctx.viewport->instance->shaders[shaderID]));
         }
     }
 
     chi::ResourceDescription texDesc = {};
-    texDesc.width = s_nrd.viewport->width;
-    texDesc.height = s_nrd.viewport->height;
+    texDesc.width = ctx.viewport->width;
+    texDesc.height = ctx.viewport->height;
     texDesc.mips = 1;
     texDesc.state = chi::ResourceState::eTextureRead;
 
     texDesc.format = chi::eFormatR32F;
-    if (!s_nrd.viewport->viewZ)
+    if (!ctx.viewport->viewZ)
     {
-        CHI_VALIDATE(s_nrd.compute->createTexture2D(texDesc, s_nrd.viewport->viewZ, "sl.s_nrd.viewZ"));
+        CHI_VALIDATE(ctx.compute->createTexture2D(texDesc, ctx.viewport->viewZ, "sl.ctx.viewZ"));
     }
 
     texDesc.format = chi::eFormatRGBA16F;
-    if (!s_nrd.viewport->mvec)
+    if (!ctx.viewport->mvec)
     {
-        CHI_VALIDATE(s_nrd.compute->createTexture2D(texDesc, s_nrd.viewport->mvec, "sl.s_nrd.mvec"));
+        CHI_VALIDATE(ctx.compute->createTexture2D(texDesc, ctx.viewport->mvec, "sl.ctx.mvec"));
     }
-    if (s_nrd.viewport->instance->enableSpecular && !s_nrd.viewport->packedSpec)
+    if (ctx.viewport->instance->enableSpecular && !ctx.viewport->packedSpec)
     {
-        CHI_VALIDATE(s_nrd.compute->createTexture2D(texDesc, s_nrd.viewport->packedSpec, "sl.s_nrd.packedSpec"));
+        CHI_VALIDATE(ctx.compute->createTexture2D(texDesc, ctx.viewport->packedSpec, "sl.ctx.packedSpec"));
     }
-    if (s_nrd.viewport->instance->enableDiffuse && !s_nrd.viewport->packedDiff)
+    if (ctx.viewport->instance->enableDiffuse && !ctx.viewport->packedDiff)
     {
-        CHI_VALIDATE(s_nrd.compute->createTexture2D(texDesc, s_nrd.viewport->packedDiff, "sl.s_nrd.packedDiff"));
+        CHI_VALIDATE(ctx.compute->createTexture2D(texDesc, ctx.viewport->packedDiff, "sl.ctx.packedDiff"));
     }
 
     texDesc.format = chi::eFormatR16F;
-    if (s_nrd.viewport->instance->enableAO && !s_nrd.viewport->packedAO)
+    if (ctx.viewport->instance->enableAO && !ctx.viewport->packedAO)
     {
-        CHI_VALIDATE(s_nrd.compute->createTexture2D(texDesc, s_nrd.viewport->packedAO, "sl.s_nrd.packedAO"));
+        CHI_VALIDATE(ctx.compute->createTexture2D(texDesc, ctx.viewport->packedAO, "sl.ctx.packedAO"));
     }
 
-    return true;
+    return Result::eOk;
 }
 
-void nrdBeginEvent(chi::CommandList cmdList, const common::EventData& data)
+Result nrdBeginEvent(chi::CommandList cmdList, const common::EventData& data, const sl::BaseStructure** inputs, uint32_t numInputs)
 {
-    if (!common::getConsts(data, &s_nrd.commonConsts))
+    auto& ctx = (*nrdsl::getContext());
+
+    if (!common::getConsts(data, &ctx.commonConsts))
     {
-        return;
+        return Result::eErrorMissingConstants;
     }
 
-    if (!nrdGetConstants(data, &s_nrd.nrdConsts))
+    if (!nrdGetConstants(data, &ctx.nrdConsts))
     {
-        return;
+        return Result::eErrorMissingConstants;
     }
 
     // Initialize or rebuild if resized
-    initializeNRD(cmdList, data);
+    initializeNRD(cmdList, data, inputs, numInputs);
+    return Result::eOk;
 }
 
-void nrdEndEvent(chi::CommandList cmdList)
+Result nrdEndEvent(chi::CommandList cmdList, const common::EventData& data, const sl::BaseStructure** inputs, uint32_t numInputs)
 {
-    if (!s_nrd.viewport || !s_nrd.viewport->instance) return;
+    auto& ctx = (*nrdsl::getContext());
+
+    if (!ctx.viewport || !ctx.viewport->instance) return Result::eErrorMissingInputParameter;
 
     auto parameters = api::getContext()->parameters;
     
     {
-        CHI_VALIDATE(s_nrd.compute->bindSharedState(cmdList));
+        CHI_VALIDATE(ctx.compute->bindSharedState(cmdList));
 #if 1
-        chi::Resource mvec{}, depth{}, aoIn{}, diffuseIn{}, specularIn{}, normalRoughness{};
-        chi::Resource diffuseOut{}, specularOut{}, aoOut{};
+        CommonResource mvec{}, depth{}, aoIn{}, diffuseIn{}, specularIn{}, normalRoughness{};
+        CommonResource diffuseOut{}, specularOut{}, aoOut{};
 
-        uint32_t mvecState{}, depthState{}, aoInState{}, diffuseInState{}, specularInState{}, normalRoughnessState{};
-        uint32_t diffuseOutState{}, specularOutState{}, aoOutState{};
+        SL_CHECK(getTaggedResource(kBufferTypeDepth, depth, ctx.viewport->id, false, inputs, numInputs));
+        SL_CHECK(getTaggedResource(kBufferTypeMotionVectors, mvec, ctx.viewport->id, false, inputs, numInputs));
+        SL_CHECK(getTaggedResource(kBufferTypeNormalRoughness, normalRoughness, ctx.viewport->id, false, inputs, numInputs));
 
-        Extent depthExt{};
+        ctx.cacheState(depth, depth.getState());
+        ctx.cacheState(mvec, mvec.getState());
+        ctx.cacheState(normalRoughness, normalRoughness.getState());
 
-        if (!getTaggedResource(eBufferTypeDepth, depth, s_nrd.viewport->id, &depthExt, &depthState)) return;
-        if (!getTaggedResource(eBufferTypeMVec, mvec, s_nrd.viewport->id, nullptr, &mvecState)) return;
-        if (!getTaggedResource(eBufferTypeNormalRoughness, normalRoughness, s_nrd.viewport->id, nullptr, &normalRoughnessState)) return;
-
-        s_nrd.cacheState(depth, depthState);
-        s_nrd.cacheState(mvec, mvecState);
-        s_nrd.cacheState(normalRoughness, normalRoughnessState);
-
-        if (s_nrd.viewport->instance->enableAO)
+        if (ctx.viewport->instance->enableAO)
         {
-            if (!getTaggedResource(eBufferTypeAmbientOcclusionNoisy, aoIn, s_nrd.viewport->id)) return;
-            if (!getTaggedResource(eBufferTypeAmbientOcclusionDenoised, aoOut, s_nrd.viewport->id)) return;
-            s_nrd.cacheState(aoIn, aoInState);
-            s_nrd.cacheState(aoOut, aoOutState);
+            SL_CHECK(getTaggedResource(kBufferTypeAmbientOcclusionNoisy, aoIn, ctx.viewport->id, false, inputs, numInputs));
+            SL_CHECK(getTaggedResource(kBufferTypeAmbientOcclusionDenoised, aoOut, ctx.viewport->id, false, inputs, numInputs));
+            ctx.cacheState(aoIn, aoIn.getState());
+            ctx.cacheState(aoOut, aoOut.getState());
         }
-        if (s_nrd.viewport->instance->enableDiffuse)
+        if (ctx.viewport->instance->enableDiffuse)
         {
-            if (!getTaggedResource(eBufferTypeDiffuseHitNoisy, diffuseIn, s_nrd.viewport->id)) return;
-            if (!getTaggedResource(eBufferTypeDiffuseHitDenoised, diffuseOut, s_nrd.viewport->id)) return;
-            s_nrd.cacheState(diffuseIn, diffuseInState);
-            s_nrd.cacheState(diffuseOut, diffuseOutState);
+            SL_CHECK(getTaggedResource(kBufferTypeDiffuseHitNoisy, diffuseIn, ctx.viewport->id, false, inputs, numInputs));
+            SL_CHECK(getTaggedResource(kBufferTypeDiffuseHitDenoised, diffuseOut, ctx.viewport->id, false, inputs, numInputs));
+            ctx.cacheState(diffuseIn, diffuseIn.getState());
+            ctx.cacheState(diffuseOut, diffuseOut.getState());
         }
-        if (s_nrd.viewport->instance->enableSpecular)
+        if (ctx.viewport->instance->enableSpecular)
         {
-            if (!getTaggedResource(eBufferTypeSpecularHitNoisy, specularIn, s_nrd.viewport->id)) return;
-            if (!getTaggedResource(eBufferTypeSpecularHitDenoised, specularOut, s_nrd.viewport->id)) return;
-            s_nrd.cacheState(specularIn, specularInState);
-            s_nrd.cacheState(specularOut, specularOutState);
+            SL_CHECK(getTaggedResource(kBufferTypeSpecularHitNoisy, specularIn, ctx.viewport->id, false, inputs, numInputs));
+            SL_CHECK(getTaggedResource(kBufferTypeSpecularHitDenoised, specularOut, ctx.viewport->id, false, inputs, numInputs));
+            ctx.cacheState(specularIn, specularIn.getState());
+            ctx.cacheState(specularOut, specularOut.getState());
         }
 
         // Prepare data
@@ -641,24 +685,24 @@ void nrdEndEvent(chi::CommandList cmdList)
             };
             PrepareDataCB cb;
 
-            float w = s_nrd.viewport->width * s_nrd.nrdConsts->common.resolutionScale[0];
-            float h = s_nrd.viewport->height * s_nrd.nrdConsts->common.resolutionScale[1];
+            float w = ctx.viewport->width * ctx.nrdConsts->common.resolutionScale[0];
+            float h = ctx.viewport->height * ctx.nrdConsts->common.resolutionScale[1];
 
 
-            cb.clipToPrevClip = (s_nrd.commonConsts->clipToPrevClip);
-            cb.invProj = (s_nrd.commonConsts->clipToCameraView);
-            cb.screenToWorld = (s_nrd.nrdConsts->clipToWorld);
-            cb.screenToWorldPrev = (s_nrd.nrdConsts->clipToWorldPrev);
+            cb.clipToPrevClip = (ctx.commonConsts->clipToPrevClip);
+            cb.invProj = (ctx.commonConsts->clipToCameraView);
+            cb.screenToWorld = (ctx.nrdConsts->clipToWorld);
+            cb.screenToWorldPrev = (ctx.nrdConsts->clipToWorldPrev);
             cb.sizeAndInvSize = { w, h, 1.0f / w, 1.0f / h };
-            cb.hitDistParams = { s_nrd.nrdConsts->reblurSettings.hitDistanceParameters.A, s_nrd.nrdConsts->reblurSettings.hitDistanceParameters.B,s_nrd.nrdConsts->reblurSettings.hitDistanceParameters.C, s_nrd.nrdConsts->reblurSettings.hitDistanceParameters.D };
-            cb.frameId = s_nrd.viewport->frameIndex;
-            cb.enableAO = aoIn != nullptr;
-            cb.enableSpecular = specularIn != nullptr;
-            cb.enableDiffuse = diffuseIn != nullptr;
-            cb.enableWorldMotion = s_nrd.commonConsts->motionVectors3D;
-            cb.enableCheckerboard = s_nrd.nrdConsts->reblurSettings.checkerboardMode != NRDCheckerboardMode::OFF;
-            cb.cameraMotionIncluded = s_nrd.commonConsts->cameraMotionIncluded;
-            cb.relax = s_nrd.viewport->instance->relax;
+            cb.hitDistParams = { ctx.nrdConsts->reblurSettings.hitDistanceParameters.A, ctx.nrdConsts->reblurSettings.hitDistanceParameters.B,ctx.nrdConsts->reblurSettings.hitDistanceParameters.C, ctx.nrdConsts->reblurSettings.hitDistanceParameters.D };
+            cb.frameId = ctx.viewport->frameIndex;
+            cb.enableAO = aoIn;
+            cb.enableSpecular = specularIn;
+            cb.enableDiffuse = diffuseIn;
+            cb.enableWorldMotion = ctx.commonConsts->motionVectors3D;
+            cb.enableCheckerboard = ctx.nrdConsts->reblurSettings.checkerboardMode != NRDCheckerboardMode::OFF;
+            cb.cameraMotionIncluded = ctx.commonConsts->cameraMotionIncluded;
+            cb.relax = ctx.viewport->instance->relax;
 
             // We can override to allow data pass through for testing
             json& config = *(json*)api::getContext()->extConfig;
@@ -673,22 +717,22 @@ void nrdEndEvent(chi::CommandList cmdList)
                 extra::ScopedTasks transitions;
                 chi::ResourceTransition trans[] =
                 {
-                    {mvec, chi::ResourceState::eTextureRead, s_nrd.cachedStates[mvec]},
-                    {depth, chi::ResourceState::eTextureRead, s_nrd.cachedStates[depth]},
-                    {s_nrd.viewport->mvec, chi::ResourceState::eStorageRW, chi::ResourceState::eTextureRead},
-                    {s_nrd.viewport->viewZ, chi::ResourceState::eStorageRW, chi::ResourceState::eTextureRead},
+                    {mvec, chi::ResourceState::eTextureRead, ctx.cachedStates[mvec]},
+                    {depth, chi::ResourceState::eTextureRead, ctx.cachedStates[depth]},
+                    {ctx.viewport->mvec, chi::ResourceState::eStorageRW, chi::ResourceState::eTextureRead},
+                    {ctx.viewport->viewZ, chi::ResourceState::eStorageRW, chi::ResourceState::eTextureRead},
                 };
-                s_nrd.compute->transitionResources(cmdList, trans, (uint32_t)countof(trans), &transitions);
+                ctx.compute->transitionResources(cmdList, trans, (uint32_t)countof(trans), &transitions);
 
-                CHI_VALIDATE(s_nrd.compute->bindKernel(s_nrd.prepareDataKernel));
-                CHI_VALIDATE(s_nrd.compute->bindSampler(1, 0, chi::eSamplerLinearClamp));
-                CHI_VALIDATE(s_nrd.compute->bindTexture(2, 0, depth));
-                CHI_VALIDATE(s_nrd.compute->bindTexture(3, 1, mvec));
-                CHI_VALIDATE(s_nrd.compute->bindRWTexture(4, 0, s_nrd.viewport->mvec));
-                CHI_VALIDATE(s_nrd.compute->bindRWTexture(5, 1, s_nrd.viewport->viewZ));
-                CHI_VALIDATE(s_nrd.compute->bindConsts(0, 0, &cb, sizeof(PrepareDataCB), 3 * (uint32_t)s_nrd.viewport->instances.size() * (uint32_t)s_nrd.viewports.size()));
+                CHI_VALIDATE(ctx.compute->bindKernel(ctx.prepareDataKernel));
+                CHI_VALIDATE(ctx.compute->bindSampler(1, 0, chi::eSamplerLinearClamp));
+                CHI_VALIDATE(ctx.compute->bindTexture(2, 0, depth));
+                CHI_VALIDATE(ctx.compute->bindTexture(3, 1, mvec));
+                CHI_VALIDATE(ctx.compute->bindRWTexture(4, 0, ctx.viewport->mvec));
+                CHI_VALIDATE(ctx.compute->bindRWTexture(5, 1, ctx.viewport->viewZ));
+                CHI_VALIDATE(ctx.compute->bindConsts(0, 0, &cb, sizeof(PrepareDataCB), 3 * (uint32_t)ctx.viewport->instances.size() * (uint32_t)ctx.viewports.size()));
                 uint32_t grid[] = { ((uint32_t)w + 16 - 1) / 16, ((uint32_t)h + 16 - 1) / 16, 1 };
-                CHI_VALIDATE(s_nrd.compute->dispatch(grid[0], grid[1], grid[2]));
+                CHI_VALIDATE(ctx.compute->dispatch(grid[0], grid[1], grid[2]));
             }
 
             // Pack
@@ -696,100 +740,100 @@ void nrdEndEvent(chi::CommandList cmdList)
                 extra::ScopedTasks transitions;
                 chi::ResourceTransition trans[] =
                 {
-                    {aoIn, chi::ResourceState::eTextureRead, s_nrd.cachedStates[aoIn]},
-                    {diffuseIn, chi::ResourceState::eTextureRead, s_nrd.cachedStates[diffuseIn]},
-                    {specularIn, chi::ResourceState::eTextureRead, s_nrd.cachedStates[specularIn]},
-                    {normalRoughness, chi::ResourceState::eTextureRead, s_nrd.cachedStates[normalRoughness]},
-                    {s_nrd.viewport->packedSpec, chi::ResourceState::eStorageRW, chi::ResourceState::eTextureRead},
-                    {s_nrd.viewport->packedDiff, chi::ResourceState::eStorageRW, chi::ResourceState::eTextureRead},
-                    {s_nrd.viewport->packedAO, chi::ResourceState::eStorageRW, chi::ResourceState::eTextureRead}
+                    {aoIn, chi::ResourceState::eTextureRead, ctx.cachedStates[aoIn]},
+                    {diffuseIn, chi::ResourceState::eTextureRead, ctx.cachedStates[diffuseIn]},
+                    {specularIn, chi::ResourceState::eTextureRead, ctx.cachedStates[specularIn]},
+                    {normalRoughness, chi::ResourceState::eTextureRead, ctx.cachedStates[normalRoughness]},
+                    {ctx.viewport->packedSpec, chi::ResourceState::eStorageRW, chi::ResourceState::eTextureRead},
+                    {ctx.viewport->packedDiff, chi::ResourceState::eStorageRW, chi::ResourceState::eTextureRead},
+                    {ctx.viewport->packedAO, chi::ResourceState::eStorageRW, chi::ResourceState::eTextureRead}
                 };
-                s_nrd.compute->transitionResources(cmdList, trans, (uint32_t)countof(trans), &transitions);
+                ctx.compute->transitionResources(cmdList, trans, (uint32_t)countof(trans), &transitions);
 
-                CHI_VALIDATE(s_nrd.compute->bindKernel(s_nrd.packDataKernel));
-                CHI_VALIDATE(s_nrd.compute->bindSampler(1, 0, chi::eSamplerLinearClamp));
-                CHI_VALIDATE(s_nrd.compute->bindTexture(2, 0, s_nrd.viewport->viewZ));
-                CHI_VALIDATE(s_nrd.compute->bindTexture(3, 1, normalRoughness));
-                CHI_VALIDATE(s_nrd.compute->bindTexture(4, 2, diffuseIn));
-                CHI_VALIDATE(s_nrd.compute->bindTexture(5, 3, specularIn));
-                CHI_VALIDATE(s_nrd.compute->bindTexture(6, 4, aoIn));
-                CHI_VALIDATE(s_nrd.compute->bindRWTexture(7, 0, s_nrd.viewport->packedDiff));
-                CHI_VALIDATE(s_nrd.compute->bindRWTexture(8, 1, s_nrd.viewport->packedSpec));
-                CHI_VALIDATE(s_nrd.compute->bindRWTexture(9, 2, s_nrd.viewport->packedAO));
-                CHI_VALIDATE(s_nrd.compute->bindConsts(0, 0, &cb, sizeof(PrepareDataCB), 3 * (uint32_t)s_nrd.viewport->instances.size() * (uint32_t)s_nrd.viewports.size()));
+                CHI_VALIDATE(ctx.compute->bindKernel(ctx.packDataKernel));
+                CHI_VALIDATE(ctx.compute->bindSampler(1, 0, chi::eSamplerLinearClamp));
+                CHI_VALIDATE(ctx.compute->bindTexture(2, 0, ctx.viewport->viewZ));
+                CHI_VALIDATE(ctx.compute->bindTexture(3, 1, normalRoughness));
+                CHI_VALIDATE(ctx.compute->bindTexture(4, 2, diffuseIn));
+                CHI_VALIDATE(ctx.compute->bindTexture(5, 3, specularIn));
+                CHI_VALIDATE(ctx.compute->bindTexture(6, 4, aoIn));
+                CHI_VALIDATE(ctx.compute->bindRWTexture(7, 0, ctx.viewport->packedDiff));
+                CHI_VALIDATE(ctx.compute->bindRWTexture(8, 1, ctx.viewport->packedSpec));
+                CHI_VALIDATE(ctx.compute->bindRWTexture(9, 2, ctx.viewport->packedAO));
+                CHI_VALIDATE(ctx.compute->bindConsts(0, 0, &cb, sizeof(PrepareDataCB), 3 * (uint32_t)ctx.viewport->instances.size() * (uint32_t)ctx.viewports.size()));
                 if (cb.enableCheckerboard)
                 {
                     w = w / 2.0f;
                 }
                 uint32_t grid[] = { ((uint32_t)w + 16 - 1) / 16, ((uint32_t)h + 16 - 1) / 16, 1 };
-                CHI_VALIDATE(s_nrd.compute->dispatch(grid[0], grid[1], grid[2]));
+                CHI_VALIDATE(ctx.compute->dispatch(grid[0], grid[1], grid[2]));
             }
         }
 
         //SL_LOG_HINT("-----------------------------------------------------------------------------------------------------------------------------------------");
 
         nrd::CommonSettings commonSettings{};
-        memcpy(commonSettings.viewToClipMatrix, &sl::transpose(s_nrd.commonConsts->cameraViewToClip), sizeof(float4x4));
-        memcpy(commonSettings.viewToClipMatrixPrev, s_nrd.viewport->instance->prevCommonSettings.viewToClipMatrix, sizeof(float4x4));
-        memcpy(commonSettings.worldToViewMatrix, &sl::transpose(s_nrd.nrdConsts->common.worldToViewMatrix), sizeof(float4x4));
-        memcpy(commonSettings.worldToViewMatrixPrev, s_nrd.viewport->instance->prevCommonSettings.worldToViewMatrix, sizeof(float4x4));
-        memcpy(commonSettings.cameraJitter, &s_nrd.commonConsts->jitterOffset, sizeof(float2));
+        memcpy(commonSettings.viewToClipMatrix, &transpose(ctx.commonConsts->cameraViewToClip), sizeof(float4x4));
+        memcpy(commonSettings.viewToClipMatrixPrev, ctx.viewport->instance->prevCommonSettings.viewToClipMatrix, sizeof(float4x4));
+        memcpy(commonSettings.worldToViewMatrix, &transpose(ctx.nrdConsts->common.worldToViewMatrix), sizeof(float4x4));
+        memcpy(commonSettings.worldToViewMatrixPrev, ctx.viewport->instance->prevCommonSettings.worldToViewMatrix, sizeof(float4x4));
+        memcpy(commonSettings.cameraJitter, &ctx.commonConsts->jitterOffset, sizeof(float2));
 
-        memcpy(commonSettings.motionVectorScale, &s_nrd.nrdConsts->common.motionVectorScale, sizeof(float2));
-        memcpy(commonSettings.resolutionScale, &s_nrd.nrdConsts->common.resolutionScale, sizeof(float2));
-        commonSettings.timeDeltaBetweenFrames = s_nrd.nrdConsts->common.timeDeltaBetweenFrames;
-        commonSettings.denoisingRange = s_nrd.nrdConsts->common.denoisingRange;
-        commonSettings.disocclusionThreshold = s_nrd.nrdConsts->common.disocclusionThreshold;
-        commonSettings.splitScreen = s_nrd.nrdConsts->common.splitScreen;
-        commonSettings.inputSubrectOrigin[0] = depthExt.left;
-        commonSettings.inputSubrectOrigin[1] = depthExt.top;
-        commonSettings.frameIndex = s_nrd.viewport->frameIndex;
-        commonSettings.accumulationMode = (nrd::AccumulationMode)s_nrd.nrdConsts->common.accumulationMode;
-        commonSettings.isMotionVectorInWorldSpace = s_nrd.commonConsts->motionVectors3D == Boolean::eTrue;
-        commonSettings.isHistoryConfidenceInputsAvailable = s_nrd.nrdConsts->common.isHistoryConfidenceInputsAvailable;
+        memcpy(commonSettings.motionVectorScale, &ctx.nrdConsts->common.motionVectorScale, sizeof(float2));
+        memcpy(commonSettings.resolutionScale, &ctx.nrdConsts->common.resolutionScale, sizeof(float2));
+        commonSettings.timeDeltaBetweenFrames = ctx.nrdConsts->common.timeDeltaBetweenFrames;
+        commonSettings.denoisingRange = ctx.nrdConsts->common.denoisingRange;
+        commonSettings.disocclusionThreshold = ctx.nrdConsts->common.disocclusionThreshold;
+        commonSettings.splitScreen = ctx.nrdConsts->common.splitScreen;
+        commonSettings.inputSubrectOrigin[0] = depth.getExtent().left;
+        commonSettings.inputSubrectOrigin[1] = depth.getExtent().top;
+        commonSettings.frameIndex = ctx.viewport->frameIndex;
+        commonSettings.accumulationMode = (nrd::AccumulationMode)ctx.nrdConsts->common.accumulationMode;
+        commonSettings.isMotionVectorInWorldSpace = ctx.commonConsts->motionVectors3D == Boolean::eTrue;
+        commonSettings.isHistoryConfidenceInputsAvailable = ctx.nrdConsts->common.isHistoryConfidenceInputsAvailable;
 
-        s_nrd.viewport->instance->prevCommonSettings = commonSettings;
+        ctx.viewport->instance->prevCommonSettings = commonSettings;
 
-        for (uint32_t i = 0; i < s_nrd.viewport->instance->methodCount; i++)
+        for (uint32_t i = 0; i < ctx.viewport->instance->methodCount; i++)
         {
-            if (s_nrd.viewport->instance->methodDescs[i].method == nrd::Method::REBLUR_DIFFUSE_SPECULAR)
+            if (ctx.viewport->instance->methodDescs[i].method == nrd::Method::REBLUR_DIFFUSE_SPECULAR)
             {
-                s_nrd.setMethodSettings(*s_nrd.viewport->instance->denoiser, s_nrd.viewport->instance->methodDescs[i].method, &s_nrd.nrdConsts->reblurSettings);
+                ctx.setMethodSettings(*ctx.viewport->instance->denoiser, ctx.viewport->instance->methodDescs[i].method, &ctx.nrdConsts->reblurSettings);
             }
-            else if (s_nrd.viewport->instance->methodDescs[i].method == nrd::Method::REBLUR_DIFFUSE ||
-                s_nrd.viewport->instance->methodDescs[i].method == nrd::Method::REBLUR_DIFFUSE_OCCLUSION)
+            else if (ctx.viewport->instance->methodDescs[i].method == nrd::Method::REBLUR_DIFFUSE ||
+                ctx.viewport->instance->methodDescs[i].method == nrd::Method::REBLUR_DIFFUSE_OCCLUSION)
             {
-                s_nrd.setMethodSettings(*s_nrd.viewport->instance->denoiser, s_nrd.viewport->instance->methodDescs[i].method, &s_nrd.nrdConsts->reblurSettings);
+                ctx.setMethodSettings(*ctx.viewport->instance->denoiser, ctx.viewport->instance->methodDescs[i].method, &ctx.nrdConsts->reblurSettings);
             }
-            else if (s_nrd.viewport->instance->methodDescs[i].method == nrd::Method::REBLUR_SPECULAR)
+            else if (ctx.viewport->instance->methodDescs[i].method == nrd::Method::REBLUR_SPECULAR)
             {
-                s_nrd.setMethodSettings(*s_nrd.viewport->instance->denoiser, s_nrd.viewport->instance->methodDescs[i].method, &s_nrd.nrdConsts->reblurSettings);
+                ctx.setMethodSettings(*ctx.viewport->instance->denoiser, ctx.viewport->instance->methodDescs[i].method, &ctx.nrdConsts->reblurSettings);
             }
-            else if (s_nrd.viewport->instance->methodDescs[i].method == nrd::Method::RELAX_DIFFUSE_SPECULAR)
+            else if (ctx.viewport->instance->methodDescs[i].method == nrd::Method::RELAX_DIFFUSE_SPECULAR)
             {
-                s_nrd.setMethodSettings(*s_nrd.viewport->instance->denoiser, s_nrd.viewport->instance->methodDescs[i].method, &s_nrd.nrdConsts->relaxDiffuseSpecular);
+                ctx.setMethodSettings(*ctx.viewport->instance->denoiser, ctx.viewport->instance->methodDescs[i].method, &ctx.nrdConsts->relaxDiffuseSpecular);
             }
-            else if (s_nrd.viewport->instance->methodDescs[i].method == nrd::Method::RELAX_DIFFUSE)
+            else if (ctx.viewport->instance->methodDescs[i].method == nrd::Method::RELAX_DIFFUSE)
             {
-                s_nrd.setMethodSettings(*s_nrd.viewport->instance->denoiser, s_nrd.viewport->instance->methodDescs[i].method, &s_nrd.nrdConsts->relaxDiffuse);
+                ctx.setMethodSettings(*ctx.viewport->instance->denoiser, ctx.viewport->instance->methodDescs[i].method, &ctx.nrdConsts->relaxDiffuse);
             }
-            else if (s_nrd.viewport->instance->methodDescs[i].method == nrd::Method::RELAX_SPECULAR)
+            else if (ctx.viewport->instance->methodDescs[i].method == nrd::Method::RELAX_SPECULAR)
             {
-                s_nrd.setMethodSettings(*s_nrd.viewport->instance->denoiser, s_nrd.viewport->instance->methodDescs[i].method, &s_nrd.nrdConsts->relaxSpecular);
+                ctx.setMethodSettings(*ctx.viewport->instance->denoiser, ctx.viewport->instance->methodDescs[i].method, &ctx.nrdConsts->relaxSpecular);
             }
             else
             {
-                s_nrd.setMethodSettings(*s_nrd.viewport->instance->denoiser, s_nrd.viewport->instance->methodDescs[i].method, &s_nrd.nrdConsts->sigmaShadow);
+                ctx.setMethodSettings(*ctx.viewport->instance->denoiser, ctx.viewport->instance->methodDescs[i].method, &ctx.nrdConsts->sigmaShadow);
             }
         }
 
         const nrd::DispatchDesc* dispatchDescs = nullptr;
         uint32_t dispatchDescNum = 0;
-        NRD_CHECK1(s_nrd.getComputeDispatches(*s_nrd.viewport->instance->denoiser, commonSettings, dispatchDescs, dispatchDescNum));
+        NRD_CHECK1(ctx.getComputeDispatches(*ctx.viewport->instance->denoiser, commonSettings, dispatchDescs, dispatchDescNum));
 
-        CHI_VALIDATE(s_nrd.compute->beginPerfSection(cmdList, "sl.nrd"));
+        CHI_VALIDATE(ctx.compute->beginPerfSection(cmdList, "sl.nrd"));
 
-        const nrd::DenoiserDesc& denoiserDesc = s_nrd.getDenoiserDesc(*s_nrd.viewport->instance->denoiser);
+        const nrd::DenoiserDesc& denoiserDesc = ctx.getDenoiserDesc(*ctx.viewport->instance->denoiser);
         for (uint32_t dispatchID = 0; dispatchID < dispatchDescNum; ++dispatchID)
         {
             const nrd::DispatchDesc& dispatch = dispatchDescs[dispatchID];
@@ -797,7 +841,7 @@ void nrdEndEvent(chi::CommandList cmdList)
 
             extra::ScopedTasks reverseTransitions;
             std::vector<chi::ResourceTransition> transitions;
-            CHI_VALIDATE(s_nrd.compute->bindKernel(s_nrd.viewport->instance->shaders[dispatch.pipelineIndex]));
+            CHI_VALIDATE(ctx.compute->bindKernel(ctx.viewport->instance->shaders[dispatch.pipelineIndex]));
 
             for (uint32_t samplerID = 0; samplerID < denoiserDesc.staticSamplerNum; ++samplerID)
             {
@@ -805,14 +849,14 @@ void nrdEndEvent(chi::CommandList cmdList)
                 switch (denoiserDesc.staticSamplers[samplerID].sampler)
                 {
                 case nrd::Sampler::NEAREST_CLAMP:
-                    CHI_VALIDATE(s_nrd.compute->bindSampler(samplerID, samplerDesc.registerIndex, chi::Sampler::eSamplerPointClamp)); break;
+                    CHI_VALIDATE(ctx.compute->bindSampler(samplerID, samplerDesc.registerIndex, chi::Sampler::eSamplerPointClamp)); break;
                 case nrd::Sampler::NEAREST_MIRRORED_REPEAT:
-                    CHI_VALIDATE(s_nrd.compute->bindSampler(samplerID, samplerDesc.registerIndex, chi::Sampler::eSamplerPointMirror)); break;
+                    CHI_VALIDATE(ctx.compute->bindSampler(samplerID, samplerDesc.registerIndex, chi::Sampler::eSamplerPointMirror)); break;
                 case nrd::Sampler::LINEAR_CLAMP:
-                    CHI_VALIDATE(s_nrd.compute->bindSampler(samplerID, samplerDesc.registerIndex, chi::Sampler::eSamplerLinearClamp)); break;
+                    CHI_VALIDATE(ctx.compute->bindSampler(samplerID, samplerDesc.registerIndex, chi::Sampler::eSamplerLinearClamp)); break;
                 case nrd::Sampler::LINEAR_MIRRORED_REPEAT:
-                    CHI_VALIDATE(s_nrd.compute->bindSampler(samplerID, samplerDesc.registerIndex, chi::Sampler::eSamplerLinearMirror)); break;
-                default: SL_LOG_ERROR("Unknown sampler detected");
+                    CHI_VALIDATE(ctx.compute->bindSampler(samplerID, samplerDesc.registerIndex, chi::Sampler::eSamplerLinearMirror)); break;
+                default: SL_LOG_ERROR( "Unknown sampler detected");
                 }
             }
 
@@ -825,39 +869,39 @@ void nrdEndEvent(chi::CommandList cmdList)
                 {
                     if (slot >= dispatch.resourceNum)
                     {
-                        SL_LOG_ERROR("Mismatch slot and resourceNum");
+                        SL_LOG_ERROR( "Mismatch slot and resourceNum");
                     }
                     chi::Resource texture = {};
                     auto state = chi::ResourceState::eUnknown;
                     const nrd::Resource& resource = dispatch.resources[slot++];
                     if (resource.stateNeeded != descriptorRange.descriptorType)
                     {
-                        SL_LOG_ERROR("Mismatch stateNeeded and descriptor type");
+                        SL_LOG_ERROR( "Mismatch stateNeeded and descriptor type");
                     }
                     switch (resource.type)
                     {
                     case nrd::ResourceType::IN_MV:
-                        texture = s_nrd.viewport->mvec;
+                        texture = ctx.viewport->mvec;
                         state = chi::ResourceState::eTextureRead;
                         break;
                     case nrd::ResourceType::IN_NORMAL_ROUGHNESS:
                         texture = normalRoughness;
-                        state = s_nrd.cachedStates[texture];
+                        state = ctx.cachedStates[texture];
                         break;
                     case nrd::ResourceType::IN_VIEWZ:
-                        texture = s_nrd.viewport->viewZ;
+                        texture = ctx.viewport->viewZ;
                         state = chi::ResourceState::eTextureRead;
                         break;
                     case nrd::ResourceType::IN_DIFF_HITDIST:
-                        texture = s_nrd.viewport->packedAO;
+                        texture = ctx.viewport->packedAO;
                         state = chi::ResourceState::eTextureRead;
                         break;
                     case nrd::ResourceType::IN_DIFF_RADIANCE_HITDIST:
-                        texture = s_nrd.viewport->packedDiff;
+                        texture = ctx.viewport->packedDiff;
                         state = chi::ResourceState::eTextureRead;
                         break;
                     case nrd::ResourceType::IN_SPEC_RADIANCE_HITDIST:
-                        texture = s_nrd.viewport->packedSpec;
+                        texture = ctx.viewport->packedSpec;
                         state = chi::ResourceState::eTextureRead;
                         break;
                     case nrd::ResourceType::IN_SHADOWDATA:
@@ -868,72 +912,73 @@ void nrdEndEvent(chi::CommandList cmdList)
                         break;
                     case nrd::ResourceType::OUT_DIFF_HITDIST:
                         texture = aoOut;
-                        state = s_nrd.cachedStates[texture];
+                        state = ctx.cachedStates[texture];
                         break;
                     case nrd::ResourceType::OUT_DIFF_RADIANCE_HITDIST:
                         texture = diffuseOut;
-                        state = s_nrd.cachedStates[texture];
+                        state = ctx.cachedStates[texture];
                         break;
                     case nrd::ResourceType::OUT_SPEC_RADIANCE_HITDIST:
                         texture = specularOut;
-                        state = s_nrd.cachedStates[texture];
+                        state = ctx.cachedStates[texture];
                         break;
                     case nrd::ResourceType::OUT_SHADOW_TRANSLUCENCY:
                         /**/
                         break;
                     case nrd::ResourceType::TRANSIENT_POOL:
-                        texture = s_nrd.viewport->instance->transientTextures[resource.indexInPool];
+                        texture = ctx.viewport->instance->transientTextures[resource.indexInPool];
                         state = chi::ResourceState::eTextureRead;
                         break;
                     case nrd::ResourceType::PERMANENT_POOL:
-                        texture = s_nrd.viewport->instance->permanentTextures[resource.indexInPool];
+                        texture = ctx.viewport->instance->permanentTextures[resource.indexInPool];
                         state = chi::ResourceState::eTextureRead;
                         break;
                     };
                     if (!texture)
                     {
-                        SL_LOG_ERROR("Unable to find texture for nrd::ResourceType %u", resource.type);
+                        SL_LOG_ERROR( "Unable to find texture for nrd::ResourceType %u", resource.type);
                     }
                     uint32_t bindingSlot = descriptorRange.baseRegisterIndex + descriptorID;
                     if (descriptorRange.descriptorType == nrd::DescriptorType::TEXTURE)
                     {
                         // TODO: Fix binding pos for VK
-                        CHI_VALIDATE(s_nrd.compute->bindTexture(descriptorRange.descriptorNum, bindingSlot, texture, resource.mipOffset, resource.mipNum));
+                        CHI_VALIDATE(ctx.compute->bindTexture(descriptorRange.descriptorNum, bindingSlot, texture, resource.mipOffset, resource.mipNum));
                         transitions.push_back(chi::ResourceTransition(texture, chi::ResourceState::eTextureRead, state));
                     }
                     else
                     {
                         // TODO: Fix binding pos for VK
-                        CHI_VALIDATE(s_nrd.compute->bindRWTexture(descriptorRange.descriptorNum, bindingSlot, texture, resource.mipOffset));
+                        CHI_VALIDATE(ctx.compute->bindRWTexture(descriptorRange.descriptorNum, bindingSlot, texture, resource.mipOffset));
                         transitions.push_back(chi::ResourceTransition(texture, chi::ResourceState::eStorageRW, state));
                     }
                 }
             }
 
             // TODO: Fix binding pos for VK
-            CHI_VALIDATE(s_nrd.compute->bindConsts(0, denoiserDesc.constantBufferDesc.registerIndex, (void*)dispatch.constantBufferData, denoiserDesc.constantBufferDesc.maxDataSize, 3 * dispatchDescNum));
-            CHI_VALIDATE(s_nrd.compute->transitionResources(cmdList, transitions.data(), (uint32_t)transitions.size(), &reverseTransitions));
-            CHI_VALIDATE(s_nrd.compute->dispatch(dispatch.gridWidth, dispatch.gridHeight, 1));
+            CHI_VALIDATE(ctx.compute->bindConsts(0, denoiserDesc.constantBufferDesc.registerIndex, (void*)dispatch.constantBufferData, denoiserDesc.constantBufferDesc.maxDataSize, 3 * dispatchDescNum));
+            CHI_VALIDATE(ctx.compute->transitionResources(cmdList, transitions.data(), (uint32_t)transitions.size(), &reverseTransitions));
+            CHI_VALIDATE(ctx.compute->dispatch(dispatch.gridWidth, dispatch.gridHeight, 1));
             //SL_LOG_HINT("Dispatch %s", dispatch.name);
         }
         float ms = 0;
-        CHI_VALIDATE(s_nrd.compute->endPerfSection(cmdList, "sl.nrd", ms));
+        CHI_VALIDATE(ctx.compute->endPerfSection(cmdList, "sl.nrd", ms));
 
-        parameters->set(sl::param::nrd::kMVecBuffer, s_nrd.viewport->mvec);
-        parameters->set(sl::param::nrd::kViewZBuffer, s_nrd.viewport->viewZ);
+        parameters->set(sl::param::nrd::kMVecBuffer, ctx.viewport->mvec);
+        parameters->set(sl::param::nrd::kViewZBuffer, ctx.viewport->viewZ);
 
         {
-            static std::string s_stats;
+            /*static std::string s_stats;
             auto v = api::getContext()->pluginVersion;
             std::string description{};
-            for (auto& v : s_nrd.viewports)
+            for (auto& v : ctx.viewports)
             {
                 description += v.second->description + " ";
             }
-            s_stats = extra::format("sl.nrd {} - {}- {}ms - {}", v.toStr(), description, ms, GIT_LAST_COMMIT);
-            parameters->set(sl::param::nrd::kStats, (void*)s_stats.c_str());
+            s_stats = extra::format("sl.nrd {} - {}- {}ms", v.toStr() + "." + GIT_LAST_COMMIT_SHORT, description, ms);
+            parameters->set(sl::param::nrd::kStats, (void*)s_stats.c_str());*/
+
             uint32_t frame = 0;
-            s_nrd.compute->getFinishedFrameIndex(frame);
+            ctx.compute->getFinishedFrameIndex(frame);
             parameters->set(sl::param::nrd::kCurrentFrame, frame + 1);
         }
 #else
@@ -954,48 +999,51 @@ void nrdEndEvent(chi::CommandList cmdList)
         //}
         //if (_dump && specularOut)
         //{
-        //    auto idx = std::to_string(s_nrd.nrdConsts->common.frameIndex);
-        //    //s_nrd.compute->dumpResource(cmdList, mvec, std::string("f:/tmp/correct/mvec" + idx).c_str());
-        //    //s_nrd.compute->dumpResource(cmdList, viewZ, std::string("f:/tmp/correct/viewZ" + idx).c_str());
-        //    //s_nrd.compute->dumpResource(cmdList, normRough, std::string("f:/tmp/correct/normRough" + idx).c_str());
-        //    //s_nrd.compute->dumpResource(cmdList, specularOut, std::string("f:/tmp/correct/specularOut" + idx).c_str());
-        //    //s_nrd.compute->dumpResource(cmdList, specularIn, std::string("f:/tmp/correct/specularIn" + idx).c_str());
-        //    s_nrd.compute->dumpResource(cmdList, normalRoughness, std::string("f:/tmp/normalRoughness" + idx).c_str());
-        //    s_nrd.compute->dumpResource(cmdList, s_nrd.viewport->mvec, std::string("f:/tmp/mvec" + idx).c_str());
-        //    s_nrd.compute->dumpResource(cmdList, s_nrd.viewport->packedSpec, std::string("f:/tmp/inSpecHit" + idx).c_str());
-        //    s_nrd.compute->dumpResource(cmdList, specularOut, std::string("f:/tmp/outSpecHit" + idx).c_str());
-        //    s_nrd.compute->dumpResource(cmdList, s_nrd.viewport->viewZ, std::string("f:/tmp/viewZ" + idx).c_str());
+        //    auto idx = std::to_string(ctx.nrdConsts->common.frameIndex);
+        //    //ctx.compute->dumpResource(cmdList, mvec, std::string("f:/tmp/correct/mvec" + idx).c_str());
+        //    //ctx.compute->dumpResource(cmdList, viewZ, std::string("f:/tmp/correct/viewZ" + idx).c_str());
+        //    //ctx.compute->dumpResource(cmdList, normRough, std::string("f:/tmp/correct/normRough" + idx).c_str());
+        //    //ctx.compute->dumpResource(cmdList, specularOut, std::string("f:/tmp/correct/specularOut" + idx).c_str());
+        //    //ctx.compute->dumpResource(cmdList, specularIn, std::string("f:/tmp/correct/specularIn" + idx).c_str());
+        //    ctx.compute->dumpResource(cmdList, normalRoughness, std::string("f:/tmp/normalRoughness" + idx).c_str());
+        //    ctx.compute->dumpResource(cmdList, ctx.viewport->mvec, std::string("f:/tmp/mvec" + idx).c_str());
+        //    ctx.compute->dumpResource(cmdList, ctx.viewport->packedSpec, std::string("f:/tmp/inSpecHit" + idx).c_str());
+        //    ctx.compute->dumpResource(cmdList, specularOut, std::string("f:/tmp/outSpecHit" + idx).c_str());
+        //    ctx.compute->dumpResource(cmdList, ctx.viewport->viewZ, std::string("f:/tmp/viewZ" + idx).c_str());
         //}
 #endif
     }
+    return Result::eOk;
 }
 
 //! -------------------------------------------------------------------------------------------------
 //! Required interface
 
 
-bool slAllocateResources(sl::CommandBuffer* cmdBuffer, Feature feature, uint32_t id)
+Result slAllocateResources(sl::CommandBuffer* cmdBuffer, Feature feature, const sl::ViewportHandle& viewport)
 {
-    common::EventData data{ id, 0 };
-    nrdBeginEvent(cmdBuffer, data);
-    auto it = s_nrd.viewports.find(id);
-    return it != s_nrd.viewports.end() && !(*it).second->instances.empty();
+    auto& ctx = (*nrdsl::getContext());
+    common::EventData data{ viewport, 0 };
+    nrdBeginEvent(cmdBuffer, data, nullptr, 0);
+    auto it = ctx.viewports.find(viewport);
+    return it != ctx.viewports.end() && !(*it).second->instances.empty() ? Result::eOk : Result::eErrorInvalidParameter;
 }
 
-bool slFreeResources(Feature feature, uint32_t id)
+Result slFreeResources(Feature feature, const sl::ViewportHandle& viewport)
 {
-    auto it = s_nrd.viewports.find(id);
-    if(it != s_nrd.viewports.end())
+    auto& ctx = (*nrdsl::getContext());
+    auto it = ctx.viewports.find(viewport);
+    if(it != ctx.viewports.end())
     {
-        if ((*it).second->id == id)
+        if ((*it).second->id == viewport)
         {
             destroyNRDViewport((*it).second);
             delete (*it).second;
-            s_nrd.viewports.erase(it);
+            ctx.viewports.erase(it);
         }
-        return true;
+        return Result::eOk;
     }
-    return false;
+    return Result::eErrorInvalidParameter;
 }
 
 //! Plugin startup
@@ -1003,67 +1051,64 @@ bool slFreeResources(Feature feature, uint32_t id)
 //! Called only if plugin reports `supported : true` in the JSON config.
 //! Note that supported flag can flip back to false if this method fails.
 //!
-//! @param jsonConfig Configuration provided by the loader (plugin manager or another plugin)
 //! @param device Either ID3D12Device or struct VkDevices (see internal.h)
-//! @param parameters Shared parameters from host and other plugins
-bool slOnPluginStartup(const char *jsonConfig, void *device, sl::param::IParameters *parameters)
+bool slOnPluginStartup(const char* jsonConfig, void* device)
 {
     SL_PLUGIN_COMMON_STARTUP();
 
-    if (!getPointerParam(parameters, param::common::kComputeAPI, &s_nrd.compute))
+    auto& ctx = (*nrdsl::getContext());
+
+    auto parameters = api::getContext()->parameters;
+
+    if (!getPointerParam(parameters, param::common::kComputeAPI, &ctx.compute))
     {
-        SL_LOG_ERROR("Can't find %s", param::common::kComputeAPI);
+        SL_LOG_ERROR( "Can't find %s", param::common::kComputeAPI);
         return false;
     }
     
-    chi::PlatformType platform;
-    s_nrd.compute->getPlatformType(platform);
+    RenderAPI platform;
+    ctx.compute->getRenderAPI(platform);
 
     // Set callbacks from the sl.common
-    if (!param::getPointerParam(parameters, param::common::kPFunRegisterEvaluateCallbacks, &s_nrd.registerEvaluateCallbacks))
+    if (!param::getPointerParam(parameters, param::common::kPFunRegisterEvaluateCallbacks, &ctx.registerEvaluateCallbacks))
     {
-        SL_LOG_ERROR("Cannot obtain `registerEvaluateCallbacks` interface - check that sl.common was initialized correctly");
+        SL_LOG_ERROR( "Cannot obtain `registerEvaluateCallbacks` interface - check that sl.common was initialized correctly");
         return false;
     }
-    s_nrd.registerEvaluateCallbacks(eFeatureNRD, nrdBeginEvent, nrdEndEvent);
+    ctx.registerEvaluateCallbacks(kFeatureNRD, nrdBeginEvent, nrdEndEvent);
 
     json& config = *(json*)api::getContext()->loaderConfig;
     int appId = 0;
-    bool ota = false;
     config.at("appId").get_to(appId);
-    if (config.contains("ota"))
-    {
-        config.at("ota").get_to(ota);
-    }
 
     // Path where our modules are located
     wchar_t *pluginPath = {};
     param::getPointerParam(parameters, param::global::kPluginPath, &pluginPath);
     if (!pluginPath)
     {
-        SL_LOG_ERROR("Cannot find path to plugins");
+        SL_LOG_ERROR( "Cannot find path to plugins");
         return false;
     }
-    // Now let's load our NRD module
+    // Now let's load our NRDContext module
     std::wstring path(pluginPath);
     path += L"/nrd.dll";
-    s_nrd.lib = security::loadLibrary(path.c_str());
-    if (!s_nrd.lib)
+    ctx.lib = security::loadLibrary(path.c_str());
+    if (!ctx.lib)
     {
-        SL_LOG_ERROR("Failed to load %S", path.c_str());
+        SL_LOG_ERROR( "Failed to load %S", path.c_str());
         return false;
     }
 
-    s_nrd.getLibraryDesc = (PFunGetLibraryDesc*)GetProcAddress(s_nrd.lib, "GetLibraryDesc");
-    s_nrd.createDenoiser = (PFunCreateDenoiser*)GetProcAddress(s_nrd.lib, "CreateDenoiser");
-    s_nrd.getDenoiserDesc = (PFunGetDenoiserDesc*)GetProcAddress(s_nrd.lib, "GetDenoiserDesc");
-    s_nrd.setMethodSettings = (PFunSetMethodSettings*)GetProcAddress(s_nrd.lib, "SetMethodSettings");
-    s_nrd.getComputeDispatches = (PFunGetComputeDispatches*)GetProcAddress(s_nrd.lib, "GetComputeDispatches");
-    s_nrd.destroyDenoiser = (PFunDestroyDenoiser*)GetProcAddress(s_nrd.lib, "DestroyDenoiser");
+    ctx.getLibraryDesc = (PFunGetLibraryDesc*)GetProcAddress(ctx.lib, "GetLibraryDesc");
+    ctx.createDenoiser = (PFunCreateDenoiser*)GetProcAddress(ctx.lib, "CreateDenoiser");
+    ctx.getDenoiserDesc = (PFunGetDenoiserDesc*)GetProcAddress(ctx.lib, "GetDenoiserDesc");
+    ctx.setMethodSettings = (PFunSetMethodSettings*)GetProcAddress(ctx.lib, "SetMethodSettings");
+    ctx.getComputeDispatches = (PFunGetComputeDispatches*)GetProcAddress(ctx.lib, "GetComputeDispatches");
+    ctx.destroyDenoiser = (PFunDestroyDenoiser*)GetProcAddress(ctx.lib, "DestroyDenoiser");
 
-    if (!s_nrd)
+    if (!ctx)
     {
-        SL_LOG_ERROR("Failed to map NRD API in %S", path.c_str());
+        SL_LOG_ERROR( "Failed to map NRDContext API in %S", path.c_str());
         return false;
     }
 
@@ -1078,46 +1123,27 @@ void slOnPluginShutdown()
 {
     destroyNRD();
 
-    s_nrd.registerEvaluateCallbacks(eFeatureNRD, nullptr, nullptr);
+    auto& ctx = (*nrdsl::getContext());
+    FreeLibrary(ctx.lib);
+
+    ctx.registerEvaluateCallbacks(kFeatureNRD, nullptr, nullptr);
     
-    // Common shutdown, if we loaded an OTA
-    // it will shutdown it down automatically
+    // Common shutdown
     plugin::onShutdown(api::getContext());
 }
-
-const char *JSON = R"json(
-{
-    "id" : 1,
-    "priority" : 1,
-    "namespace" : "nrd",
-    "hooks" :
-    [
-    ]
-}
-)json";
-
-uint32_t getSupportedAdapterMask()
-{
-    // Always supported on any adapter
-    return ~0;
-}
-
-SL_PLUGIN_DEFINE("sl.nrd", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON, getSupportedAdapterMask())
 
 SL_EXPORT void *slGetPluginFunction(const char *functionName)
 {
     // Forward declarations
-    const char *slGetPluginJSONConfig();
-    void slSetParameters(sl::param::IParameters *p);
+    bool slOnPluginLoad(sl::param::IParameters * params, const char* loaderJSON, const char** pluginJSON);
 
-    // Redirect to OTA if any
+    //! Redirect to OTA if any
     SL_EXPORT_OTA;
 
     // Core API
-    SL_EXPORT_FUNCTION(slSetParameters);
+    SL_EXPORT_FUNCTION(slOnPluginLoad);
     SL_EXPORT_FUNCTION(slOnPluginShutdown);
     SL_EXPORT_FUNCTION(slOnPluginStartup);
-    SL_EXPORT_FUNCTION(slGetPluginJSONConfig);
     SL_EXPORT_FUNCTION(slSetConstants);
     SL_EXPORT_FUNCTION(slAllocateResources);
     SL_EXPORT_FUNCTION(slFreeResources);

@@ -20,6 +20,8 @@
 * SOFTWARE.
 */
 
+#pragma once
+
 #include <mutex>
 
 #include "external/vulkan/1.3.204.1/include/vulkan/vulkan.h"
@@ -50,6 +52,7 @@ struct VkTable
     std::mutex mutex;
     std::map<void*, VkLayerInstanceDispatchTable> dispatchInstanceMap;
     std::map<void*, VkLayerDispatchTable> dispatchDeviceMap;
+    std::map<VkPhysicalDevice, VkInstance> instanceDeviceMap;
 
     void mapVulkanInstanceAPI(VkInstance instance);
     void mapVulkanDeviceAPI(VkDevice device);

@@ -24,6 +24,7 @@
 #include <atomic>
 #include <future>
 #include <unordered_map>
+#include <assert.h>
 
 #include "include/sl.h"
 #include "include/sl_nis.h"
@@ -33,6 +34,7 @@
 #include "source/core/sl.param/parameters.h"
 #include "source/platforms/sl.chi/compute.h"
 #include "source/plugins/sl.nis/versions.h"
+#include "source/plugins/sl.imgui/imgui.h"
 #include "source/plugins/sl.common/commonInterface.h"
 #include "external/json/include/nlohmann/json.hpp"
 #include "_artifacts/gitVersion.h"
@@ -45,16 +47,40 @@ using json = nlohmann::json;
 namespace sl
 {
 
-struct NIS
+namespace nis
 {
+struct NISViewport
+{
+    uint32_t id = {};
+    NISOptions consts = {};
+};
+
+struct UIStats
+{
+    std::mutex mtx;
+    std::string mode{};
+    std::string viewport{};
+    std::string runtime{};
+};
+
+struct NISContext
+{
+    SL_PLUGIN_CONTEXT_CREATE_DESTROY(NISContext);
+    void onDestroyContext() {};
+
     common::PFunRegisterEvaluateCallbacks* registerEvaluateCallbacks{};
+
+    common::ViewportIdFrameData<4, false> constsPerViewport = { "nis" };
+    std::map<uint32_t, NISViewport> viewports = {};
+    NISViewport* currentViewport = {};
 
     chi::Resource scalerCoef = {};
     chi::Resource usmCoef = {};
     chi::Resource uploadScalerCoef = {};
     chi::Resource uploadUsmCoef = {};
 
-    NISConstants consts;
+    UIStats uiStats{};
+
     NISConfig config;
 
     chi::ICompute* compute = {};
@@ -73,47 +99,83 @@ struct NIS
         return  a + b * 10 + c * 100;
     }
 
-    bool addShaderPermutation(uint32_t scalerMode, uint32_t viewPorts, uint32_t HDRMode,
+    bool addShaderPermutation(NISMode scalerMode, uint32_t viewPorts, NISHDR HDRMode,
         uint8_t* byteCode, uint32_t len, const char* filename, const char* entryPoint = "main") {
         chi::Kernel kernel = {};
-        CHI_CHECK_RF(compute->createKernel((void*) byteCode, len, filename, entryPoint, kernel));
+        CHI_CHECK_RF(compute->createKernel((void*)byteCode, len, filename, entryPoint, kernel));
         if (kernel)
-            shaders[hash_combine(scalerMode, viewPorts, HDRMode)] = kernel;
+            shaders[hash_combine((uint32_t)scalerMode, viewPorts, (uint32_t)HDRMode)] = kernel;
         return true;
     }
 
-    chi::Kernel getKernel(uint32_t scalerMode, uint32_t viewPorts, uint32_t HDRMode) {
-        uint32_t key = hash_combine(scalerMode, viewPorts, HDRMode);
+    chi::Kernel getKernel(NISMode scalerMode, uint32_t viewPorts, NISHDR HDRMode) {
+        uint32_t key = hash_combine((uint32_t)scalerMode, viewPorts, (uint32_t)HDRMode);
         if (shaders.find(key) == shaders.end())
             return {};
         return shaders[key];
     }
 };
-
-static NIS nis = {};
-
-void slSetConstants(void* data, uint32_t frameIndex, uint32_t id)
-{
-    memcpy((void*)&nis.consts, data, sizeof(nis.consts));
 }
 
-void getNISConstants(const common::EventData& ev, NISConstants& consts)
+const char* JSON = R"json(
 {
-    memcpy(&consts, (void*)&nis.consts, sizeof(consts));
+    "id" : 2,
+    "priority" : 100,
+    "namespace" : "nis",
+    "required_plugins" : ["sl.common"],
+    "rhi" : ["d3d11", "d3d12", "vk"],
+    "hooks" :
+    [
+    ]
+}
+)json";
+
+void updateEmbeddedJSON(json& config)
+{
+    // Check if plugin is supported or not on this platform and set the flag accordingly
+    common::SystemCaps* caps = {};
+    param::getPointerParam(api::getContext()->parameters, sl::param::common::kSystemCaps, &caps);
+    common::PFunUpdateCommonEmbeddedJSONConfig* updateCommonEmbeddedJSONConfig{};
+    param::getPointerParam(api::getContext()->parameters, sl::param::common::kPFunUpdateCommonEmbeddedJSONConfig, &updateCommonEmbeddedJSONConfig);
+    if (caps && updateCommonEmbeddedJSONConfig)
+    {
+        // Our plugin runs on any system so use all defaults
+        common::PluginInfo info{};
+        info.SHA = GIT_LAST_COMMIT_SHORT;
+        info.requiredTags = { { kBufferTypeScalingInputColor, ResourceLifecycle::eValidUntilEvaluate}, {kBufferTypeScalingOutputColor, ResourceLifecycle::eValidUntilEvaluate} };
+        updateCommonEmbeddedJSONConfig(&config, info);
+    }
+}
+
+SL_PLUGIN_DEFINE("sl.nis", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON, updateEmbeddedJSON, nis, NISContext)
+
+Result slSetData(const BaseStructure* inputs, CommandBuffer* cmdBuffer)
+{
+    auto& ctx = (*nis::getContext());
+    auto options = findStruct<NISOptions>(inputs);
+    auto viewport = findStruct<ViewportHandle>(inputs);
+    if (!options)
+    {
+        return Result::eErrorMissingInputParameter;
+    }
+    ctx.constsPerViewport.set(0, *viewport, static_cast<NISOptions*>(options));
+    
+    return Result::eOk;
 }
 
 bool initializeNIS(chi::CommandList cmdList, const common::EventData& data)
 {
-    if (!nis.scalerCoef && !nis.usmCoef)
+    auto& ctx = (*nis::getContext());
+    if (!ctx.scalerCoef && !ctx.usmCoef)
     {
         auto texDesc = sl::chi::ResourceDescription(kFilterSize / 4, kPhaseCount, sl::chi::eFormatRGBA32F);
-        CHI_CHECK_RF(nis.compute->createTexture2D(texDesc, nis.scalerCoef, "nisScalerCoef"));
-        CHI_CHECK_RF(nis.compute->createTexture2D(texDesc, nis.usmCoef, "nisUSMCoef"));
+        CHI_CHECK_RF(ctx.compute->createTexture2D(texDesc, ctx.scalerCoef, "nisScalerCoef"));
+        CHI_CHECK_RF(ctx.compute->createTexture2D(texDesc, ctx.usmCoef, "nisUSMCoef"));
 
         int rowPitchAlignment = 1; // D3D11
-        chi::PlatformType platform;
-        nis.compute->getPlatformType(platform);
-        if (platform == chi::ePlatformTypeD3D12)
+        RenderAPI platform;
+        ctx.compute->getRenderAPI(platform);
+        if (platform == RenderAPI::eD3D12)
         {
             rowPitchAlignment = 256; // D3D12_TEXTURE_DATA_PITCH_ALIGNMENT
         }
@@ -122,11 +184,11 @@ bool initializeNIS(chi::CommandList cmdList, const common::EventData& data)
         const int deviceRowPitch = extra::align(kFilterSize * sizeof(float), rowPitchAlignment);
         const int totalBytes = deviceRowPitch * kPhaseCount;
 
-        if (!nis.uploadScalerCoef)
+        if (!ctx.uploadScalerCoef)
         {
             chi::ResourceDescription bufferDesc(deviceRowPitch * kPhaseCount, 1, chi::eFormatINVALID, chi::HeapType::eHeapTypeUpload, chi::ResourceState::eUnknown);
-            CHI_CHECK_RF(nis.compute->createBuffer(bufferDesc, nis.uploadScalerCoef, "sl.nis.uploadScalerCoef"));
-            CHI_CHECK_RF(nis.compute->createBuffer(bufferDesc, nis.uploadUsmCoef, "sl.nis.uploadUsmCoef"));
+            CHI_CHECK_RF(ctx.compute->createBuffer(bufferDesc, ctx.uploadScalerCoef, "sl.ctx.uploadScalerCoef"));
+            CHI_CHECK_RF(ctx.compute->createBuffer(bufferDesc, ctx.uploadUsmCoef, "sl.ctx.uploadUsmCoef"));
         }
 
         std::vector<float> blobScale(totalBytes / sizeof(float));
@@ -146,51 +208,67 @@ bool initializeNIS(chi::CommandList cmdList, const common::EventData& data)
         fillBlob(blobScale, coef_scale);
         fillBlob(blobUsm, coef_usm);
 
-        CHI_CHECK_RF(nis.compute->copyHostToDeviceTexture(cmdList, totalBytes, rowPitch, blobScale.data(), nis.scalerCoef, nis.uploadScalerCoef));
-        CHI_CHECK_RF(nis.compute->copyHostToDeviceTexture(cmdList, totalBytes, rowPitch, blobUsm.data(), nis.usmCoef, nis.uploadUsmCoef));
+        CHI_CHECK_RF(ctx.compute->copyHostToDeviceTexture(cmdList, totalBytes, rowPitch, blobScale.data(), ctx.scalerCoef, ctx.uploadScalerCoef));
+        CHI_CHECK_RF(ctx.compute->copyHostToDeviceTexture(cmdList, totalBytes, rowPitch, blobUsm.data(), ctx.usmCoef, ctx.uploadUsmCoef));
     }
     return true;
 }
 
-void nisBeginEvaluation(chi::CommandList cmdList, const common::EventData& data)
+Result nisBeginEvaluation(chi::CommandList cmdList, const common::EventData& data, const sl::BaseStructure** inputs, uint32_t numInputs)
 {
-    getNISConstants(data, nis.consts);
+    auto& ctx = (*nis::getContext());
+    auto& viewport = ctx.viewports[data.id];
+    viewport.id = data.id;
+
+    // Options are set per viewport, frame index is always 0
+    NISOptions* consts{};
+    if (!ctx.constsPerViewport.get({ data.id, 0 }, &consts))
+    {
+        return Result::eErrorMissingConstants;
+    }
+
+    viewport.consts = *consts;
+    ctx.currentViewport = &viewport;
+
     initializeNIS(cmdList, data);
+    return Result::eOk;
 }
 
-void nisEndEvaluation(chi::CommandList cmdList)
+Result nisEndEvaluation(chi::CommandList cmdList, const common::EventData& data, const sl::BaseStructure** inputs, uint32_t numInputs)
 {
-    if (nis.consts.mode != NISMode::eNISModeScaler && nis.consts.mode != NISMode::eNISModeSharpen) {
-        SL_LOG_ERROR("Invalid NIS mode %d", nis.consts.mode);
-        return;
-    }
-    if (nis.consts.hdrMode != NISHDR::eNISHDRNone && nis.consts.hdrMode != NISHDR::eNISHDRLinear && nis.consts.hdrMode != NISHDR::eNISHDRPQ) {
-        SL_LOG_ERROR("Invalid NIS HDR mode %d", nis.consts.hdrMode);
-        return;
-    }
-
-    chi::Resource colorIn{};
-    chi::Resource colorOut{};
-    sl::Extent inExtent{};
-    sl::Extent outExtent{};
-    uint32_t colorInNativeState{}, colorOutNativeState{};
-
-    if (!getTaggedResource(eBufferTypeScalingInputColor, colorIn, 0, &inExtent, &colorInNativeState))
+    auto& ctx = (*nis::getContext());
+    if (!ctx.currentViewport)
     {
-        SL_LOG_ERROR("Failed to find resource '%s', please make sure to tag all NIS resources", colorIn);
-        return;
+        return Result::eErrorInvalidParameter;
     }
 
-    if (!getTaggedResource(eBufferTypeScalingOutputColor, colorOut, 0, &outExtent, &colorOutNativeState))
-    {
-        SL_LOG_ERROR("Failed to find resource '%s', please make sure to tag all NIS resources", colorOut);
-        return;
+    const uint32_t id = ctx.currentViewport->id;
+    const NISOptions& consts = ctx.currentViewport->consts;
+
+    if (consts.mode != NISMode::eScaler && consts.mode != NISMode::eSharpen) {
+        SL_LOG_ERROR( "Invalid NISContext mode %d", consts.mode);
+        return Result::eErrorInvalidParameter;
+    }
+    if (consts.hdrMode != NISHDR::eNone && consts.hdrMode != NISHDR::eLinear && consts.hdrMode != NISHDR::ePQ) {
+        SL_LOG_ERROR( "Invalid NISContext HDR mode %d", consts.hdrMode);
+        return Result::eErrorInvalidParameter;
     }
 
-    chi::ResourceDescription inDesc = {};
-    CHI_VALIDATE(nis.compute->getResourceDescription(colorIn, inDesc));
-    chi::ResourceDescription outDesc = {};
-    CHI_VALIDATE(nis.compute->getResourceDescription(colorOut, outDesc));
+    CommonResource colorIn{};
+    CommonResource colorOut{};
+    
+    SL_CHECK(getTaggedResource(kBufferTypeScalingInputColor, colorIn, id, false, inputs, numInputs));
+    SL_CHECK(getTaggedResource(kBufferTypeScalingOutputColor, colorOut, id, false, inputs, numInputs));
+    
+    auto inExtent = colorIn.getExtent();
+    auto outExtent = colorOut.getExtent();
+
+    chi::ResourceDescription inDesc{};
+    CHI_VALIDATE(ctx.compute->getResourceState(colorIn.getState(), inDesc.state));
+    CHI_VALIDATE(ctx.compute->getResourceDescription(colorIn, inDesc));
+    chi::ResourceDescription outDesc{};
+    CHI_VALIDATE(ctx.compute->getResourceState(colorOut.getState(), outDesc.state));
+    CHI_VALIDATE(ctx.compute->getResourceDescription(colorOut, outDesc));
     if (!inExtent)
     {
         inExtent.width = inDesc.width;
@@ -202,93 +280,93 @@ void nisEndEvaluation(chi::CommandList cmdList)
         outExtent.height = outDesc.height;
     }
 
-    float sharpness = nis.consts.sharpness;
-    NISHDRMode hdrMode = nis.consts.hdrMode == NISHDR::eNISHDRLinear ? NISHDRMode::Linear :
-        nis.consts.hdrMode == NISHDR::eNISHDRPQ ? NISHDRMode::PQ : NISHDRMode::None;
+    float sharpness = consts.sharpness;
+    NISHDRMode hdrMode = consts.hdrMode == NISHDR::eLinear ? NISHDRMode::Linear :
+        consts.hdrMode == NISHDR::ePQ ? NISHDRMode::PQ : NISHDRMode::None;
 
     uint32_t viewPortsSupport = inExtent.width != inDesc.width || inExtent.height != inDesc.height ||
         outExtent.width != outDesc.width || outExtent.height != outDesc.height;
 
-    chi::Kernel kernel = nis.getKernel(nis.consts.mode, viewPortsSupport, nis.consts.hdrMode);
+    chi::Kernel kernel = ctx.getKernel(consts.mode, viewPortsSupport, consts.hdrMode);
     if (!kernel)
     {
-        SL_LOG_ERROR("Failed to find NIS shader permutation mode: %d viewportSupport: %d, hdrMode: %d", nis.consts.mode, viewPortsSupport, nis.consts.hdrMode);
-        return;
+        SL_LOG_ERROR( "Failed to find NISContext shader permutation mode: %d viewportSupport: %d, hdrMode: %d", consts.mode, viewPortsSupport, consts.hdrMode);
+        return Result::eErrorInvalidParameter;
     }
 
-    chi::ResourceState colorInState, colorOutState;
-    if (colorInNativeState && colorOutNativeState)
+    // Resource state already obtained and stored in resource description
+    
+    if (consts.mode == NISMode::eScaler)
     {
-        CHI_VALIDATE(nis.compute->getResourceState(colorInNativeState, colorInState));
-        CHI_VALIDATE(nis.compute->getResourceState(colorOutNativeState, colorOutState));
-    }
-    else
-    {
-        CHI_VALIDATE(nis.compute->getResourceState(colorIn, colorInState));
-        CHI_VALIDATE(nis.compute->getResourceState(colorOut, colorOutState));
-    }
-
-    if (nis.consts.mode == NISMode::eNISModeScaler)
-    {
-        if (!NVScalerUpdateConfig(nis.config, sharpness,
+        if (!NVScalerUpdateConfig(ctx.config, sharpness,
             inExtent.left, inExtent.top, inExtent.width, inExtent.height, inDesc.width, inDesc.height,
             outExtent.left, outExtent.top, outExtent.width, outExtent.height, outDesc.width, outDesc.height,
             hdrMode))
         {
-            SL_LOG_ERROR("NVScaler configuration error, scale out of bounds or textures width/height with zero value");
+            SL_LOG_ERROR( "NVScaler configuration error, scale out of bounds or textures width/height with zero value");
+            return Result::eErrorInvalidParameter;
         }
     }
     else
     {
         // Sharpening only (no upscaling)
-        if (!NVSharpenUpdateConfig(nis.config, sharpness,
+        if (!NVSharpenUpdateConfig(ctx.config, sharpness,
             inExtent.left, inExtent.top, inExtent.width, inExtent.height, inDesc.width, inDesc.height,
             outExtent.left, outExtent.top, hdrMode))
         {
-            SL_LOG_ERROR("NVSharpen configuration error, textures width/height width zero value");
+            SL_LOG_ERROR( "NVSharpen configuration error, textures width/height width zero value");
+            return Result::eErrorInvalidParameter;
         }
     }
 
-    CHI_VALIDATE(nis.compute->beginPerfSection(cmdList, "sl.nis"));
+    CHI_VALIDATE(ctx.compute->beginPerfSection(cmdList, "sl.nis"));
 
     extra::ScopedTasks revTransitions;
     chi::ResourceTransition transitions[] =
     {
-        {colorIn, chi::ResourceState::eTextureRead, colorInState},
-        {colorOut, chi::ResourceState::eStorageRW, colorOutState}
+        {colorIn, chi::ResourceState::eTextureRead, inDesc.state},
+        {colorOut, chi::ResourceState::eStorageRW, outDesc.state}
     };
-    nis.compute->transitionResources(cmdList, transitions, (uint32_t)countof(transitions), &revTransitions);
+    ctx.compute->transitionResources(cmdList, transitions, (uint32_t)countof(transitions), &revTransitions);
 
-    CHI_VALIDATE(nis.compute->bindSharedState(cmdList));
-    CHI_VALIDATE(nis.compute->bindKernel(kernel));
-    CHI_VALIDATE(nis.compute->bindConsts(0, 0, &nis.config, sizeof(nis.config), 1));
-    CHI_VALIDATE(nis.compute->bindSampler(1, 0, chi::eSamplerLinearClamp));
-    CHI_VALIDATE(nis.compute->bindTexture(2, 0, colorIn));
-    CHI_VALIDATE(nis.compute->bindRWTexture(3, 0, colorOut));
-    if (nis.consts.mode == NISMode::eNISModeScaler)
+    CHI_VALIDATE(ctx.compute->bindSharedState(cmdList));
+    CHI_VALIDATE(ctx.compute->bindKernel(kernel));
+    CHI_VALIDATE(ctx.compute->bindConsts(0, 0, &ctx.config, sizeof(ctx.config), 3));
+    CHI_VALIDATE(ctx.compute->bindSampler(1, 0, chi::eSamplerLinearClamp));
+    CHI_VALIDATE(ctx.compute->bindTexture(2, 0, colorIn));
+    CHI_VALIDATE(ctx.compute->bindRWTexture(3, 0, colorOut));
+    if (consts.mode == NISMode::eScaler)
     {
-        CHI_VALIDATE(nis.compute->bindTexture(4, 1, nis.scalerCoef));
-        CHI_VALIDATE(nis.compute->bindTexture(5, 2, nis.usmCoef));
+        CHI_VALIDATE(ctx.compute->bindTexture(4, 1, ctx.scalerCoef));
+        CHI_VALIDATE(ctx.compute->bindTexture(5, 2, ctx.usmCoef));
     }
-    CHI_VALIDATE(nis.compute->dispatch(UINT(std::ceil(outDesc.width / float(nis.blockWidth))), UINT(std::ceil(outDesc.height / float(nis.blockHeight))), 1));
+    CHI_VALIDATE(ctx.compute->dispatch(UINT(std::ceil(outDesc.width / float(ctx.blockWidth))), UINT(std::ceil(outDesc.height / float(ctx.blockHeight))), 1));
 
     float ms = 0;
-    CHI_VALIDATE(nis.compute->endPerfSection(cmdList, "sl.nis", ms));
+    CHI_VALIDATE(ctx.compute->endPerfSection(cmdList, "sl.nis", ms));
 
     auto parameters = api::getContext()->parameters;
 
 #ifndef SL_PRODUCTION
     // Report our stats, shown by sl.nis plugin
-    static std::string s_stats;
+    /*static std::string s_stats;
     auto v = api::getContext()->pluginVersion;
-    s_stats = extra::format("sl.nis {} - ({}x{})->({}x{}) - {}ms - {}", v.toStr(), inExtent.width, inExtent.height,outDesc.width, outDesc.height, ms, GIT_LAST_COMMIT);
-    parameters->set(sl::param::nis::kStats, (void*)s_stats.c_str());
+    s_stats = extra::format("sl.nis {} - ({}x{})->({}x{}) - {}ms", v.toStr() + "." + GIT_LAST_COMMIT_SHORT, inExtent.width, inExtent.height,outDesc.width, outDesc.height, ms);
+    parameters->set(sl::param::nis::kStats, (void*)s_stats.c_str());*/
+
+    std::scoped_lock lock(ctx.uiStats.mtx);
+    ctx.uiStats.mode = getNISModeAsStr(consts.mode);
+    ctx.uiStats.viewport = extra::format("Viewport {}x{} -> {}x{}", inExtent.width, inExtent.height, outExtent.width, outExtent.height);
+    ctx.uiStats.runtime = extra::format("Execution time {}ms", ms);
 #endif
 
     // Tell others that we are actually active this frame
     uint32_t frame = 0;
-    CHI_VALIDATE(nis.compute->getFinishedFrameIndex(frame));
+    CHI_VALIDATE(ctx.compute->getFinishedFrameIndex(frame));
     parameters->set(sl::param::nis::kCurrentFrame, frame + 1);
+
+    ctx.currentViewport = {};
+    return Result::eOk;
 }
 
 //! -------------------------------------------------------------------------------------------------
@@ -300,81 +378,113 @@ void nisEndEvaluation(chi::CommandList cmdList)
 //! Called only if plugin reports `supported : true` in the JSON config.
 //! Note that supported flag can flip back to false if this method fails.
 //!
-//! @param jsonConfig Configuration provided by the loader (plugin manager or another plugin)
 //! @param device Either ID3D12Device or struct VkDevices (see internal.h)
-//! @param parameters Shared parameters from host and other plugins
-bool slOnPluginStartup(const char* jsonConfig, void* device, sl::param::IParameters* parameters)
+bool slOnPluginStartup(const char* jsonConfig, void* device)
 {
     SL_PLUGIN_COMMON_STARTUP();
 
-   
-    if (!getPointerParam(parameters, param::common::kComputeAPI, &nis.compute))
+    auto& ctx = (*nis::getContext());
+
+    auto parameters = api::getContext()->parameters;
+
+    if (!getPointerParam(parameters, param::common::kComputeAPI, &ctx.compute))
     {
-        SL_LOG_ERROR("Can't find %s", param::common::kComputeAPI);
+        SL_LOG_ERROR( "Can't find %s", param::common::kComputeAPI);
         return false;
     }
 
-    if (!param::getPointerParam(parameters, param::common::kPFunRegisterEvaluateCallbacks, &nis.registerEvaluateCallbacks))
+    if (!param::getPointerParam(parameters, param::common::kPFunRegisterEvaluateCallbacks, &ctx.registerEvaluateCallbacks))
     {
-        SL_LOG_ERROR("Cannot obtain `registerEvaluateCallbacks` interface - check that sl.common was initialized correctly");
+        SL_LOG_ERROR( "Cannot obtain `registerEvaluateCallbacks` interface - check that sl.common was initialized correctly");
         return false;
     }
-    nis.registerEvaluateCallbacks(eFeatureNIS, nisBeginEvaluation, nisEndEvaluation);
+    ctx.registerEvaluateCallbacks(kFeatureNIS, nisBeginEvaluation, nisEndEvaluation);
 
-    chi::PlatformType platform;
-    nis.compute->getPlatformType(platform);
+    RenderAPI platform;
+    ctx.compute->getRenderAPI(platform);
     switch (platform)
     {
-    case chi::ePlatformTypeVK:
+    case RenderAPI::eVulkan:
         {
-            nis.addShaderPermutation(eNISModeSharpen, 0, eNISHDRNone, NIS_Sharpen_V0_H0_spv, NIS_Sharpen_V0_H0_spv_len, "NIS_Sharpen_V0_H0.spv");
-            nis.addShaderPermutation(eNISModeSharpen, 0, eNISHDRLinear, NIS_Sharpen_V0_H1_spv, NIS_Sharpen_V0_H1_spv_len, "NIS_Sharpen_V0_H1.spv");
-            nis.addShaderPermutation(eNISModeSharpen, 0, eNISHDRPQ, NIS_Sharpen_V0_H2_spv, NIS_Sharpen_V0_H2_spv_len, "NIS_Sharpen_V0_H2.spv");
-            nis.addShaderPermutation(eNISModeSharpen, 1, eNISHDRNone, NIS_Sharpen_V1_H0_spv, NIS_Sharpen_V1_H0_spv_len, "NIS_Sharpen_V1_H0.spv");
-            nis.addShaderPermutation(eNISModeSharpen, 1, eNISHDRLinear, NIS_Sharpen_V1_H1_spv, NIS_Sharpen_V1_H1_spv_len, "NIS_Sharpen_V1_H1.spv");
-            nis.addShaderPermutation(eNISModeSharpen, 1, eNISHDRPQ, NIS_Sharpen_V1_H2_spv, NIS_Sharpen_V1_H2_spv_len, "NIS_Sharpen_V1_H2.spv");
-            nis.addShaderPermutation(eNISModeScaler, 0, eNISHDRNone, NIS_Scaler_V0_H0_spv, NIS_Scaler_V0_H0_spv_len, "NIS_Scaler_V0_H0.spv");
-            nis.addShaderPermutation(eNISModeScaler, 0, eNISHDRLinear, NIS_Scaler_V0_H1_spv, NIS_Scaler_V0_H1_spv_len, "NIS_Scaler_V0_H1.spv");
-            nis.addShaderPermutation(eNISModeScaler, 0, eNISHDRPQ, NIS_Scaler_V0_H2_spv, NIS_Scaler_V0_H2_spv_len, "NIS_Scaler_V0_H2.spv");
-            nis.addShaderPermutation(eNISModeScaler, 1, eNISHDRNone, NIS_Scaler_V1_H0_spv, NIS_Scaler_V1_H0_spv_len, "NIS_Scaler_V1_H0.spv");
-            nis.addShaderPermutation(eNISModeScaler, 1, eNISHDRLinear, NIS_Scaler_V1_H1_spv, NIS_Scaler_V1_H1_spv_len, "NIS_Scaler_V1_H1.spv");
-            nis.addShaderPermutation(eNISModeScaler, 1, eNISHDRPQ, NIS_Scaler_V1_H2_spv, NIS_Scaler_V1_H2_spv_len, "NIS_Scaler_V1_H2.spv");
+            ctx.addShaderPermutation(NISMode::eSharpen, 0, NISHDR::eNone, NIS_Sharpen_V0_H0_spv, NIS_Sharpen_V0_H0_spv_len, "NIS_Sharpen_V0_H0.spv");
+            ctx.addShaderPermutation(NISMode::eSharpen, 0, NISHDR::eLinear, NIS_Sharpen_V0_H1_spv, NIS_Sharpen_V0_H1_spv_len, "NIS_Sharpen_V0_H1.spv");
+            ctx.addShaderPermutation(NISMode::eSharpen, 0, NISHDR::ePQ, NIS_Sharpen_V0_H2_spv, NIS_Sharpen_V0_H2_spv_len, "NIS_Sharpen_V0_H2.spv");
+            ctx.addShaderPermutation(NISMode::eSharpen, 1, NISHDR::eNone, NIS_Sharpen_V1_H0_spv, NIS_Sharpen_V1_H0_spv_len, "NIS_Sharpen_V1_H0.spv");
+            ctx.addShaderPermutation(NISMode::eSharpen, 1, NISHDR::eLinear, NIS_Sharpen_V1_H1_spv, NIS_Sharpen_V1_H1_spv_len, "NIS_Sharpen_V1_H1.spv");
+            ctx.addShaderPermutation(NISMode::eSharpen, 1, NISHDR::ePQ, NIS_Sharpen_V1_H2_spv, NIS_Sharpen_V1_H2_spv_len, "NIS_Sharpen_V1_H2.spv");
+            ctx.addShaderPermutation(NISMode::eScaler, 0, NISHDR::eNone, NIS_Scaler_V0_H0_spv, NIS_Scaler_V0_H0_spv_len, "NIS_Scaler_V0_H0.spv");
+            ctx.addShaderPermutation(NISMode::eScaler, 0, NISHDR::eLinear, NIS_Scaler_V0_H1_spv, NIS_Scaler_V0_H1_spv_len, "NIS_Scaler_V0_H1.spv");
+            ctx.addShaderPermutation(NISMode::eScaler, 0, NISHDR::ePQ, NIS_Scaler_V0_H2_spv, NIS_Scaler_V0_H2_spv_len, "NIS_Scaler_V0_H2.spv");
+            ctx.addShaderPermutation(NISMode::eScaler, 1, NISHDR::eNone, NIS_Scaler_V1_H0_spv, NIS_Scaler_V1_H0_spv_len, "NIS_Scaler_V1_H0.spv");
+            ctx.addShaderPermutation(NISMode::eScaler, 1, NISHDR::eLinear, NIS_Scaler_V1_H1_spv, NIS_Scaler_V1_H1_spv_len, "NIS_Scaler_V1_H1.spv");
+            ctx.addShaderPermutation(NISMode::eScaler, 1, NISHDR::ePQ, NIS_Scaler_V1_H2_spv, NIS_Scaler_V1_H2_spv_len, "NIS_Scaler_V1_H2.spv");
             break;
         }
-    case chi::ePlatformTypeD3D12:
+    case RenderAPI::eD3D12:
         {
-            nis.addShaderPermutation(eNISModeSharpen, 0, eNISHDRNone, NIS_Sharpen_V0_H0_cs6, NIS_Sharpen_V0_H0_cs6_len, "NIS_Sharpen_V0_H0.cs6");
-            nis.addShaderPermutation(eNISModeSharpen, 0, eNISHDRLinear, NIS_Sharpen_V0_H1_cs6, NIS_Sharpen_V0_H1_cs6_len, "NIS_Sharpen_V0_H1.cs6");
-            nis.addShaderPermutation(eNISModeSharpen, 0, eNISHDRPQ, NIS_Sharpen_V0_H2_cs6, NIS_Sharpen_V0_H2_cs6_len, "NIS_Sharpen_V0_H2.cs6");
-            nis.addShaderPermutation(eNISModeSharpen, 1, eNISHDRNone, NIS_Sharpen_V1_H0_cs6, NIS_Sharpen_V1_H0_cs6_len, "NIS_Sharpen_V1_H0.cs6");
-            nis.addShaderPermutation(eNISModeSharpen, 1, eNISHDRLinear, NIS_Sharpen_V1_H1_cs6, NIS_Sharpen_V1_H1_cs6_len, "NIS_Sharpen_V1_H1.cs6");
-            nis.addShaderPermutation(eNISModeSharpen, 1, eNISHDRPQ, NIS_Sharpen_V1_H2_cs6, NIS_Sharpen_V1_H2_cs6_len, "NIS_Sharpen_V1_H2.cs6");
-            nis.addShaderPermutation(eNISModeScaler, 0, eNISHDRNone, NIS_Scaler_V0_H0_cs6, NIS_Scaler_V0_H0_cs6_len, "NIS_Scaler_V0_H0.cs6");
-            nis.addShaderPermutation(eNISModeScaler, 0, eNISHDRLinear, NIS_Scaler_V0_H1_cs6, NIS_Scaler_V0_H1_cs6_len, "NIS_Scaler_V0_H1.cs6");
-            nis.addShaderPermutation(eNISModeScaler, 0, eNISHDRPQ, NIS_Scaler_V0_H2_cs6, NIS_Scaler_V0_H2_cs6_len, "NIS_Scaler_V0_H2.cs6");
-            nis.addShaderPermutation(eNISModeScaler, 1, eNISHDRNone, NIS_Scaler_V1_H0_cs6, NIS_Scaler_V1_H0_cs6_len, "NIS_Scaler_V1_H0.cs6");
-            nis.addShaderPermutation(eNISModeScaler, 1, eNISHDRLinear, NIS_Scaler_V1_H1_cs6, NIS_Scaler_V1_H1_cs6_len, "NIS_Scaler_V1_H1.cs6");
-            nis.addShaderPermutation(eNISModeScaler, 1, eNISHDRPQ, NIS_Scaler_V1_H2_cs6, NIS_Scaler_V1_H2_cs6_len, "NIS_Scaler_V1_H2.cs6");
+            ctx.addShaderPermutation(NISMode::eSharpen, 0, NISHDR::eNone, NIS_Sharpen_V0_H0_cs6, NIS_Sharpen_V0_H0_cs6_len, "NIS_Sharpen_V0_H0.cs6");
+            ctx.addShaderPermutation(NISMode::eSharpen, 0, NISHDR::eLinear, NIS_Sharpen_V0_H1_cs6, NIS_Sharpen_V0_H1_cs6_len, "NIS_Sharpen_V0_H1.cs6");
+            ctx.addShaderPermutation(NISMode::eSharpen, 0, NISHDR::ePQ, NIS_Sharpen_V0_H2_cs6, NIS_Sharpen_V0_H2_cs6_len, "NIS_Sharpen_V0_H2.cs6");
+            ctx.addShaderPermutation(NISMode::eSharpen, 1, NISHDR::eNone, NIS_Sharpen_V1_H0_cs6, NIS_Sharpen_V1_H0_cs6_len, "NIS_Sharpen_V1_H0.cs6");
+            ctx.addShaderPermutation(NISMode::eSharpen, 1, NISHDR::eLinear, NIS_Sharpen_V1_H1_cs6, NIS_Sharpen_V1_H1_cs6_len, "NIS_Sharpen_V1_H1.cs6");
+            ctx.addShaderPermutation(NISMode::eSharpen, 1, NISHDR::ePQ, NIS_Sharpen_V1_H2_cs6, NIS_Sharpen_V1_H2_cs6_len, "NIS_Sharpen_V1_H2.cs6");
+            ctx.addShaderPermutation(NISMode::eScaler, 0, NISHDR::eNone, NIS_Scaler_V0_H0_cs6, NIS_Scaler_V0_H0_cs6_len, "NIS_Scaler_V0_H0.cs6");
+            ctx.addShaderPermutation(NISMode::eScaler, 0, NISHDR::eLinear, NIS_Scaler_V0_H1_cs6, NIS_Scaler_V0_H1_cs6_len, "NIS_Scaler_V0_H1.cs6");
+            ctx.addShaderPermutation(NISMode::eScaler, 0, NISHDR::ePQ, NIS_Scaler_V0_H2_cs6, NIS_Scaler_V0_H2_cs6_len, "NIS_Scaler_V0_H2.cs6");
+            ctx.addShaderPermutation(NISMode::eScaler, 1, NISHDR::eNone, NIS_Scaler_V1_H0_cs6, NIS_Scaler_V1_H0_cs6_len, "NIS_Scaler_V1_H0.cs6");
+            ctx.addShaderPermutation(NISMode::eScaler, 1, NISHDR::eLinear, NIS_Scaler_V1_H1_cs6, NIS_Scaler_V1_H1_cs6_len, "NIS_Scaler_V1_H1.cs6");
+            ctx.addShaderPermutation(NISMode::eScaler, 1, NISHDR::ePQ, NIS_Scaler_V1_H2_cs6, NIS_Scaler_V1_H2_cs6_len, "NIS_Scaler_V1_H2.cs6");
             break;
         }
     default:
         {
-            nis.addShaderPermutation(eNISModeSharpen, 0, eNISHDRNone, NIS_Sharpen_V0_H0_cs, NIS_Sharpen_V0_H0_cs_len, "NIS_Sharpen_V0_H0.cs");
-            nis.addShaderPermutation(eNISModeSharpen, 0, eNISHDRLinear, NIS_Sharpen_V0_H1_cs, NIS_Sharpen_V0_H1_cs_len, "NIS_Sharpen_V0_H1.cs");
-            nis.addShaderPermutation(eNISModeSharpen, 0, eNISHDRPQ, NIS_Sharpen_V0_H2_cs, NIS_Sharpen_V0_H2_cs_len, "NIS_Sharpen_V0_H2.cs");
-            nis.addShaderPermutation(eNISModeSharpen, 1, eNISHDRNone, NIS_Sharpen_V1_H0_cs, NIS_Sharpen_V1_H0_cs_len, "NIS_Sharpen_V1_H0.cs");
-            nis.addShaderPermutation(eNISModeSharpen, 1, eNISHDRLinear, NIS_Sharpen_V1_H1_cs, NIS_Sharpen_V1_H1_cs_len, "NIS_Sharpen_V1_H1.cs");
-            nis.addShaderPermutation(eNISModeSharpen, 1, eNISHDRPQ, NIS_Sharpen_V1_H2_cs, NIS_Sharpen_V1_H2_cs_len, "NIS_Sharpen_V1_H2.cs");
-            nis.addShaderPermutation(eNISModeScaler, 0, eNISHDRNone, NIS_Scaler_V0_H0_cs, NIS_Scaler_V0_H0_cs_len, "NIS_Scaler_V0_H0.cs");
-            nis.addShaderPermutation(eNISModeScaler, 0, eNISHDRLinear, NIS_Scaler_V0_H1_cs, NIS_Scaler_V0_H1_cs_len, "NIS_Scaler_V0_H1.cs");
-            nis.addShaderPermutation(eNISModeScaler, 0, eNISHDRPQ, NIS_Scaler_V0_H2_cs, NIS_Scaler_V0_H2_cs_len, "NIS_Scaler_V0_H2.cs");
-            nis.addShaderPermutation(eNISModeScaler, 1, eNISHDRNone, NIS_Scaler_V1_H0_cs, NIS_Scaler_V1_H0_cs_len, "NIS_Scaler_V1_H0.cs");
-            nis.addShaderPermutation(eNISModeScaler, 1, eNISHDRLinear, NIS_Scaler_V1_H1_cs, NIS_Scaler_V1_H1_cs_len, "NIS_Scaler_V1_H1.cs");
-            nis.addShaderPermutation(eNISModeScaler, 1, eNISHDRPQ, NIS_Scaler_V1_H2_cs, NIS_Scaler_V1_H2_cs_len, "NIS_Scaler_V1_H2.cs");
+            ctx.addShaderPermutation(NISMode::eSharpen, 0, NISHDR::eNone, NIS_Sharpen_V0_H0_cs, NIS_Sharpen_V0_H0_cs_len, "NIS_Sharpen_V0_H0.cs");
+            ctx.addShaderPermutation(NISMode::eSharpen, 0, NISHDR::eLinear, NIS_Sharpen_V0_H1_cs, NIS_Sharpen_V0_H1_cs_len, "NIS_Sharpen_V0_H1.cs");
+            ctx.addShaderPermutation(NISMode::eSharpen, 0, NISHDR::ePQ, NIS_Sharpen_V0_H2_cs, NIS_Sharpen_V0_H2_cs_len, "NIS_Sharpen_V0_H2.cs");
+            ctx.addShaderPermutation(NISMode::eSharpen, 1, NISHDR::eNone, NIS_Sharpen_V1_H0_cs, NIS_Sharpen_V1_H0_cs_len, "NIS_Sharpen_V1_H0.cs");
+            ctx.addShaderPermutation(NISMode::eSharpen, 1, NISHDR::eLinear, NIS_Sharpen_V1_H1_cs, NIS_Sharpen_V1_H1_cs_len, "NIS_Sharpen_V1_H1.cs");
+            ctx.addShaderPermutation(NISMode::eSharpen, 1, NISHDR::ePQ, NIS_Sharpen_V1_H2_cs, NIS_Sharpen_V1_H2_cs_len, "NIS_Sharpen_V1_H2.cs");
+            ctx.addShaderPermutation(NISMode::eScaler, 0, NISHDR::eNone, NIS_Scaler_V0_H0_cs, NIS_Scaler_V0_H0_cs_len, "NIS_Scaler_V0_H0.cs");
+            ctx.addShaderPermutation(NISMode::eScaler, 0, NISHDR::eLinear, NIS_Scaler_V0_H1_cs, NIS_Scaler_V0_H1_cs_len, "NIS_Scaler_V0_H1.cs");
+            ctx.addShaderPermutation(NISMode::eScaler, 0, NISHDR::ePQ, NIS_Scaler_V0_H2_cs, NIS_Scaler_V0_H2_cs_len, "NIS_Scaler_V0_H2.cs");
+            ctx.addShaderPermutation(NISMode::eScaler, 1, NISHDR::eNone, NIS_Scaler_V1_H0_cs, NIS_Scaler_V1_H0_cs_len, "NIS_Scaler_V1_H0.cs");
+            ctx.addShaderPermutation(NISMode::eScaler, 1, NISHDR::eLinear, NIS_Scaler_V1_H1_cs, NIS_Scaler_V1_H1_cs_len, "NIS_Scaler_V1_H1.cs");
+            ctx.addShaderPermutation(NISMode::eScaler, 1, NISHDR::ePQ, NIS_Scaler_V1_H2_cs, NIS_Scaler_V1_H2_cs_len, "NIS_Scaler_V1_H2.cs");
             break;
         }
     }
   
+#ifndef SL_PRODUCTION
+    // Check for UI and register our callback
+    imgui::ImGUI* ui{};
+    param::getPointerParam(parameters, param::imgui::kInterface, &ui);
+    if (ui)
+    {
+        // Runs async from the present thread where UI is rendered just before frame is presented
+        auto renderUI = [&ctx](imgui::ImGUI* ui, bool finalFrame)->void
+        {
+            auto v = api::getContext()->pluginVersion;
+            std::scoped_lock lock(ctx.uiStats.mtx);
+            uint32_t lastFrame, frame;
+            if (api::getContext()->parameters->get(sl::param::nis::kCurrentFrame, &lastFrame))
+            {
+                ctx.compute->getFinishedFrameIndex(frame);
+                if (lastFrame < frame)
+                {
+                    ctx.uiStats.mode = "Mode: Off";
+                    ctx.uiStats.viewport = ctx.uiStats.runtime = {};
+                }
+                if (ui->collapsingHeader(extra::format("sl.nis v{}", (v.toStr() + "." + GIT_LAST_COMMIT_SHORT)).c_str(), imgui::kTreeNodeFlagDefaultOpen))
+                {
+                    ui->text(ctx.uiStats.mode.c_str());
+                    ui->text(ctx.uiStats.viewport.c_str());
+                    ui->text(ctx.uiStats.runtime.c_str());
+                }
+            }
+        };
+        ui->registerRenderCallbacks(renderUI, nullptr);
+    }
+#endif
     return true;
 }
 
@@ -383,61 +493,72 @@ bool slOnPluginStartup(const char* jsonConfig, void* device, sl::param::IParamet
 //! Called by loader when unloading the plugin
 void slOnPluginShutdown()
 {
-    nis.registerEvaluateCallbacks(eFeatureNIS, nullptr, nullptr);
+    auto& ctx = (*nis::getContext());
+    ctx.registerEvaluateCallbacks(kFeatureNIS, nullptr, nullptr);
 
     // it will shutdown it down automatically
     plugin::onShutdown(api::getContext());
 
-    if (nis.uploadScalerCoef)
+    if (ctx.uploadScalerCoef)
     {
-        nis.compute->destroyResource(nis.uploadScalerCoef);
+        ctx.compute->destroyResource(ctx.uploadScalerCoef);
     }
-    if (nis.uploadUsmCoef)
+    if (ctx.uploadUsmCoef)
     {
-        nis.compute->destroyResource(nis.uploadUsmCoef);
+        ctx.compute->destroyResource(ctx.uploadUsmCoef);
     }
-    nis.compute->destroyResource(nis.scalerCoef);
-    nis.compute->destroyResource(nis.usmCoef);
+    ctx.compute->destroyResource(ctx.scalerCoef);
+    ctx.compute->destroyResource(ctx.usmCoef);
 
-    for (auto& e : nis.shaders)
+    for (auto& e : ctx.shaders)
     {
-        CHI_VALIDATE(nis.compute->destroyKernel(e.second));
+        CHI_VALIDATE(ctx.compute->destroyKernel(e.second));
     }
+    ctx.compute = {};
 }
 
-const char *JSON = R"json(
+sl::Result slNISSetOptions(const sl::ViewportHandle& viewport, const sl::NISOptions& options)
 {
-    "id" : 2,
-    "priority" : 1,
-    "namespace" : "nis",
-    "hooks" :
-    [
-    ]
+    auto v = viewport;
+    v.next = (sl::BaseStructure*)&options;
+    return slSetData(&v, nullptr);
 }
-)json";
 
-uint32_t getSupportedAdapterMask()
+sl::Result slNISGetState(const sl::ViewportHandle& viewport, sl::NISState& state)
 {
-    return ~0;
-}
+    auto& ctx = (*nis::getContext());
+    if (!ctx.compute) return Result::eErrorInvalidState;
 
-SL_PLUGIN_DEFINE("sl.nis", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON, getSupportedAdapterMask())
+    state.estimatedVRAMUsageInBytes = 0;
+
+    chi::ResourceFootprint footprint{};
+    ctx.compute->getResourceFootprint(ctx.uploadScalerCoef, footprint);
+    state.estimatedVRAMUsageInBytes += footprint.totalBytes;
+    ctx.compute->getResourceFootprint(ctx.uploadUsmCoef, footprint);
+    state.estimatedVRAMUsageInBytes += footprint.totalBytes;
+    ctx.compute->getResourceFootprint(ctx.scalerCoef, footprint);
+    state.estimatedVRAMUsageInBytes += footprint.totalBytes;
+    ctx.compute->getResourceFootprint(ctx.usmCoef, footprint);
+    state.estimatedVRAMUsageInBytes += footprint.totalBytes;
+
+    return Result::eOk;
+}
 
 SL_EXPORT void *slGetPluginFunction(const char *functionName)
 {
     // Forward declarations
-    const char *slGetPluginJSONConfig();
-    void slSetParameters(sl::param::IParameters *p);
+    bool slOnPluginLoad(sl::param::IParameters * params, const char* loaderJSON, const char** pluginJSON);
 
-    // Redirect to OTA if any
+    //! Redirect to OTA if any
     SL_EXPORT_OTA;
 
     // Core API
-    SL_EXPORT_FUNCTION(slSetParameters);
+    SL_EXPORT_FUNCTION(slOnPluginLoad);
     SL_EXPORT_FUNCTION(slOnPluginShutdown);
     SL_EXPORT_FUNCTION(slOnPluginStartup);
-    SL_EXPORT_FUNCTION(slGetPluginJSONConfig);
-    SL_EXPORT_FUNCTION(slSetConstants);
+    SL_EXPORT_FUNCTION(slSetData);
+    SL_EXPORT_FUNCTION(slNISSetOptions);
+    SL_EXPORT_FUNCTION(slNISGetState);
 
     return nullptr;
 }

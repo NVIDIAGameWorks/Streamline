@@ -23,6 +23,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 #ifdef SL_WINDOWS
 #include <windows.h>
 #endif
@@ -32,12 +33,31 @@ struct NVSDK_NGX_Parameter;
 struct VkPhysicalDevice_T;
 struct VkDevice_T;
 struct VkInstance_T;
+struct VkImageCreateInfo;
+struct VkInstanceCreateInfo;
+struct VkDeviceCreateInfo;
+struct VkPresentInfoKHR;
+struct VkSwapchainCreateInfoKHR;
+struct VkAllocationCallbacks;
+struct VkSwapchainKHR_T;
+struct VkPhysicalDevice_T;
+struct VkImage_T;
+struct VkFence_T;
+struct VkSemaphore_T;
+struct VkQueue_T;
 using VkPhysicalDevice = VkPhysicalDevice_T*;
 using VkDevice = VkDevice_T*;
 using VkInstance = VkInstance_T*;
+using VkSwapchainKHR = VkSwapchainKHR_T*;
+using VkImage = VkImage_T*;
+using VkFence = VkFence_T*;
+using VkSemaphore = VkSemaphore_T*;
+using VkQueue = VkQueue_T*;
+enum VkResult : int;
 
 struct ID3D12Device;
 struct ID3D12Resource;
+enum D3D12_BARRIER_LAYOUT;
 
 #ifdef SL_LINUX
 using HMODULE = void*;
@@ -47,8 +67,12 @@ using HMODULE = void*;
 #define LoadLibraryW(lib) dlopen(sl::extra::toStr(lib).c_str(), RTLD_LAZY)
 #else
 
+constexpr uint32_t kTemporaryAppId = 100721531;
+//! Special marker
+constexpr uint32_t kReflexMarkerSleep = 0x1000;
+
 //! Dummy interface allowing us to extract the underlying base interface
-struct DECLSPEC_UUID("ADEC44E2-61F0-45C3-AD9F-1B37379284FF") StreamlineRetreiveBaseInterface : IUnknown
+struct DECLSPEC_UUID("ADEC44E2-61F0-45C3-AD9F-1B37379284FF") StreamlineRetrieveBaseInterface : IUnknown
 {
 
 };
@@ -57,6 +81,61 @@ struct DECLSPEC_UUID("ADEC44E2-61F0-45C3-AD9F-1B37379284FF") StreamlineRetreiveB
 
 namespace sl
 {
+
+template<typename T>
+T* findStruct(const void* ptr)
+{
+    auto base = (BaseStructure*)ptr;
+    while (base && base->structType != T::s_structType)
+    {
+        base = base->next;
+    }
+    return (T*)base;
+}
+
+template<typename T>
+T* findStruct(void* ptr)
+{
+    auto base = (BaseStructure*)ptr;
+    while (base && base->structType != T::s_structType)
+    {
+        base = base->next;
+    }
+    return (T*)base;
+}
+
+template<typename T>
+T* findStruct(const void** ptr, uint32_t count)
+{
+    BaseStructure* base{};
+    for (uint32_t i = 0; base == nullptr && i < count; i++)
+    {
+        base = (BaseStructure*)ptr[i];
+        while (base && base->structType != T::s_structType)
+        {
+            base = base->next;
+        }
+    }
+    return (T*)base;
+}
+
+template<typename T>
+bool findStructs(const void** ptr, uint32_t count, std::vector<T*>& structs)
+{
+    for (uint32_t i = 0; i < count; i++)
+    {
+        auto base = (BaseStructure*)ptr[i];
+        while (base)
+        {
+            if (base->structType == T::s_structType)
+            {
+                structs.push_back((T*)base);
+            }
+            base = base->next;
+        }
+    }
+    return structs.size() > 0;
+}
 
 struct VkDevices
 {
@@ -72,86 +151,65 @@ IParameters* getInterface();
 void destroyInterface();
 }
 
-struct Version
-{
-    Version() : major(0), minor(0), build(0) {};
-    Version(int v1, int v2, int v3) : major(v1), minor(v2), build(v3) {};
-
-    inline operator bool() const { return major != 0 || minor != 0 || build != 0; }
-
-    inline bool fromStr(const std::string& str)
-    {
-#if SL_WINDOWS
-        return sscanf_s(str.c_str(), "%d.%d.%d", &major, &minor, &build) == 3;
-#else
-        return sscanf(str.c_str(), "%d.%d.%d", &major, &minor, &build) == 3;
-#endif
-    }
-    inline std::string toStr() const
-    {
-        return std::to_string(major) + "." + std::to_string(minor) + "." + std::to_string(build);
-    }
-    inline std::wstring toWStr() const
-    {
-        return std::to_wstring(major) + L"." + std::to_wstring(minor) + L"." + std::to_wstring(build);
-    }
-    inline std::wstring toWStrOTAId() const
-    {
-        return std::to_wstring((major << 16) | (minor << 8) | build);
-    }
-    inline bool operator==(const Version& rhs) const
-    {
-        return major == rhs.major && minor == rhs.minor && build == rhs.build;
-    }
-    inline bool operator>(const Version& rhs) const
-    {
-        if (major < rhs.major) return false;
-        else if (major > rhs.major) return true;
-        // major version the same
-        if (minor < rhs.minor) return false;
-        else if (minor > rhs.minor) return true;
-        // minor version the same
-        if (build < rhs.build) return false;
-        else if (build > rhs.build) return true;
-        // build version the same
-        return false;
-    };
-    inline bool operator>=(const Version& rhs) const
-    {
-        return operator>(rhs) || operator==(rhs);
-    };
-    inline bool operator<(const Version& rhs) const
-    {
-        if (major > rhs.major) return false;
-        else if (major < rhs.major) return true;
-        // major version the same
-        if (minor > rhs.minor) return false;
-        else if (minor < rhs.minor) return true;
-        // minor version the same
-        if (build > rhs.build) return false;
-        else if (build < rhs.build) return true;
-        // build version the same
-        return false;
-    };
-    inline bool operator<=(const Version& rhs) const
-    {
-        return operator<(rhs) || operator==(rhs);
-    };
-
-    int major;
-    int minor;
-    int build;
-};
-
 namespace api
 {
 
 // Core API, each plugin must implement these
-using PFuncSetParameters = void(sl::param::IParameters*);
-using PFuncGetPluginJSONConfig = const char* (void);
-using PFuncOnPluginStartup = bool(const char* jsonConfig, void* device, sl::param::IParameters*);
+using PFuncOnPluginLoad = bool(sl::param::IParameters* params, const char* loaderJSON, const char** pluginJSON);
+using PFuncOnPluginStartup = bool(const char* loaderJSON, void* device);
 using PFuncOnPluginShutdown = void(void);
 using PFuncGetPluginFunction = void* (const char* name);
 
 } // namespace api
+
+//! IMPORTANT: 
+//! 
+//! - Functions with 'Skip' parameter at the end ALWAYS represent BEFORE hooks, if any of the hooks sets 'Skip' to true base method call MUST be skipped
+//! - Functions ending with 'Before' are called before base method and MUST be accompanied with their 'After' counterpart.
+//! 
+#if defined(__dxgi_h__)
+using PFunCreateSwapChainBefore = HRESULT(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI_SWAP_CHAIN_DESC* pDesc, IDXGISwapChain** ppSwapChain, bool& Skip);
+using PFunCreateSwapChainForHwndBefore = HRESULT(IDXGIFactory2* pFactory, IUnknown* pDevice, HWND hWnd, const DXGI_SWAP_CHAIN_DESC1* pDesc, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* pFulScreenDesc, IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain, bool& Skip);
+using PFunCreateSwapChainForCoreWindowBefore = HRESULT(IDXGIFactory2* pFactory, IUnknown* pDevice, IUnknown* pWindow, const DXGI_SWAP_CHAIN_DESC1* pDesc, IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain, bool& Skip);
+using PFunCreateSwapChainAfter = HRESULT(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI_SWAP_CHAIN_DESC* pDesc, IDXGISwapChain** ppSwapChain);
+using PFunCreateSwapChainForHwndAfter = HRESULT(IDXGIFactory2* pFactory, IUnknown* pDevice, HWND hWnd, const DXGI_SWAP_CHAIN_DESC1* pDesc, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* pFulScreenDesc, IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain);
+using PFunCreateSwapChainForCoreWindowAfter = HRESULT(IDXGIFactory2* pFactory, IUnknown* pDevice, IUnknown* pWindow, const DXGI_SWAP_CHAIN_DESC1* pDesc, IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain);
+
+using PFunSwapchainDestroyedBefore = void(IDXGISwapChain*);
+using PFunPresentBefore = HRESULT(IDXGISwapChain* SwapChain, UINT SyncInterval, UINT Flags, bool& Skip);
+using PFunPresent1Before = HRESULT(IDXGISwapChain* SwapChain, UINT SyncInterval, UINT PresentFlags, const DXGI_PRESENT_PARAMETERS* pPresentParameters, bool& Skip);
+using PFunGetBufferBefore = HRESULT(IDXGISwapChain* SwapChain, UINT Buffer, REFIID riid, void** ppSurface, bool& Skip);
+using PFunGetCurrentBackBufferIndexBefore = UINT(IDXGISwapChain* SwapChain, bool& Skip);
+using PFunSetFullscreenStateBefore = HRESULT(IDXGISwapChain* SwapChain, BOOL pFullscreen, IDXGIOutput* ppTarget, bool& Skip);
+using PFunSetFullscreenStateAfter = HRESULT(IDXGISwapChain* SwapChain, BOOL pFullscreen, IDXGIOutput* ppTarget);
+using PFunResizeBuffersBefore = HRESULT(IDXGISwapChain* SwapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT& SwapChainFlags, bool& Skip);
+using PFunResizeBuffersAfter = HRESULT(IDXGISwapChain* SwapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT& SwapChainFlags);
+using PFunResizeBuffers1Before = HRESULT(IDXGISwapChain* SwapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT Format, UINT SwapChainFlags, const UINT* pCreationNodeMask, IUnknown* const* ppPresentQueue, bool& Skip);
+using PFunResizeBuffers1After = HRESULT(IDXGISwapChain* SwapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT Format, UINT SwapChainFlags, const UINT* pCreationNodeMask, IUnknown* const* ppPresentQueue);
+#endif
+
+//! All below hooks are of type 'eHookTypeAfter' and they do NOT have 'eHookTypeBefore' counterpart
+//! 
+#if defined(__d3d12_h__)
+using PFunCreateCommittedResourceAfter = HRESULT(const D3D12_HEAP_PROPERTIES* pHeapProperties, D3D12_HEAP_FLAGS HeapFlags, const D3D12_RESOURCE_DESC* pResourceDesc, D3D12_RESOURCE_STATES InitialResourceState, const D3D12_CLEAR_VALUE* pOptimizedClearValue, REFIID riidResource, void** ppvResource);
+using PFunCreatePlacedResourceAfter = HRESULT(ID3D12Heap* pHeap, UINT64 HeapOffset, const D3D12_RESOURCE_DESC* pDesc, D3D12_RESOURCE_STATES InitialState, const D3D12_CLEAR_VALUE* pOptimizedClearValue, REFIID riid, void** ppvResource);
+using PFunCreateReservedResourceAfter = HRESULT(const D3D12_RESOURCE_DESC* pDesc, D3D12_RESOURCE_STATES InitialState, const D3D12_CLEAR_VALUE* pOptimizedClearValue, REFIID riid, void** ppvResource);
+using PFunCreateCommandQueueAfter = HRESULT(const D3D12_COMMAND_QUEUE_DESC* pDesc, REFIID riid, void** ppCommandQueue);
+using PFunCreateCommittedResource1After = HRESULT(const D3D12_HEAP_PROPERTIES* pHeapProperties, D3D12_HEAP_FLAGS HeapFlags, const D3D12_RESOURCE_DESC* pDesc, D3D12_RESOURCE_STATES InitialResourceState, const D3D12_CLEAR_VALUE* pOptimizedClearValue, ID3D12ProtectedResourceSession* pProtectedSession, REFIID riidResource, void** ppvResource);
+using PFunCreateReservedResource1After = HRESULT(const D3D12_RESOURCE_DESC* pDesc, D3D12_RESOURCE_STATES InitialState, const D3D12_CLEAR_VALUE* pOptimizedClearValue, ID3D12ProtectedResourceSession* pProtectedSession, REFIID riid, void** ppvResource);
+using PFunCreateCommittedResource3After = HRESULT(const D3D12_HEAP_PROPERTIES* pHeapProperties, D3D12_HEAP_FLAGS HeapFlags, const D3D12_RESOURCE_DESC1* pDesc, D3D12_BARRIER_LAYOUT InitialLayout, const D3D12_CLEAR_VALUE* pOptimizedClearValue, ID3D12ProtectedResourceSession* pProtectedSession, UINT32 NumCastableFormats, DXGI_FORMAT* pCastableFormats, REFIID riidResource, void** ppvResource);
+using PFunCreatePlacedResource2After = HRESULT(ID3D12Heap* pHeap, UINT64 HeapOffset, const D3D12_RESOURCE_DESC1* pDesc, D3D12_BARRIER_LAYOUT InitialLayout, const D3D12_CLEAR_VALUE* pOptimizedClearValue, UINT32 NumCastableFormats, DXGI_FORMAT* pCastableFormats, REFIID riid, void** ppvResource);
+using PFunCreateCommittedResource2After = HRESULT(const D3D12_HEAP_PROPERTIES* pHeapProperties, D3D12_HEAP_FLAGS HeapFlags, const D3D12_RESOURCE_DESC1* pDesc, D3D12_RESOURCE_STATES InitialResourceState, const D3D12_CLEAR_VALUE* pOptimizedClearValue, ID3D12ProtectedResourceSession* pProtectedSession, REFIID riidResource, void** ppvResource);
+using PFunCreatePlacedResource1After = HRESULT(ID3D12Heap* pHeap, UINT64 HeapOffset, const D3D12_RESOURCE_DESC1* pDesc, D3D12_RESOURCE_STATES InitialState, const D3D12_CLEAR_VALUE* pOptimizedClearValue, REFIID riid, void** ppvResource);
+using PFunCreateReservedResource2After = HRESULT(const D3D12_RESOURCE_DESC* pDesc, D3D12_BARRIER_LAYOUT InitialLayout, const D3D12_CLEAR_VALUE* pOptimizedClearValue, ID3D12ProtectedResourceSession* pProtectedSession, UINT32 NumCastableFormats, DXGI_FORMAT* pCastableFormats, REFIID riid, void** ppvResource);
+
+using PFunResourceBarrierAfter = void(ID3D12GraphicsCommandList* pCmdList, UINT NumBarriers, const D3D12_RESOURCE_BARRIER* pBarriers);
+#endif
+
+using PFunVkCreateSwapchainKHRBefore = VkResult(VkDevice Device, const VkSwapchainCreateInfoKHR* CreateInfo, const VkAllocationCallbacks* Allocator, VkSwapchainKHR* Swapchain, bool& Skip);
+using PFunVkGetSwapchainImagesKHRBefore = VkResult(VkDevice Device, VkSwapchainKHR Swapchain, uint32_t* SwapchainImageCount, VkImage* SwapchainImages, bool& Skip);
+using PFunVkAcquireNextImageKHRBefore = VkResult(VkDevice Device, VkSwapchainKHR Swapchain, uint64_t Timeout, VkSemaphore Semaphore, VkFence Fence, uint32_t* ImageIndex, bool& Skip);
+using PFunVkQueuePresentKHRBefore = VkResult(VkQueue Queue, const VkPresentInfoKHR* PresentInfo, bool& Skip);
+using PFunVkDestroySwapchainKHRBefore = void(VkDevice Device, VkSwapchainKHR Swapchain, const VkAllocationCallbacks* Allocator, bool& Skip);
+
 } // namespace sl

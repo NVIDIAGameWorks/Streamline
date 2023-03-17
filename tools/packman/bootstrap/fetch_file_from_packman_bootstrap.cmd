@@ -19,12 +19,11 @@
 
 @echo Fetching %PACKAGE_NAME% ...
 
-@powershell -ExecutionPolicy ByPass -NoLogo -NoProfile -File "%~dp0fetch_file_from_s3.ps1" -sourceName %PACKAGE_NAME% ^
-    -output %TARGET_PATH%
+@powershell -ExecutionPolicy ByPass -NoLogo -NoProfile -File "%~dp0download_file_from_url.ps1" ^
+    -source "http://bootstrap.packman.nvidia.com/%PACKAGE_NAME%" -output %TARGET_PATH%
 :: A bug in powershell prevents the errorlevel code from being set when using the -File execution option
-:: We must therefore do our own failure analysis, basically make sure the file exists and is larger than 0 bytes:
+:: We must therefore do our own failure analysis, basically make sure the file exists:
 @if not exist %TARGET_PATH% goto ERROR_DOWNLOAD_FAILED
-@if %~z2==0 goto ERROR_DOWNLOAD_FAILED
 
 @endlocal
 @exit /b 0

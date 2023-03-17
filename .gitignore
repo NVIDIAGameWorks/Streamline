@@ -1,8 +1,12 @@
 _project/
 _artifacts/
 _sdk/
+_public/
+docs/pages/*
 external/*
-package.bat
 copy.bat
+mr.bat
+fb.bat
+.vs/
 **/*.aps
 tools/premake5/**

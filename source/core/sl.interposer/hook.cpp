@@ -25,9 +25,11 @@
 #endif
 #include <filesystem>
 
+#include "include/sl.h"
 #include "source/core/sl.interposer/hook.h"
 #include "source/core/sl.api/internal.h"
 #include "source/core/sl.log/log.h"
+#include "source/core/sl.extra/extra.h"
 #include "source/core/sl.file/file.h"
 #include "source/core/sl.param/parameters.h"
 
@@ -41,58 +43,103 @@ struct Hook : public IHook
     Hook()
     {
 #ifndef SL_PRODUCTION
+
+#define SL_EXTRACT_CONFIG_FLAG(a)                                                   \
+if (config.contains(#a))                                                            \
+{                                                                                   \
+    config.at(#a).get_to(m_config.##a);                                             \
+    auto v = extra::format("{}:{}",#a, m_config.##a);                               \
+    SL_LOG_HINT("Read '%s' from sl.interposer.json", v.c_str());                    \
+}
         // Hook interface can be called before slInit so we cannot use plugin locations from sl::Preferences
-        std::vector<std::wstring> jsonLocations = { file::getExecutablePath(), file::getCurrentDirectoryPath() };
+        std::vector<std::wstring> jsonLocations = { file::getModulePath(), file::getExecutablePath(), file::getCurrentDirectoryPath() };
         for (auto& path : jsonLocations)
         {
             std::wstring interposerJSONFile = path + L"/sl.interposer.json";
             if (file::exists(interposerJSONFile.c_str())) try
             {
-                SL_LOG_HINT("Found %S", interposerJSONFile.c_str());
+                // NOTE: Logging does not work here, not initialized yet since values from this JSON can change the way logging works
+                m_configPath = path;
                 auto jsonText = file::read(interposerJSONFile.c_str());
                 if (!jsonText.empty())
                 {
                     // safety null in case the JSON string is not null-terminated (found by AppVerif)
                     jsonText.push_back(0);
                     std::istringstream stream((const char*)jsonText.data());
-                    stream >> m_config;
-                    if (m_config.contains("enableInterposer"))
+                    json config;
+                    stream >> config;
+                    
+                    SL_EXTRACT_CONFIG_FLAG(enableInterposer);
+                    SL_EXTRACT_CONFIG_FLAG(useDXGIProxy);
+                    SL_EXTRACT_CONFIG_FLAG(loadAllFeatures);
+                    SL_EXTRACT_CONFIG_FLAG(showConsole);
+                    SL_EXTRACT_CONFIG_FLAG(vkValidation);
+                    SL_EXTRACT_CONFIG_FLAG(logPath);
+                    SL_EXTRACT_CONFIG_FLAG(pathToPlugins);
+                    SL_EXTRACT_CONFIG_FLAG(logLevel);
+                    SL_EXTRACT_CONFIG_FLAG(logMessageDelayMs);
+                    SL_EXTRACT_CONFIG_FLAG(waitForDebugger);
+                    SL_EXTRACT_CONFIG_FLAG(forceProxies);
+                    SL_EXTRACT_CONFIG_FLAG(forceNonNVDA);
+                    SL_EXTRACT_CONFIG_FLAG(trackEngineAllocations);
+
+                    if (m_config.trackEngineAllocations)
                     {
-                        m_config.at("enableInterposer").get_to(m_enabled);
-                        SL_LOG_HINT("Interposer enabled - %s", m_enabled ? "yes" : "no");
+                        m_config.forceProxies = true;
+                    }
+
+                    if (config.contains("loadSpecificFeatures"))
+                    {
+                        auto& list = config.at("loadSpecificFeatures");
+                        for (auto& item : list)
+                        {
+                            uint32_t id;
+                            item.get_to(id);
+                            m_config.loadSpecificFeatures.push_back((Feature)id);
+                        }
                     }
                 }
+                break;
             }
-            catch (std::exception& e)
+            catch (std::exception&)
             {
-                SL_LOG_ERROR("Failed to parse JSON file - %s", e.what());
+                // This will tell other modules that interposer config is invalid
+                m_configPath.clear();
             }
         }
 #endif
     };
 
+    void setUseDXGIProxy(bool value) override final
+    {
+        m_config.useDXGIProxy = value;
+    }
+
     void setEnabled(bool value) override final
     {
-        m_enabled = value;
+        m_config.enableInterposer = value;
     }
 
     bool isEnabled() const override final
     {
-        return m_enabled;
+        return m_config.enableInterposer;
     }
 
-    const json& getConfig() const override final
+    const InterposerConfig& getConfig() const override final
     {
         return m_config;
+    }
+
+    const std::wstring& getConfigPath() const override final
+    {
+        return m_configPath;
     }
 
 #ifdef SL_WINDOWS
 
     bool enumerateModuleExports(const wchar_t* systemModule, ExportedFunctionList& list) override final
     {
-        WCHAR buf[MAX_PATH] = L"";
-        GetSystemDirectoryW(buf, sizeof(buf));
-        auto handle = LoadLibraryW((std::wstring(buf) + L"/" + systemModule).c_str());
+        auto handle = LoadLibraryW(systemModule);
         if (!handle)
         {
             return false;
@@ -122,34 +169,40 @@ struct Hook : public IHook
 
     bool registerHookForClassInstance(IUnknown* instance, uint32_t virtualTableOffset, ExportedFunction& f) override final
     {
-        std::scoped_lock<std::mutex> lock(m_mutex);
-        void** virtualTable = *reinterpret_cast<VirtualAddress**>(instance);
-        auto address = &virtualTable[virtualTableOffset];
-        if (virtualTable[virtualTableOffset] != f.replacement)
-        {            
-            f.target = virtualTable[virtualTableOffset];
-            DWORD prevProtection{};
-            if (!VirtualProtect(address, kCodePatchSize, PAGE_READWRITE, &prevProtection))
+        // When another interposer is attached (e.g. APIC) we might get multiple 
+        // calls to hook a class instance which we must ignore to avoid circular references.
+        if (!f.target)
+        {
+            std::scoped_lock<std::mutex> lock(m_mutex);
+            void** virtualTable = *reinterpret_cast<VirtualAddress**>(instance);
+            auto address = &virtualTable[virtualTableOffset];
+            if (virtualTable[virtualTableOffset] != f.replacement)
             {
-                return false;
-            }
-            *reinterpret_cast<VirtualAddress*>(address) = f.replacement;
-            VirtualProtect(address, kCodePatchSize, prevProtection, &prevProtection);
+                f.target = virtualTable[virtualTableOffset];
+                DWORD prevProtection{};
+                if (!VirtualProtect(address, kCodePatchSize, PAGE_READWRITE, &prevProtection))
+                {
+                    return false;
+                }
+                *reinterpret_cast<VirtualAddress*>(address) = f.replacement;
+                VirtualProtect(address, kCodePatchSize, prevProtection, &prevProtection);
 
-            // Cache the original code at target's address
-            if (!VirtualProtect(f.target, kCodePatchSize, PAGE_READWRITE, &prevProtection))
-            {
-                return false;
+                // Cache the original code at target's address
+                if (!VirtualProtect(f.target, kCodePatchSize, PAGE_READWRITE, &prevProtection))
+                {
+                    return false;
+                }
+                memcpy(f.originalCode, f.target, kCodePatchSize);
+                if (!VirtualProtect(f.target, kCodePatchSize, prevProtection, &prevProtection))
+                {
+                    return false;
+                }
             }
-            memcpy(f.originalCode, f.target, kCodePatchSize);
-            if (!VirtualProtect(f.target, kCodePatchSize, prevProtection, &prevProtection))
-            {
-                return false;
-            }
-
-            auto parameters = sl::param::getInterface();
-            parameters->set(f.name, f.target);
         }
+
+        //! Always set function pointer since it could have been cleared on slShutdown
+        auto parameters = sl::param::getInterface();
+        parameters->set(f.name, f.target);
         return true;
     }
 
@@ -190,7 +243,8 @@ struct Hook : public IHook
 
 #endif
 
-    json m_config;
+    std::wstring m_configPath{};
+    InterposerConfig m_config{};
     bool m_enabled = true;
     std::mutex m_mutex;
     inline static Hook* s_hook = {};

@@ -25,40 +25,12 @@
 #include <vector>
 #include <map>
 
-#include "include/sl.h"
+#include "include/sl_hooks.h"
 #include "external/json/include/nlohmann/json.hpp"
 using json = nlohmann::json;
 
-struct ID3D11Device;
 struct ID3D12Device;
-
-enum class FunctionHookID : uint32_t
-{
-    eIDXGIFactory_CreateSwapChain,
-    eIDXGIFactory2_CreateSwapChainForHwnd,
-    eIDXGIFactory2_CreateSwapChainForCoreWindow,
-    eIDXGISwapChain_Destroyed,
-    eIDXGISwapChain_Present,
-    eIDXGISwapChain_Present1,
-    eIDXGISwapChain_GetBuffer,
-    eIDXGISwapChain_ResizeBuffers,
-    eIDXGISwapChain_GetCurrentBackBufferIndex,
-    eIDXGISwapChain_SetFullscreenState,
-    eID3D12Device_CreateCommittedResource,
-    eID3D12Device_CreatePlacedResource,
-    eID3D12Device_CreateReservedResource,
-    eID3D12GraphicsCommandList_ResourceBarrier,
-    eVulkan_BeginCommandBuffer,
-    eVulkan_CmdBindPipeline,
-    eVulkan_Present,
-    eVulkan_CmdPipelineBarrier,
-    eVulkan_CmdBindDescriptorSets,
-    eVulkan_CreateSwapchainKHR,
-    eVulkan_GetSwapchainImagesKHR,
-    eVulkan_AcquireNextImageKHR,
-    eVulkan_CreateImage,
-    eMaxNum
-};
+struct ID3D11Device;
 
 namespace sl
 {
@@ -76,53 +48,69 @@ namespace interposer
 using VirtualAddress = void*;
 }
 
-enum Feature : uint32_t;
+using Feature = uint32_t;
 
 namespace plugin_manager
 {
 
-using HookList = std::vector<interposer::VirtualAddress>;
+using HookPair = std::pair<interposer::VirtualAddress, sl::Feature>;
+using HookList = std::vector<HookPair>;
 
-using PFunSlSetConstantsInternal = bool(const void* consts, uint32_t frameIndex, uint32_t id);
-using PFunSlGetSettingsInternal = bool(const void* consts, void* settings);
+using PFun_slSetDataInternal = Result(const sl::BaseStructure* inputs, sl::CommandBuffer* cmdBuffer);
+using PFun_slGetDataInternal = Result(const sl::BaseStructure* inputs, sl::BaseStructure* outputs, sl::CommandBuffer* cmdBuffer);
+using PFun_slIsSupported = Result(const sl::AdapterInfo& adapterInfo);
 
 struct FeatureContext
 {
+    bool initialized = false;
     bool enabled = true;
     uint32_t supportedAdapters = 0;
-    PFunSlSetConstantsInternal* setConstants{};
-    PFunSlGetSettingsInternal* getSettings{};
-    PFunSlAllocateResources* allocResources{};
-    PFunSlFreeResources* freeResources{};
+    api::PFuncGetPluginFunction* getFunction{};
+    PFun_slSetDataInternal* setData{};
+    PFun_slGetDataInternal* getData{};
+    PFun_slAllocateResources* allocResources{};
+    PFun_slFreeResources* freeResources{};
+    PFun_slEvaluateFeature* evaluate{};
+    PFun_slSetTag* setTag{};
+    PFun_slSetConstants* setConstants{};
+    PFun_slIsSupported* isSupported{};
 };
 
 struct IPluginManager
 {
-    virtual bool loadPlugins() = 0;
+    virtual Result loadPlugins() = 0;
     virtual void unloadPlugins() = 0;
-    virtual bool initializePlugins() = 0;
+    virtual Result initializePlugins() = 0;
 
     virtual const HookList& getBeforeHooks(FunctionHookID functionHookID) = 0;
     virtual const HookList& getAfterHooks(FunctionHookID functionHookID) = 0;
     virtual const HookList& getBeforeHooksWithoutLazyInit(FunctionHookID functionHookID) = 0;
     virtual const HookList& getAfterHooksWithoutLazyInit(FunctionHookID functionHookID) = 0;
 
-    virtual bool setFeatureEnabled(Feature feature, bool value) = 0;
+    virtual Result setHostSDKVersion(uint64_t sdkVersion) = 0;
+    virtual Result setFeatureEnabled(Feature feature, bool value) = 0;
     virtual void setPreferences(const Preferences& pref) = 0;
     virtual const Preferences& getPreferences() const = 0;
     virtual void setApplicationId(int appId) = 0;
     virtual void setD3D12Device(ID3D12Device* device) = 0;
     virtual void setD3D11Device(ID3D11Device* device) = 0;
     virtual void setVulkanDevice(VkPhysicalDevice physicalDevice, VkDevice device, VkInstance instance) = 0;
-    
-    virtual bool isSupportedOnThisMachine() const = 0;
-    virtual bool isRunningD3D12() const = 0;
-    virtual bool isRunningD3D11() const = 0;
-    virtual bool isRunningVulkan() const = 0;
+
+    virtual ID3D12Device* getD3D12Device() const = 0;
+    virtual ID3D11Device* getD3D11Device() const = 0;
+    virtual VkDevice getVulkanDevice() const = 0;
+
+    virtual bool isProxyNeeded(const char* className) = 0;
     virtual bool isInitialized() const = 0;
     virtual bool arePluginsLoaded() const = 0;
 
+    virtual const Version& getHostSDKVersion() = 0;
+
     virtual const FeatureContext* getFeatureContext(Feature feature) = 0;
+
+    virtual bool getExternalFeatureConfig(Feature feature, const char** configAsText) = 0;
+    virtual bool getLoadedFeatureConfigs(std::vector<json>& configList) const = 0;
+    virtual bool getLoadedFeatures(std::vector<Feature>& featureList) const = 0;
 };
 
 IPluginManager* getInterface();

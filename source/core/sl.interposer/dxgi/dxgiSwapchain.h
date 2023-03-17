@@ -23,22 +23,21 @@
 #pragma once
 
 #include <dxgi1_5.h>
-#include <mutex>
+#include <cinttypes>
+#include <atomic>
 
 struct ID3D11Device;
+struct ID3D12Device;
 
 namespace sl
 {
 namespace interposer
 {
 
-struct D3D12Device;
-
 struct DECLSPEC_UUID("D3F0BBFF-3091-4074-9D9E-B99CE2E5CF9A") DXGISwapChain : IDXGISwapChain4
 {
-    DXGISwapChain(D3D12Device * device, IDXGISwapChain3 * original);
-    DXGISwapChain(ID3D11Device * device, IDXGISwapChain1 * original);
-    DXGISwapChain(ID3D11Device * device, IDXGISwapChain * original);
+    DXGISwapChain(ID3D12Device* device, IDXGISwapChain* original);
+    DXGISwapChain(ID3D11Device* device, IDXGISwapChain* original);
 
     DXGISwapChain(const DXGISwapChain&) = delete;
     DXGISwapChain& operator=(const DXGISwapChain&) = delete;
@@ -100,12 +99,13 @@ struct DECLSPEC_UUID("D3F0BBFF-3091-4074-9D9E-B99CE2E5CF9A") DXGISwapChain : IDX
     HRESULT STDMETHODCALLTYPE SetHDRMetaData(DXGI_HDR_METADATA_TYPE Type, UINT Size, void* pMetaData) override final;
 #pragma endregion
 
+    uint8_t padding[8];
+    IDXGISwapChain* m_base; // IMPORTANT: Must be at a fixed offset to support tools, do not move!
+
     bool checkAndUpgradeInterface(REFIID riid);
 
     IUnknown* const m_d3dDevice;
-    IDXGISwapChain* m_base;
-
-    LONG m_refCount = 1;
+    std::atomic<LONG> m_refCount = 1;
     uint32_t m_d3dVersion;
     uint32_t m_interfaceVersion;
 };

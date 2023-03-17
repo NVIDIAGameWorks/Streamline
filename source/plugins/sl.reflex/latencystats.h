@@ -20,9 +20,13 @@
 * SOFTWARE.
 */
 
+#include <windows.h>
 #include <TraceLoggingProvider.h>
 #include <evntrace.h>
 #include <stdlib.h>
+
+#pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "user32.lib")
 
 typedef enum _NVSTATS_LATENCY_MARKER_TYPE
 {
@@ -35,6 +39,10 @@ typedef enum _NVSTATS_LATENCY_MARKER_TYPE
     NVSTATS_INPUT_SAMPLE = 6,
     NVSTATS_TRIGGER_FLASH = 7,
     NVSTATS_PC_LATENCY_PING = 8,
+    NVSTATS_OUT_OF_BAND_RENDERSUBMIT_START = 9,
+    NVSTATS_OUT_OF_BAND_RENDERSUBMIT_END = 10,
+    NVSTATS_OUT_OF_BAND_PRESENT_START = 11,
+    NVSTATS_OUT_OF_BAND_PRESENT_END = 12,
 } NVSTATS_LATENCY_MARKER_TYPE;
 
 typedef enum _NVSTATS_FLAGS
@@ -55,6 +63,7 @@ TRACELOGGING_DECLARE_PROVIDER(g_hReflexStatsComponentProvider);
     HANDLE g_ReflexStatsPingThread = NULL; \
     bool   g_ReflexStatsEnable = false; \
     UINT   g_ReflexStatsFlags = 0; \
+    DWORD  g_ReflexStatsIdThread = 0; \
     DWORD ReflexStatsPingThreadProc(LPVOID lpThreadParameter) \
     { \
         DWORD minPingInterval = 100 /*ms*/; \
@@ -63,6 +72,12 @@ TRACELOGGING_DECLARE_PROVIDER(g_hReflexStatsComponentProvider);
         { \
             if (!g_ReflexStatsEnable) \
             { \
+                continue; \
+            } \
+            if (g_ReflexStatsIdThread) \
+            { \
+                TraceLoggingWrite(g_hReflexStatsComponentProvider, "ReflexStatsInput"); \
+                PostThreadMessageW(g_ReflexStatsIdThread, g_ReflexStatsWindowMessage, 0, 0); \
                 continue; \
             } \
             HWND hWnd = GetForegroundWindow(); \
@@ -112,13 +127,14 @@ TRACELOGGING_DECLARE_PROVIDER(g_hReflexStatsComponentProvider);
         } \
     }
 
-#define NVSTATS_INIT(vk, flags) \
+#define NVSTATS_INIT(vk, flags, idThread) \
     if (((vk) == 0) && (g_ReflexStatsWindowMessage == 0)) \
     { \
         g_ReflexStatsWindowMessage = RegisterWindowMessageW(L"NVIDIA_Reflex_PC_Latency_Ping"); \
     } \
     g_ReflexStatsVirtualKey = (vk); \
     g_ReflexStatsFlags = (flags); \
+    g_ReflexStatsIdThread = (idThread); \
     if (!g_ReflexStatsQuitEvent) \
     { \
         g_ReflexStatsQuitEvent = CreateEventW(NULL, 1, 0, NULL); \
@@ -144,6 +160,7 @@ TRACELOGGING_DECLARE_PROVIDER(g_hReflexStatsComponentProvider);
             SetEvent(g_ReflexStatsQuitEvent); \
         } \
         (void)WaitForSingleObject(g_ReflexStatsPingThread, 1000); \
+        CloseHandle(g_ReflexStatsPingThread); \
         g_ReflexStatsPingThread = NULL; \
     } \
     TraceLoggingWrite(g_hReflexStatsComponentProvider, "ReflexStatsShutdown"); \
@@ -162,6 +179,7 @@ extern "C" HANDLE g_ReflexStatsQuitEvent;
 extern "C" HANDLE g_ReflexStatsPingThread;
 extern "C" bool   g_ReflexStatsEnable;
 extern "C" UINT   g_ReflexStatsFlags;
+extern "C" DWORD  g_ReflexStatsIdThread;
 
 DWORD ReflexStatsPingThreadProc(LPVOID lpThreadParameter);
 void WINAPI ReflexStatsComponentProviderCb(LPCGUID, ULONG ControlCode, UCHAR, ULONGLONG, ULONGLONG, PEVENT_FILTER_DESCRIPTOR, PVOID);

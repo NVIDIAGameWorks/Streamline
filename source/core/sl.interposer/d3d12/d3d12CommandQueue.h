@@ -23,6 +23,7 @@
 #pragma once
 
 #include <d3d12.h>
+#include <atomic>
 
 struct D3D12Device;
 struct D3D12CommandQueueDownlevel;
@@ -66,12 +67,14 @@ struct DECLSPEC_UUID("22C3768E-AB10-4870-B03B-2B52E21B1063") D3D12CommandQueue :
     D3D12_COMMAND_QUEUE_DESC STDMETHODCALLTYPE GetDesc() override final;
 #pragma endregion
 
+    uint8_t padding[8];
+    ID3D12CommandQueue* m_base{}; // IMPORTANT: Must be at a fixed offset to support tools, do not move!
+
     bool checkAndUpgradeInterface(REFIID riid);
 
-    ULONG m_refCount = 1;
-    ID3D12CommandQueue* m_base;
-    unsigned int m_interfaceVersion;
-    D3D12Device* const m_device;
+    std::atomic<LONG> m_refCount = 1;
+    unsigned int m_interfaceVersion{};
+    D3D12Device* const m_device{};
 };
 
 }

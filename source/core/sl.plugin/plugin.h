@@ -22,32 +22,88 @@
 
 #pragma once
 
+#include "include/sl_version.h"
 #include "source/core/sl.api/internal.h"
+
+#define SL_EXPORT extern "C" __declspec(dllexport)
+SL_EXPORT BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID);
 
 namespace sl
 {
+
 namespace api
 {
-struct Context
+
+//! Plugin specific context
+//! 
+//! NOTE: Instance of this context is valid for the entire life-cycle of a plugin since it cannot
+//! be destroyed anywhere else other than in DLLMain when plugin is detached from the process.
+//! 
+#define SL_PLUGIN_CONTEXT_CREATE_DESTROY(NAME)                                  \
+protected:                                                                      \
+    NAME() {};                                                                  \
+    /* Called on exit from DLL */                                               \
+    ~NAME() {onDestroyContext();};                                              \
+    friend BOOL APIENTRY ::DllMain(HMODULE hModule, DWORD fdwReason, LPVOID);   \
+public:                                                                         \
+    NAME(const NAME& rhs) = delete;
+
+//! Generic context, same across all plugins
+//! 
+//! Contains basic information like versions, name, JSON configurations etc.
+//! 
+class Context
 {
-    std::string pluginName;
-    Version pluginVersion;
-    Version apiVersion;
-    void *device;
-    sl::param::IParameters *parameters;
-    PFuncGetPluginFunction *getPluginFunction = {};
-    void* pluginConfig;
-    void* loaderConfig;
-    void* extConfig;
+    Context(
+        const std::string& _pluginName,
+        Version _pluginVersion,
+        Version _apiVersion,
+        void* _device,
+        sl::param::IParameters* _parameters,
+        PFuncGetPluginFunction* _getPluginFunction,
+        void* _pluginConfig,
+        void* _loaderConfig,
+        void* _extConfig)
+    {
+        pluginName = _pluginName;
+        pluginVersion = _pluginVersion;
+        apiVersion = _apiVersion;
+        device = _device;
+        parameters = _parameters;
+        getPluginFunction = _getPluginFunction;
+        pluginConfig = _pluginConfig;
+        loaderConfig = _loaderConfig;
+        extConfig = _extConfig;
+    };
+
+    SL_PLUGIN_CONTEXT_CREATE_DESTROY(Context);
+
+    void onDestroyContext()
+    {
+        delete pluginConfig;
+        delete loaderConfig;
+        delete extConfig;
+        pluginConfig = {};
+        loaderConfig = {};
+        extConfig = {};
+    }
+
+    std::string pluginName{};
+    std::string pluginConfigStr{};
+    Version pluginVersion{};
+    Version apiVersion{};
+    void *device{};
+    sl::param::IParameters *parameters{};
+    PFuncGetPluginFunction *getPluginFunction{};
+    void* pluginConfig{};
+    void* loaderConfig{};
+    void* extConfig{};
 };
 
 Context *getContext();
 
-#define SL_EXPORT extern "C" __declspec(dllexport)
-
 #define SL_PLUGIN_COMMON_STARTUP()                                         \
 using namespace plugin;                                                    \
-api::getContext()->parameters = parameters;                                \
 api::getContext()->device = device;                                        \
 StartupResult res = plugin::onStartup(api::getContext(), jsonConfig);      \
 if (res == eStartupResultFail)                                             \
@@ -59,38 +115,74 @@ else if (res == eStartupResultOTA)                                         \
     return true;                                                           \
 }
 
-// Core definitions, each plugin must use this define and specify versions
-#define SL_PLUGIN_DEFINE(N,V1,V2,JSON,GET_SUPPORTED_ADAPTER_MASK)                            \
-namespace api                                                                                \
+#define SL_PLUGIN_CONTEXT_DEFINE(PLUGIN_NAMESPACE, PLUGIN_CTX)                               \
+namespace PLUGIN_NAMESPACE                                                                   \
 {                                                                                            \
-    static Context s_ctx = {N, V1, V2, nullptr, nullptr, nullptr,                            \
-                            new json(), new json(), new json()};                             \
-    Context *getContext() { return &s_ctx; }                                                 \
-}                                                                                            \
-                                                                                             \
-void slSetParameters(sl::param::IParameters *p) {api::s_ctx.parameters = p;}                 \
-                                                                                             \
-const char *slGetPluginJSONConfig()                                                          \
-{                                                                                            \
-    static std::string s_json;                                                               \
-    static bool s_init = false;                                                              \
-    if(!s_init)                                                                              \
-    {                                                                                        \
-        s_init = true;                                                                       \
-        plugin::onGetConfig(api::getContext(), JSON);                                        \
-        json& config = *(json*)api::getContext()->pluginConfig;                              \
-        config["supportedAdapters"] = GET_SUPPORTED_ADAPTER_MASK;                            \
-        s_json = config.dump();                                                              \
-    }                                                                                        \
-                                                                                             \
-    return s_json.c_str();                                                                   \
-}                                                                                            \
-                                                                                             \
-BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)                              \
-{                                                                                            \
-    return TRUE;                                                                             \
-}                                                                                            
+    /* Created on DLL attached and destroyed on DLL detach from process */                   \
+    static PLUGIN_CTX* s_ctx{};                                                              \
+    PLUGIN_CTX* getContext() { return s_ctx; }                                               \
 }
+
+//! Core definitions, each plugin must use this define and specify versions
+//! 
+//! NOTE: This macro must be placed within 'namespace sl'
+//! 
+#define SL_PLUGIN_DEFINE(N,V1,V2,JSON,UPDATE_JSON_CONFIG, PLUGIN_NAMESPACE, PLUGIN_CTX)                    \
+namespace api                                                                                              \
+{                                                                                                          \
+    /* Created on DLL attached and destroyed on DLL detach from process */                                 \
+    static Context* s_ctx{};                                                                               \
+    Context *getContext() { return s_ctx; }                                                                \
+}                                                                                                          \
+                                                                                                           \
+SL_PLUGIN_CONTEXT_DEFINE(PLUGIN_NAMESPACE, PLUGIN_CTX)                                                     \
+                                                                                                           \
+bool slOnPluginLoad(sl::param::IParameters *params, const char* loaderJSON, const char **pluginJSON)       \
+{                                                                                                          \
+    static bool s_init = false;                                                                            \
+    if(!s_init)                                                                                            \
+    {                                                                                                      \
+        api::s_ctx->parameters = params;                                                                   \
+        s_init = true;                                                                                     \
+        plugin::onLoad(api::getContext(), loaderJSON, JSON);                                               \
+        json& config = *(json*)api::getContext()->pluginConfig;                                            \
+        UPDATE_JSON_CONFIG(config);                                                                        \
+        api::s_ctx->pluginConfigStr = config.dump();                                                       \
+    }                                                                                                      \
+                                                                                                           \
+    *pluginJSON = api::s_ctx->pluginConfigStr.c_str();                                                     \
+    return true;                                                                                           \
+}                                                                                                          \
+                                                                                                           \
+}  /* namespace sl */                                                                                      \
+                                                                                                           \
+/* Always in global namespace */                                                                           \
+SL_EXPORT BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)                                  \
+{                                                                                                          \
+    switch (fdwReason)                                                                                     \
+    {                                                                                                      \
+        case DLL_PROCESS_ATTACH:                                                                           \
+            sl::api::s_ctx = new sl::api::Context(N, sl::V1, sl::V2, nullptr, nullptr, nullptr,            \
+                                        new json, new json, new json);                                     \
+            sl::PLUGIN_NAMESPACE::s_ctx = new sl::PLUGIN_NAMESPACE::PLUGIN_CTX();                          \
+            break;                                                                                         \
+        case DLL_THREAD_ATTACH:                                                                            \
+            break;                                                                                         \
+        case DLL_THREAD_DETACH:                                                                            \
+            break;                                                                                         \
+        case DLL_PROCESS_DETACH:                                                                           \
+            delete sl::api::s_ctx;                                                                         \
+            delete sl::PLUGIN_NAMESPACE::s_ctx;                                                            \
+            sl::api::s_ctx = {};                                                                           \
+            sl::PLUGIN_NAMESPACE::s_ctx = {};                                                              \
+            break;                                                                                         \
+    }                                                                                                      \
+    return TRUE;                                                                                           \
+}                                                                                                          \
+namespace sl {
+
+} // namespace api
+
 namespace param
 {
 struct IParameters;
@@ -104,7 +196,7 @@ if (!strcmp(functionName, #fun))\
     return fun;\
 }
 
-#define SL_EXPORT_OTA                                          \
+ #define SL_EXPORT_OTA                                         \
 if (api::getContext()->getPluginFunction)                      \
 {                                                              \
     return api::getContext()->getPluginFunction(functionName); \
@@ -114,12 +206,12 @@ enum StartupResult
 {
     eStartupResultOK,
     eStartupResultFail,
-    eStartupResultOTA,
+    eStartupResultOTA
 };
 
 //! Common plugin startup/shutdown code
-void onGetConfig(api::Context *ctx, const char* pluginJSON);
-StartupResult onStartup(api::Context *ctx, const char* loaderJSON);
+void onLoad(api::Context *ctx, const char* loaderJSON, const char* embeddedJSON);
+StartupResult onStartup(api::Context *ctx, const char* jsonConfig);
 void onShutdown(api::Context *ctx);
 
 }

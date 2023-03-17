@@ -22,13 +22,15 @@
 
 #pragma once
 
+#include <atomic>
+
 #include "d3d12.h"
 
 namespace sl
 {
 namespace interposer
 {
-struct DECLSPEC_UUID("10B90151-4435-4004-9FAD-19361488899A") D3D12Device : ID3D12Device9
+struct DECLSPEC_UUID("10B90151-4435-4004-9FAD-19361488899A") D3D12Device : ID3D12Device10
 {
     D3D12Device(ID3D12Device * original);
 
@@ -134,12 +136,19 @@ struct DECLSPEC_UUID("10B90151-4435-4004-9FAD-19361488899A") D3D12Device : ID3D1
     HRESULT STDMETHODCALLTYPE ShaderCacheControl(D3D12_SHADER_CACHE_KIND_FLAGS Kinds, D3D12_SHADER_CACHE_CONTROL_FLAGS Control) override final;
     HRESULT STDMETHODCALLTYPE CreateCommandQueue1(const D3D12_COMMAND_QUEUE_DESC * pDesc, REFIID CreatorID, REFIID riid, void** ppCommandQueue) override final;
 #pragma endregion
+#pragma region ID3D12Device10
+    HRESULT STDMETHODCALLTYPE CreateCommittedResource3(const D3D12_HEAP_PROPERTIES* pHeapProperties, D3D12_HEAP_FLAGS HeapFlags, const D3D12_RESOURCE_DESC1* pDesc, D3D12_BARRIER_LAYOUT InitialLayout, const D3D12_CLEAR_VALUE* pOptimizedClearValue, ID3D12ProtectedResourceSession* pProtectedSession, UINT32 NumCastableFormats, DXGI_FORMAT* pCastableFormats, REFIID riidResource, void** ppvResource) override final;
+    HRESULT STDMETHODCALLTYPE CreatePlacedResource2(ID3D12Heap* pHeap, UINT64 HeapOffset, const D3D12_RESOURCE_DESC1* pDesc, D3D12_BARRIER_LAYOUT InitialLayout, const D3D12_CLEAR_VALUE* pOptimizedClearValue, UINT32 NumCastableFormats, DXGI_FORMAT* pCastableFormats, REFIID riid, void** ppvResource) override final;
+    HRESULT STDMETHODCALLTYPE CreateReservedResource2(const D3D12_RESOURCE_DESC* pDesc, D3D12_BARRIER_LAYOUT InitialLayout, const D3D12_CLEAR_VALUE* pOptimizedClearValue, ID3D12ProtectedResourceSession* pProtectedSession, UINT32 NumCastableFormats, DXGI_FORMAT* pCastableFormats, REFIID riid, void** ppvResource) override final;
+#pragma endregion
+
+    uint8_t padding[8];
+    ID3D12Device* m_base; // IMPORTANT: Must be at a fixed offset to support tools, do not move!
 
     bool checkAndUpgradeInterface(REFIID riid);
 
-    LONG m_refCount = 1;
-    ID3D12Device* m_base;
-    unsigned int m_interfaceVersion;
+    std::atomic<LONG> m_refCount = 1;
+    uint32_t m_interfaceVersion{};
 };
 }
 }

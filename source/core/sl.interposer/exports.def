@@ -1,8 +1,8 @@
 EXPORTS
 
 	; d3d11.dll
-	D3D11CreateDevice @22
-	D3D11CreateDeviceAndSwapChain @23
+	D3D11CreateDevice
+	D3D11CreateDeviceAndSwapChain
 
 	; d3d12.dll
 	D3D12CreateDevice
@@ -20,9 +20,6 @@ EXPORTS
 	CreateDXGIFactory2
 	DXGIGetDebugInterface1
 
-	; vk layer
-	slLayerGetInstanceProcAddr
-	slLayerGetDeviceProcAddr
 	; vk wrapper
 	vkCreateDevice
 	vkCreateInstance
@@ -180,14 +177,20 @@ EXPORTS
 
 	; SL
 	slInit
-    slShutdown
-    slIsFeatureSupported
-	slIsFeatureEnabled
-	slSetFeatureEnabled
-	slSetTag
-	slSetConstants
-	slSetFeatureConstants
-	slGetFeatureSettings
+	slShutdown
+	slIsFeatureSupported
+	slIsFeatureLoaded
+	slSetFeatureLoaded
 	slEvaluateFeature
 	slAllocateResources
 	slFreeResources
+	slSetTag
+	slGetFeatureRequirements
+	slGetFeatureVersion
+	slUpgradeInterface
+	slSetConstants
+	slGetNativeInterface
+	slGetFeatureFunction
+	slGetNewFrameToken
+	slSetD3DDevice
+	slSetVulkanInfo

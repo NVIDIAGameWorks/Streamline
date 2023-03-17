@@ -1,12 +1,14 @@
-echo off
-if exist .\_project\vs2017\streamline.sln (
-    rem find VS 2017
-    for /f "usebackq tokens=1* delims=: " %%i in (`.\tools\vswhere.exe -version [15^,16^) -requires Microsoft.VisualStudio.Workload.NativeDesktop`) do (
+@echo off
+setlocal
+
+if exist .\_project\vs2019\streamline.sln (
+    rem find VS 2019
+    for /f "usebackq tokens=1* delims=: " %%i in (`.\tools\vswhere.exe -version [16^,17^) -requires Microsoft.VisualStudio.Workload.NativeDesktop`) do (
         if /i "%%i"=="installationPath" set VS_PATH=%%j
     )
 ) else (
-    rem find VS 2019
-    for /f "usebackq tokens=1* delims=: " %%i in (`.\tools\vswhere.exe -version [16^,17^) -requires Microsoft.VisualStudio.Workload.NativeDesktop`) do (
+    rem find VS 2017
+    for /f "usebackq tokens=1* delims=: " %%i in (`.\tools\vswhere.exe -version [15^,16^) -requires Microsoft.VisualStudio.Workload.NativeDesktop`) do (
                 if /i "%%i"=="installationPath" set VS_PATH=%%j
     )
 )
@@ -33,6 +35,10 @@ IF NOT "%1"=="" (
         SET cfg=Profiling
         SHIFT
     )
+    IF "%1"=="-relextdev" (
+        SET cfg=RelExtDev
+        SHIFT
+    )
     SHIFT
     GOTO :loop
 )
@@ -51,8 +57,8 @@ exit /b 1
 
 :SetVSEnvFinished
 
-if exist .\_project\vs2017\streamline.sln (
-    msbuild .\_project\vs2017\streamline.sln /t:%bld% /property:Configuration=%cfg%
-) else (
+if exist .\_project\vs2019\streamline.sln (
     msbuild .\_project\vs2019\streamline.sln /t:%bld% /property:Configuration=%cfg%
+) else (
+    msbuild .\_project\vs2017\streamline.sln /t:%bld% /property:Configuration=%cfg%
 )

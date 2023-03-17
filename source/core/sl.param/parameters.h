@@ -35,7 +35,6 @@ namespace global
 {
 
 constexpr const char* kColorBuffersHDR = "sl.param.global.colorBuffersHDR";
-constexpr const char* kPFunSetConsts = "sl.param.global.setConstsFunc";
 constexpr const char* kPFunGetConsts = "sl.param.global.getConstsFunc";
 constexpr const char* kPFunAllocateResource = "sl.param.global.allocateResource";
 constexpr const char* kPFunReleaseResource = "sl.param.global.releaseResource";
@@ -43,14 +42,18 @@ constexpr const char* kPluginPath = "sl.param.global.pluginPath";
 constexpr const char* kLogInterface = "sl.param.global.logInterface";
 constexpr const char* kPluginManagerInterface = "sl.param.global.pluginManagerInterface";
 constexpr const char* kOTAInterface = "sl.param.global.otaInterface";
-constexpr const char* kNeedNGX = "sl.param.global.needNGX";
 constexpr const char* kNGXContext = "sl.param.global.ngxContext";
+constexpr const char* kNGXContextD3D12 = "sl.param.global.ngxContextD3D12";
 constexpr const char* kSwapchainBufferCount = "sl.param.global.swapchainbuffercount";
 constexpr const char* kDebugMode = "sl.param.global.dbgMode";
-constexpr const char* kPFunSetTag = "sl.param.global.setTag";
 constexpr const char* kPFunGetTag = "sl.param.global.getTag";
 constexpr const char* kVulkanTable = "sl.param.global.vulkanTable";
 constexpr const char* kPreferenceFlags = "sl.param.global.prefFlags";
+}
+
+namespace interposer
+{
+constexpr const char* kVKValidationActive = "sl.param.interposer.vkValidationActive";
 }
 
 namespace common
@@ -58,37 +61,41 @@ namespace common
 
 constexpr const char* kSystemCaps = "sl.param.common.gpuInfo";
 constexpr const char* kComputeAPI = "sl.param.common.computeAPI";
+constexpr const char* kComputeDX11On12API = "sl.param.common.computeDX11On12API";
+constexpr const char* kCaptureAPI = "sl.param.common.captureAPI";
 constexpr const char* kKeyboardAPI = "sl.param.common.keyboardAPI";
-constexpr const char* kPFunEvaluateFeature = "sl.param.common.evaluateFeature";
 constexpr const char* kPFunRegisterEvaluateCallbacks = "sl.param.common.registerEvaluateCallbacks";
-constexpr const char* kStats = "sl.param.common.stats";
+constexpr const char* kPFunGetStringFromModule = "sl.param.common.getStringFromModule";
+constexpr const char* kPFunUpdateCommonEmbeddedJSONConfig = "sl.param.common.updateCommonEmbeddedJSONConfig";
+constexpr const char* kPFunNGXGetFeatureRequirements = "sl.param.common.NGXGetFeatureRequirements";
+constexpr const char* kPFunFindAdapter = "sl.param.common.findAdapter";
 
 }
 
 namespace template_plugin
 {
 
-constexpr const char* kSupportedAdapters = "sl.param.template_plugin.supportedAdapters";
-constexpr const char* kStats = "sl.param.template_plugin.stats";
 constexpr const char* kCurrentFrame = "sl.param.template_plugin.frame";
+
+}
+
+namespace dlss_g
+{
+
+constexpr const char* kCurrentFrame = "sl.param.reserved.frame";
 
 }
 
 namespace dlss
 {
 
-constexpr const char* kSupportedAdapters = "sl.param.dlss.supportedAdapters";
-constexpr const char* kStats = "sl.param.dlss.stats";
 constexpr const char* kCurrentFrame = "sl.param.dlss.frame";
-constexpr const char* kMVecBuffer = "sl.param.dlss.mvec";
 
 }
 
 namespace nrd
 {
 
-constexpr const char* kSupportedAdapters = "sl.param.nrd.supportedAdapters";
-constexpr const char* kStats = "sl.param.nrd.stats";
 constexpr const char* kCurrentFrame = "sl.param.nrd.frame";
 constexpr const char* kMVecBuffer = "sl.param.nrd.mvec";
 constexpr const char* kViewZBuffer = "sl.param.nrd.viewZ";
@@ -98,8 +105,6 @@ constexpr const char* kViewZBuffer = "sl.param.nrd.viewZ";
 namespace nis
 {
 
-constexpr const char* kSupportedAdapters = "sl.param.nis.supportedAdapters";
-constexpr const char* kStats = "sl.param.nis.stats";
 constexpr const char* kCurrentFrame = "sl.param.nis.frame";
 
 }
@@ -107,8 +112,6 @@ constexpr const char* kCurrentFrame = "sl.param.nis.frame";
 namespace latency
 {
 
-constexpr const char* kSupportedAdapters = "sl.param.latency.supportedAdapters";
-constexpr const char* kStats = "sl.param.latency.stats";
 constexpr const char* kCurrentFrame = "sl.param.latency.frame";
 constexpr const char* kMarkerFrame = "sl.param.latency.markerFrame";
 constexpr const char* kPFunSetLatencyStatsMarker = "sl.param.latency.setLatencyStatsMarker";
@@ -117,13 +120,16 @@ constexpr const char* kPFunSetLatencyStatsMarker = "sl.param.latency.setLatencyS
 
 namespace debug_plugin
 {
-    constexpr const char* kSupportedAdapters = "sl.param.debug_plugin.supportedAdapters";
-    constexpr const char* kSetConstsFunc = "sl.param.debug_plugin.setConstsFunc";
-    constexpr const char* kGetSettingsFunc = "sl.param.debug_plugin.getSettingsFunc";
-    constexpr const char* kStats = "sl.param.debug_plugin.stats";
-    constexpr const char* kCurrentFrame = "sl.param.debug_plugin.frame";
+constexpr const char* kSetConstsFunc = "sl.param.debug_plugin.setConstsFunc";
+constexpr const char* kGetSettingsFunc = "sl.param.debug_plugin.getSettingsFunc";
+constexpr const char* kStats = "sl.param.debug_plugin.stats";
+constexpr const char* kCurrentFrame = "sl.param.debug_plugin.frame";
 }
 
+namespace imgui
+{
+constexpr const char* kInterface = "sl.param.imgui.interface";
+}
 struct IParameters
 {
     virtual void set(const char* key, bool value) = 0;

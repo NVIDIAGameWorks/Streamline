@@ -80,7 +80,7 @@ protected:
             nullptr,
             IID_PPV_ARGS(&m_resource))))
         {
-            SL_LOG_ERROR("Failed to create GPU upload buffer");
+            SL_LOG_ERROR( "Failed to create GPU upload buffer");
         }
         if (resourceName)
         {
@@ -95,7 +95,7 @@ protected:
         CD3DX12_RANGE readRange(0, 0);        // We do not intend to read from this resource on the CPU.
         if (FAILED(m_resource->Map(0, &readRange, reinterpret_cast<void**>(&mappedData))))
         {
-            SL_LOG_ERROR("Failed to map GPU upload buffer");
+            SL_LOG_ERROR( "Failed to map GPU upload buffer");
         }
         return mappedData;
     }
@@ -190,7 +190,7 @@ struct KernelDispatchData
     {
         if (rootRanges[index].RangeType != rangeType || rootRanges[index].NumDescriptors != numDescriptors || rootRanges[index].BaseShaderRegister != baseShaderRegister)
         {
-            SL_LOG_ERROR("Incorrect root parameter setup!");
+            SL_LOG_ERROR( "Incorrect root parameter setup!");
         }
     }
 };
@@ -199,6 +199,23 @@ using KernelDispatchDataMap = std::map< Kernel, KernelDispatchData>;
 
 struct DispatchDataD3D12
 {
+    DispatchDataD3D12() {};
+    ~DispatchDataD3D12()
+    {
+        if (kddMap)
+        {
+            for (auto& [kernel, kdd] : *kddMap)
+            {
+                for (auto& cb : kdd.cb)
+                {
+                    delete cb;
+                }
+            }
+            delete kddMap;
+            kddMap = {};
+        }
+    }
+
     KernelDataBase* kernel = {};
     KernelDispatchDataMap* kddMap = {};
     ID3D12GraphicsCommandList* cmdList = {};
@@ -230,6 +247,7 @@ class D3D12 : public Generic
 {
     struct PerfData
     {
+        UINT8* pStagingPtr = nullptr;
         ID3D12QueryHeap *queryHeap[SL_READBACK_QUEUE_SIZE] = {};
         ID3D12Resource  *queryBufferReadback[SL_READBACK_QUEUE_SIZE] = {};
         UINT queryIdx = 0;
@@ -252,7 +270,7 @@ class D3D12 : public Generic
     
     UINT m_visibleNodeMask = 0;
 
-    std::map<Resource, std::map<uint32_t,ResourceDriverData>> m_resourceData;
+    std::map<void*, std::map<uint32_t,ResourceDriverData>> m_resourceData;
     std::map<size_t, ID3D12PipelineState*> m_psoMap = {};
     std::map<size_t, ID3D12RootSignature*> m_rootSignatureMap = {};
     thread::ThreadContext<DispatchDataD3D12> m_dispatchContext;
@@ -260,7 +278,7 @@ class D3D12 : public Generic
     size_t hashRootSignature(const CD3DX12_ROOT_SIGNATURE_DESC& desc);
 
     virtual std::wstring getDebugName(Resource res) override final;
-    virtual void destroyResourceDeferredImpl(const Resource InResource) override final;
+    virtual int destroyResourceDeferredImpl(const Resource InResource) override final;
 
     ComputeStatus getLUIDFromDevice(NVSDK_NGX_LUID *OutId);
     ComputeStatus getSurfaceDriverData(Resource resource, ResourceDriverData &data, uint32_t mipOffset = 0);
@@ -269,6 +287,7 @@ class D3D12 : public Generic
     ComputeStatus createTexture2DResourceSharedImpl(ResourceDescription& InOutResourceDesc, Resource& OutResource, bool UseNativeFormat, ResourceState InitialState) override final;
     ComputeStatus createBufferResourceImpl(ResourceDescription& InOutResourceDesc, Resource& OutResource, ResourceState InitialState) override final;
 
+    bool dx11On12 = false;
     bool isSupportedFormat(DXGI_FORMAT format, int flag1, int flag2);
     DXGI_FORMAT getCorrectFormat(DXGI_FORMAT Format);
     UINT getNewAndIncreaseDescIndex();
@@ -287,15 +306,18 @@ public:
 
     virtual ComputeStatus clearCache() override final;
 
-    virtual ComputeStatus getPlatformType(PlatformType &OutType) override final;
+    virtual ComputeStatus getRenderAPI(RenderAPI &OutType) override final;
 
     virtual ComputeStatus restorePipeline(CommandList cmdList)  override final;
 
     virtual ComputeStatus getNativeResourceState(ResourceState state, uint32_t& nativeState) override final;
     virtual ComputeStatus getResourceState(uint32_t nativeState, ResourceState& state) override final;
+    virtual ComputeStatus getBarrierResourceState(uint32_t barrierType, ResourceState& state)  override final;
 
     virtual ComputeStatus createKernel(void *InCubinBlob, unsigned int InCubinBlobSize, const char* fileName, const char *EntryPoint, Kernel &OutKernel) override final;
     virtual ComputeStatus destroyKernel(Kernel& kernel) override final;
+
+    virtual ComputeStatus createFence(FenceFlags flags, uint64_t initialValue, Fence& outFence, const char friendlyName[])  override final;
 
     virtual ComputeStatus createCommandListContext(CommandQueue queue, uint32_t count, ICommandListContext*& ctx, const char friendlyName[]) override final;
     virtual ComputeStatus destroyCommandListContext(ICommandListContext* ctx) override final;
@@ -317,8 +339,6 @@ public:
     virtual ComputeStatus dispatch(unsigned int blockX, unsigned int blockY, unsigned int blockZ = 1) override final;
 
     virtual ComputeStatus clearView(CommandList cmdList, Resource InResource, const float4 Color, const RECT * pRect, unsigned int NumRects, CLEAR_TYPE &outType) override final;
-    
-    virtual ComputeStatus onHostResourceCreated(Resource resource, const ResourceInfo& info) override final;
 
     virtual ComputeStatus insertGPUBarrierList(CommandList cmdList, const Resource* InResources, unsigned int InResourceCount, BarrierType InBarrierType = eBarrierTypeUAV) override final;
     virtual ComputeStatus insertGPUBarrier(CommandList cmdList, Resource InResource, BarrierType InBarrierType) override final;
@@ -332,7 +352,6 @@ public:
     virtual ComputeStatus mapResource(CommandList cmdList, Resource resource, void*& data, uint32_t subResource = 0, uint64_t offset = 0, uint64_t totalBytes = UINT64_MAX) override final;
     virtual ComputeStatus unmapResource(CommandList cmdList, Resource resource, uint32_t subResource) override final;
 
-    virtual ComputeStatus setResourceState(Resource resource, ResourceState state, uint32_t subresource = kAllSubResources)  override final;
     virtual ComputeStatus getResourceState(Resource resource, ResourceState& state) override final;
     virtual ComputeStatus getResourceDescription(Resource InResource, ResourceDescription& OutDesc) override final;
     virtual ComputeStatus getResourceFootprint(Resource resource, ResourceFootprint& footprint) override final;
@@ -345,6 +364,13 @@ public:
     ComputeStatus endProfiling(CommandList cmdList) override final;
     ComputeStatus beginProfilingQueue(CommandQueue cmdQueue, UINT Metadata, const char* marker) override final;
     ComputeStatus endProfilingQueue(CommandQueue cmdQueue) override final;
+
+    virtual ComputeStatus notifyOutOfBandCommandQueue(CommandQueue queue, OutOfBandCommandQueueType type) override final;
+    virtual ComputeStatus setAsyncFrameMarker(CommandQueue queue, ReflexMarker marker, uint64_t frameId) override final;
+
+    virtual ComputeStatus createSharedHandle(Resource res, Handle& handle)  override final;
+    virtual ComputeStatus destroySharedHandle(Handle& handle)  override final;
+    virtual ComputeStatus getResourceFromSharedHandle(ResourceType type, Handle handle, Resource& res)  override final;
 };
 
 }

@@ -1,111 +1,12 @@
-Streamline SDK 1.1.1 Binary Update Release Notes
+Streamline SDK Public 2.0.0 Release Notes
 
-Notes:
--- A binary update has been released; the source is unchanged, but the SDK now includes symbols in the symbols/ directory along with signed, production DLLs that match these symbols in bin/x64 root.
+Development Notes:
+-- Note that to rebuild SL from source, you will need to download(/build) and install Slang and xxd.  See the Readme.md for details.
 
+Changed Behavior and New Features:
+-- With the release of SL 2.0.0, the DLSS-G plugin is being made available publicly for the first time.  Note that only precompiled binaries of the sl.dlss_g.dll plugin are available, not source.  However, source is available for the rest of the plugins and SL core.
+-- SL 2.0.0 is a new major version of SL.  It is not backwards-compatible with earlier versions, and it is not compatible with apps integrated using earlier versions of SL.
+-- There are significant API changes and improvements, especially for applications wishing to control the "hooking" of 3D API functions, the tagging of resources and the passing of parameters to plugins.
 
-Streamline SDK 1.1.1 Release Notes
-
-Notes:
--- Fixes a crash in logging when the text includes unicode characters (e.g. Chinese characters)
--- Fixes the slSetFeatureConstants handler in DLSS such that per-frame changes to supported parameters (such as sharpness) are now correctly updated to the NGX level
--- A bug that caused plugins to have issues determining if other plugins are loaded has been fixed
--- The warning that indicated application constants were not being set per frame is now logged only once, not each frame
--- Performance reporting (when enabled) has been improved
--- When using development (i.e. non-production) SL DLLs, the interposer looks for its sl.interposer.json config file in the following locations:
-    1. The app executable's directory
-    2. The current working directory of the application at the time of slInit
--- Plugins are now sorted by priority before they are processed.  This ensures that a higher-priority plugin is not unloaded by a conflict with a lower-priority plugin
-
-Minor changes for the 1.1.0 release include:
--- The error that was logged when SL tried to initialize the plugins when there was no 3D device created has been changed to a warning not error
--- The warning that was printed on each command list when tracking was disabled is now logged only once
--- For those writing plugins, the function to get constants per frame now returns a three-value status code: found constants for the exact frame requested, found constants for some frame, found no constants
--- For those writing plugins, the threading classes have been expanded and improved 
-
-Known Issues:
--- When using Streamline with recent versions of the Agility SDK, you may receive CREATERESOURCE_STATE_IGNORED warnings.  These warnings can be ignored for now and will be addressed in a future release.
-
-
-Streamline SDK 1.1.0 Release Notes
-
-Notes:
--- The sl.latency plugin has been renamed to sl.reflex, better representing its function.
-
-Minor changes for the 1.1.0 release include:
--- New BufferType enum, eBufferTypeInvalidDepthMotionHint (optional)
--- The DLSS settings structure has replaced allocatedBytes with estimatedVRAMUsageInBytes, which clarifies that the value returned (if nonzero) is an estimate of the VRAM the feature will use given the input settings
--- A new header, sl_helpers.h, includes some app-level utility functions
-
-
-Streamline SDK 1.0.4 Release Notes
-
-This version of Streamline includes a significant change in behavior with regard to loading features.  Features are no longer loaded by default and must be specified in the "featuresToLoad/numFeaturesToLoad" members of the Preferences structure.  This behavior may optionally be changed when running development and other non-production builds via the sl.interposer.json file (as documented in the Debugging.md guide).  Further, due to reported confusion in some of the naming, the relevant members of the Preferences structure (and associated JSON file entries) have been renamed to use the term "load" rather than "enable".  This naming more accurately reflects their true function and should avoid any confusion.  
-
-To be clear: All features that are loaded are enabled (turned on) by default, but may be enabled/disabled via the slSetFeatureEnabled() method.  
-
-As part of this rename, we have also merged the Preferences and Preferences1 structures, so you no longer need to use the "ext" member of Preferences to retrieve the second structure.
-
-Below is the full list of these and other changes for the 1.0.4 release:
--- Major Change: Renamed Preferences "enableFeatures" to "loadFeatures"
--- Major Change: Collapse Preferences1 to Preferences
--- Renamed Development JSON option "enableAllFeatures" to "loadAllFeatures"
--- Added Development JSON "loadSpecificFeatures" option to directly specify a subset of features to load
--- Make development and production sl.interposer.dll builds behave the same way, but continue to allow development builds to override things via JSON configuration files
--- Added support for 'Present1' hook
--- Added SL feature lifecycle section to the programming guide to help clarify things such as when features are loaded and when they are initialized
--- Added support for specifying dependencies and/or incompatibilities between features
--- Added flags to sl::Preferences to control advanced options.
--- Allow disabling of CL state tracking via preference flags
--- Allow disabling of debug text via preference flags
--- Add new API slIsFeatureEnabled for consistency
--- Bug-fix: CL state tracking (Reset and ClearState can provide default PSO which was not tracked correctly before)
--- Bug-fix: sl.common gets unloaded if NGX fails
--- Bug-fix: CreateSwapChain when input pointer is not initialized to null does not match the standard DX API behavior
--- Bug-fix: SL console window can sometimes show up on shutdown
-
-Streamline SDK 1.0.3 Release Notes
-
--- Major Change: Feature plugins are no longer loaded by default; you must explicitly define the features which your app will use via the Preferences1::featuresToEnable field.  In previous versions of the SDK, all available features would be loaded if 'featuresToEnable' was set to NULL.  Leaving the value as NULL will now result in NO feature plugins being loaded.  See ProgrammingGuide.md for more details.
--- Source code for the Streamline DLSS plugin has been added.
--- Added support for DLSS NVSDK_NGX_Parameter_DLSS_Indicator_Invert_X_Axis, NVSDK_NGX_Parameter_DLSS_Indicator_Invert_Y_Axis and NVSDK_NGX_Parameter_FreeMemOnReleaseFeature parameters.
--- The value of NVSDK_NGX_DLSS_Feature_Flags_MVLowRes is now inferred from the extents of the Motion Vector resource compared to the extents of the Color Input resource in the DLSS plugin. 
--- Added support for DLSS GPU memory usage query via getDLSSSettings() in the Streamline DLSS plugin
--- A new Plugin, sl.nis, and its source code has been added, which utilizes the NVIDIA Image Scaling SDK.
--- A new Plugin, sl.latency, and its source code has been added, which enables PC Latency measurement.
--- Source code for the Streamline NRD plugin has been added.
--- Added support to allow resource state tracking to be handled by the host application
--- Modified the Streamline Interposer to properly handle the case where other interposers were already active
--- Added slAlloc/FreeResources API to allow the host app to more explicitly control the lifetime of resources used by Streamline Plugins, if desired
--- Upgraded D3D12 CommandList support to ID3D12GraphicsCommandList6 and Device support to ID3D12Device9
--- Added per-plugin namespace to clarify the scope of parameters and functions
--- Added a new "bin/x64/development" folder containing unsigned, non-production builds of Streamline with additional debugging functionality.
--- Added a Debugging.md document to the "docs" folder with details on using JSON files to configure options for the Development build of Streamline.  Sample JSON files are included in the "scripts" folder.
--- Clarified which parts of SL API can be used before device is created and which can only be used after device has been created
--- Bug-Fix: Fixed a crash when resizing the swapchain in D3D11
--- Bug-Fix: Fixed a crash when switching between monitors
--- Bug-Fix: Fixed missing release of a reference when state could not be found in D3D12
-
-Streamline SDK 1.0.2 Release Notes
-
--- Switch to export C style API (e.g. slInit instead of sl::init and so on).  This will require changing any calls to these methods in existing integrations to the new naming convention.
--- Renamed some buffer types to be more technique agnostic (e.g. eBufferTypeTAAUInputColor and eBufferTypeTAAUOutputColor have been renamed to eBufferTypeScalingInputColor and eBufferTypeScalingOutputColor, respectively).
--- The parameters for the Resource Allocation and Release callbacks have been changed to require a device pointer.  Existing integrations utilizing these callbacks will need to be modified to work with the new signatures.
--- NRD updated to v3.1
--- Tags and features have been decoupled from the interposer and common plugin (new plugins and new tags can be added without having to recompile interposer or common plugin)
--- Feature constants have been split into individual header files to simplify adding new features and modifying existing ones.
--- Added slSetFeatureEnabled() method to allow control over if supported feature is enabled or not.
--- Shaders are provided pre-compiled.  If you need to compile HLSL shaders for your own plugin, you will need to place slang in the .\external\slang_internal folder and xxd in the .\tools folder.  Then any *.hlsl files in the .\shaders folder will be compiled at build time.
--- Bug Fix: CreateD3D12Device now handles null device correctly
--- Bug Fix: Dynamic resize and subRects now work in DLSS plugin
--- Known Issue: Benign "error" message that gitVersion.h cannot be found upon first build 
-
-Streamline SDK 1.0.1 Release Notes
-
--- setup.bat now allowing vs2017 and vs2019 build configurations
--- added source code for the sl.common plugin which includes common SL functionality and basic compute dispatch API
--- added source code for the sl.template plugin to be used as a starting point when developing new SL plugins
--- Shaders are provided pre-compiled.  If you need to compile HLSL shaders for your own plugin, you will need to place slang in the .\external\slang_internal folder and xxd in the .\tools folder.  Then any *.hlsl files in the .\shaders folder will be compiled at build time.
--- Bug Fix: d3d11 not returning feature level
--- Bug Fix: d3d12 command list RT PSO tracking
--- Known Issue: Benign "error" message that gitVersion.h cannot be found upon first build 
+Transitioning from SL 1.x to SL 2.0.0 (High Level):
+-- The new document, docs/APIChangesAndImprovements.md details major points in transitioning from older versions of SL to 2.0

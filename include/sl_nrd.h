@@ -25,23 +25,28 @@
 namespace sl
 {
 
-enum NRDMethods
+//! Real-Time Denoiser
+constexpr Feature kFeatureNRD = 1;
+
+enum class NRDMethods : uint32_t
 {
-    eNRDMethodOff,
-    eNRDMethodReblurDiffuse,
-    eNRDMethodReblurDiffuseOcclusion,
-    eNRDMethodReblurSpecular,
-    eNRDMethodReblurSpecularOcclusion,
-    eNRDMethodReblurDiffuseSpecular,
-    eNRDMethodReblurDiffuseSpecularOcclusion,
-    eNRDMethodReblurDiffuseDirectionalOcclusion,
-    eNRDMethodSigmaShadow,
-    eNRDMethodSigmaShadowTranslucency,
-    eNRDMethodRelaxDiffuse,
-    eNRDMethodRelaxSpecular,
-    eNRDMethodRelaxDiffuseSpecular,
-    eNRDMethodCount
+    eOff,
+    eReblurDiffuse,
+    eReblurDiffuseOcclusion,
+    eReblurSpecular,
+    eReblurSpecularOcclusion,
+    eReblurDiffuseSpecular,
+    eReblurDiffuseSpecularOcclusion,
+    eReblurDiffuseDirectionalOcclusion,
+    eSigmaShadow,
+    eSigmaShadowTranslucency,
+    eRelaxDiffuse,
+    eRelaxSpecular,
+    eRelaxDiffuseSpecular,
+    eCount
 };
+
+SL_ENUM_OPERATORS_32(NRDMethods);
 
 // IMPORTANT: default values assume that "meter" is the primary measurement unit. If other units are used,
 // values marked as "m" need to be adjusted. NRD inputs (viewZ, hit distance) can be scaled instead of input settings.
@@ -395,11 +400,11 @@ struct NRDRelaxSpecularSettings
     bool enableAntiFirefly = false;
 };
 
-struct NRDConstants
-{
+// {616B9345-F235-40F3-8EA7-BEE1E153F95A}
+SL_STRUCT(NRDConstants, StructType({ 0x616b9345, 0xf235, 0x40f3, { 0x8e, 0xa7, 0xbe, 0xe1, 0xe1, 0x53, 0xf9, 0x5a } }), kStructVersion1)
     //! Specifies which methodsshould be used (1 << eNRDMethodXXX | 1 << eNRDMethodYYY etc)
     //! Note that this serves as a unique ID and must be provided in the evaluate call.
-    uint32_t methodMask = NRDMethods::eNRDMethodOff;
+    uint32_t methodMask {};
     //! Clip to world space matrix
     float4x4 clipToWorld;
     //! Previous clip to world space matrix
@@ -416,9 +421,6 @@ struct NRDConstants
     NRDRelaxDiffuseSpecularSettings relaxDiffuseSpecular;
     //! Shadow tweaks
     NRDSigmaShadowSettings sigmaShadow;
-
-    //! Reserved for future expansion, must be set to null
-    void* ext = {};
 };
 
 }

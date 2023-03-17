@@ -25,47 +25,30 @@
 namespace sl
 {
 
-//! Each feature must have a unique id, please see sl.h enum Feature
+//! Each feature must have a unique id, please see sl.h Feature
 //! 
-constexpr uint32_t eFeatureTemplate = 0xffff;
+constexpr uint32_t kFeatureTemplate = 0xffff;
 
 //! If your plugin does not have any constants then the code below can be removed
 //! 
-enum TemplateMode
+enum class TemplateMode : uint32_t
 {
     eOff,
     eOn
 };
 
-struct TemplateConstants
-{
-    TemplateMode mode = eOff;
-    // Points to TemplateConstants1 or nullptr
-    void* ext = {};
+//! IMPORTANT: Each structure must have a unique GUID assigned, change this as needed
+//!
+// {29DF7FE0-273A-4D72-B481-2DC823D5B1AD}
+SL_STRUCT(TemplateConstants, StructType({ 0x29df7fe0, 0x273a, 0x4d72, { 0xb4, 0x81, 0x2d, 0xc8, 0x23, 0xd5, 0xb1, 0xad } }), kStructVersion1)
+    TemplateMode mode = TemplateMode::eOff;
 };
 
-struct TemplateConstants1
-{
-    // New parameters included in new version of your plugin go here
-    // 
-    // Points to TemplateConstants2 or nullptr
-    void* ext = {};
-};
-
-struct TemplateConstants2
-{
-    // New parameters included in new version of your plugin go here
-    //     
-    // Always allow for the option to extend this in the future
-    void* ext{};
-};
-
-//! IMPORTANT: If your plugin does not have any settings then the code below can be removed
-//! 
-struct TemplateSettings
-{
-    // Always allow for the option to extend this in the future
-    void* ext = {};
+//! IMPORTANT: Each structure must have a unique GUID assigned, change this as needed
+//!
+// {39DF7FE0-283A-4D72-B481-2DC823D5B1AD}
+SL_STRUCT(TemplateSettings, StructType({ 0x39df7fe0, 0x283a, 0x4d72, { 0xb4, 0x81, 0x2d, 0xc8, 0x23, 0xd5, 0xb1, 0xad } }), kStructVersion1)
+    
 };
 
 }

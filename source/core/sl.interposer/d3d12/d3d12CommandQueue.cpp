@@ -34,11 +34,16 @@ namespace sl
 namespace interposer
 {
 
+static_assert(offsetof(D3D12CommandQueue, m_base) == 16, "This location must be maintained to keep compatibility with Nsight tools");
+
 D3D12CommandQueue::D3D12CommandQueue(D3D12Device* device, ID3D12CommandQueue* original) :
     m_base(original),
     m_interfaceVersion(0),
     m_device(device)
 {
+    // Same ref count as base interface to start with
+    m_base->AddRef();
+    m_refCount.store(m_base->Release());
 }
 
 bool D3D12CommandQueue::checkAndUpgradeInterface(REFIID riid)
@@ -84,7 +89,7 @@ HRESULT STDMETHODCALLTYPE D3D12CommandQueue::QueryInterface(REFIID riid, void** 
     }
 
     // SL Special case, we are requesting base interface
-    if (riid == __uuidof(StreamlineRetreiveBaseInterface))
+    if (riid == __uuidof(StreamlineRetrieveBaseInterface))
     {
         *ppvObj = m_base;
         m_base->AddRef();
@@ -104,24 +109,16 @@ HRESULT STDMETHODCALLTYPE D3D12CommandQueue::QueryInterface(REFIID riid, void** 
 ULONG   STDMETHODCALLTYPE D3D12CommandQueue::AddRef()
 {
     m_base->AddRef();
-    return InterlockedIncrement(&m_refCount);
+    return ++m_refCount;
 }
 
 ULONG   STDMETHODCALLTYPE D3D12CommandQueue::Release()
 {
-    const ULONG ref = InterlockedDecrement(&m_refCount);
-    if (ref != 0)
-    {
-        return m_base->Release(), ref;
-    }
-
-    const ULONG refOrig = m_base->Release();
-    if (refOrig != 0)
-    {
-        SL_LOG_WARN("Reference count for ID3D12CommandQueue v%u 0xllx is not correct", m_interfaceVersion, this);
-    }
+    auto refOrig = m_base->Release();
+    auto ref = --m_refCount;
+    if (ref > 0) return ref;
+    // Base and our interface don't start with identical reference counts so no point in comparing them
     delete this;
-
     return 0;
 }
 
@@ -155,8 +152,16 @@ void    STDMETHODCALLTYPE D3D12CommandQueue::CopyTileMappings(ID3D12Resource* pD
 {
     m_base->CopyTileMappings(pDstResource, pDstRegionStartCoordinate, pSrcResource, pSrcRegionStartCoordinate, pRegionSize, Flags);
 }
+
+#ifndef SL_PRODUCTION
+extern "C" void updateTrackedResources();
+#endif
+
 void    STDMETHODCALLTYPE D3D12CommandQueue::ExecuteCommandLists(UINT NumCommandLists, ID3D12CommandList* const* ppCommandLists)
 {
+#ifndef SL_PRODUCTION
+    updateTrackedResources();
+#endif
     std::vector<ID3D12CommandList*> cmdLists(NumCommandLists);
     for (UINT i = 0; i < NumCommandLists; i++)
     {

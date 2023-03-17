@@ -23,6 +23,7 @@
 #pragma once
 
 #include <map>
+#include "source/core/sl.interposer/d3d12/d3d12.h"
 
 struct D3D12Device;
 
@@ -34,7 +35,7 @@ namespace interposer
 constexpr int kMaxHeapCount = 4;
 constexpr int kMaxComputeRoot32BitConstCount = 64;
 
-struct DECLSPEC_UUID("5B2662FB-EB28-4AEC-819E-1C1B4DE060F6") D3D12GraphicsCommandList : ID3D12GraphicsCommandList6
+struct DECLSPEC_UUID("5B2662FB-EB28-4AEC-819E-1C1B4DE060F6") D3D12GraphicsCommandList : ID3D12GraphicsCommandList8
 {
     D3D12GraphicsCommandList(D3D12Device * device, ID3D12GraphicsCommandList * original);
 
@@ -136,18 +137,26 @@ struct DECLSPEC_UUID("5B2662FB-EB28-4AEC-819E-1C1B4DE060F6") D3D12GraphicsComman
     void    STDMETHODCALLTYPE DispatchRays(const D3D12_DISPATCH_RAYS_DESC * pDesc) override final;
 #pragma endregion
 #pragma region ID3D12GraphicsCommandList5
-    void   STDMETHODCALLTYPE RSSetShadingRate(D3D12_SHADING_RATE baseShadingRate, const D3D12_SHADING_RATE_COMBINER* combiners) override final;
-    void   STDMETHODCALLTYPE RSSetShadingRateImage(ID3D12Resource* shadingRateImage) override final;
+    void   STDMETHODCALLTYPE RSSetShadingRate(D3D12_SHADING_RATE baseShadingRate, const D3D12_SHADING_RATE_COMBINER * combiners) override final;
+    void   STDMETHODCALLTYPE RSSetShadingRateImage(ID3D12Resource * shadingRateImage) override final;
 #pragma endregion
 #pragma region ID3D12GraphicsCommandList6
     void   STDMETHODCALLTYPE DispatchMesh(UINT ThreadGroupCountX, UINT ThreadGroupCountY, UINT ThreadGroupCountZ) override final;
 #pragma endregion
+#pragma region ID3D12GraphicsCommandList7
+    void   STDMETHODCALLTYPE Barrier(UINT32 NumBarrierGroups, const D3D12_BARRIER_GROUP * pBarrierGroups) override final;
+#pragma endregion
+#pragma region ID3D12GraphicsCommandList8
+    void   STDMETHODCALLTYPE OMSetFrontAndBackStencilRef(UINT FrontStencilRef, UINT BackStencilRef) override final;
+#pragma endregion
+
+    uint8_t padding[8];
+    ID3D12GraphicsCommandList* m_base{}; // IMPORTANT: Must be at a fixed offset to support tools, do not move!
 
     bool checkAndUpgradeInterface(REFIID riid);
 
     bool m_trackState = true;
-    ULONG m_refCount = 1;
-    ID3D12GraphicsCommandList* m_base{};
+    std::atomic<LONG> m_refCount = 1;
     unsigned int m_interfaceVersion{};
     D3D12Device* const m_device{};
 

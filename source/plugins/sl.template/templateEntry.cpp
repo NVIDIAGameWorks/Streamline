@@ -34,6 +34,8 @@
 #include "source/plugins/sl.common/commonInterface.h"
 #include "external/nvapi/nvapi.h"
 #include "external/json/include/nlohmann/json.hpp"
+#include "_artifacts/gitVersion.h"
+
 using json = nlohmann::json;
 
 //! IMPORTANT: This is our include with our constants and settings (if any)
@@ -43,12 +45,19 @@ using json = nlohmann::json;
 namespace sl
 {
 
+namespace tmpl
+{
 //! Our common context
 //! 
 //! Here we can keep whatever global state we need
 //! 
 struct TemplateContext
 {
+    SL_PLUGIN_CONTEXT_CREATE_DESTROY(TemplateContext);
+
+    // Called when plugin is unloaded, destroy any objects on heap here
+    void onDestroyContext() {};
+
     common::PFunRegisterEvaluateCallbacks* registerEvaluateCallbacks{};
 
     // For example, we can use this template to store incoming constants
@@ -70,29 +79,72 @@ struct TemplateContext
     chi::Kernel myDenoisingKernel{};
 
     // Our tagged inputs
-    chi::Resource mvec{};
-    chi::Resource depth{};
-    chi::Resource input{};
-    chi::Resource output{};
-    sl::Extent mvecExt{};
-    sl::Extent depthExt{};
-
-    // Resource states provided by the host (optional)
-    uint32_t mvecState{}, depthState{}, outputState{}, inputState{};
+    CommonResource mvec{};
+    CommonResource depth{};
+    CommonResource input{};
+    CommonResource output{};
 
     // Compute API
-    chi::PlatformType platform = chi::ePlatformTypeD3D12;
+    RenderAPI platform = RenderAPI::eD3D12;
     chi::ICompute* compute{};
 };
-static TemplateContext s_ctx = {};
+}
+
+void updateEmbeddedJSON(json& config);
+
+//! These are the hooks we need to do whatever our plugin is trying to do
+//! 
+//! See pluginManager.h for the full list of currently supported hooks
+//! 
+//! Hooks are registered and executed by their priority. If it is important 
+//! for your plugin to run before/after some other plugin please check the 
+//! priorities listed by the plugin manager in the log during the startup.
+//!
+//! IMPORTANT: Please note that priority '0' is reserved for the sl.common plugin.
+//! 
+//! IMPORTANT: Please note that id must be provided and it has to match the Feature enum we assign for this plugin
+//!
+static const char* JSON = R"json(
+{
+    "comment_id" : "id must match the sl::Feature enum in sl.h or sl_template.h, for example sl.dlss has id 0 hence eDLSS = 0",
+    "id" : 65535,
+    "comment_priority" : "plugins are executed in the order of their priority so keep that in mind",
+    "priority" : 100,
+    
+    "comment_namespace" : "rename this to the namespace used for parameters used by your plugin",
+    "namespace" : "template",
+    
+    "comment_optional_dependencies" : "the following lists can be used to specify dependencies, incompatibilities with other plugin(s)",
+    "required_plugins" : ["sl.some_plugin_we_depend_on"],
+    "exclusive_hooks" : ["IDXGISwapChain_SomeFunctionNobodyElseCanUse"],
+    "incompatible_plugins" : ["sl.some_plugin_we_are_not_compatible_with"],
+    
+    "rhi" : ["d3d11", "d3d12", "vk"],
+    
+    "hooks" :
+    [
+        {
+            "class": "IDXGISwapChain",
+            "target" : "Present",
+            "replacement" : "slHookPresent",
+            "base" : "before"
+        }
+    ]
+}
+)json";
+
+//! Define our plugin, make sure to update version numbers in versions.h
+SL_PLUGIN_DEFINE("sl.template", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON, updateEmbeddedJSON, tmpl, TemplateContext)
 
 //! Set constants for our plugin (if any, this is optional and should be thread safe)
-bool slSetConstants(const void* data, uint32_t frameIndex, uint32_t id)
+Result slSetConstants(const void* data, uint32_t frameIndex, uint32_t id)
 {
+    auto& ctx = (*tmpl::getContext());
+
     // For example, we can set out constants like this
     // 
     auto consts = (const TemplateConstants*)data;
-    s_ctx.constants.set(frameIndex, id, consts);
+    ctx.constants.set(frameIndex, id, consts);
     if (consts->mode == TemplateMode::eOff)
     {
         // User disabled our feature
@@ -101,7 +153,7 @@ bool slSetConstants(const void* data, uint32_t frameIndex, uint32_t id)
             // Cleanup logic goes here
         };
         // Schedule delayed destroy (few frames later)
-        CHI_VALIDATE(s_ctx.compute->destroy(lambda));
+        CHI_VALIDATE(ctx.compute->destroy(lambda));
     }
     else
     {
@@ -109,55 +161,57 @@ bool slSetConstants(const void* data, uint32_t frameIndex, uint32_t id)
         // but rather in 'templateBeginEvaluation' when
         // we have access to the command buffer.
     }
-    return true;
+    return Result::eOk;
 }
 
 //! Begin evaluation for our plugin (if we use evalFeature mechanism to inject functionality in to the command buffer)
 //! 
-void templateBeginEvaluation(chi::CommandList pCmdList, const common::EventData& evd)
+sl::Result templateBeginEvaluation(chi::CommandList pCmdList, const common::EventData& evd, const sl::BaseStructure** inputs, uint32_t numInputs)
 {
+    auto& ctx = (*tmpl::getContext());
+
     //! Here we can go and fetch our constants based on the 'event data' - frame index, unique id etc.
     //! 
 
     // Get common constants if we need them
     //
-    // Note that we are passing frame index, unique id provided with the 'evaluateFeature' call
-    if (!common::getConsts(evd, &s_ctx.commonConsts))
+    // Note that we are passing frame index, unique id provided with the 'evaluate' call
+    if (!common::getConsts(evd, &ctx.commonConsts))
     {
-        SL_LOG_ERROR("Cannot obtain common constants");
-        return;
+        // Log error
+        return sl::Result::eErrorMissingConstants;
     }
 
     // Get our constants (if any)
     //
-    // Note that we are passing frame index, unique id provided with the 'evaluateFeature' call
-    if (!s_ctx.constants.get(evd, &s_ctx.templateConsts))
+    // Note that we are passing frame index, unique id provided with the 'evaluate' call
+    if (!ctx.constants.get(evd, &ctx.templateConsts))
     {
-        SL_LOG_ERROR("Cannot obtain constants for sl.template plugin");
+        // Log error
     }
 
     // Get tagged resources (if you need any)
     // 
     // For example, here we fetch depth and mvec with their extents
     // 
-    getTaggedResource(eBufferTypeDepth, s_ctx.depth, evd.id, &s_ctx.depthExt, &s_ctx.depthState);
-    getTaggedResource(eBufferTypeMVec, s_ctx.mvec, evd.id, &s_ctx.mvecExt, &s_ctx.mvecState);
+    getTaggedResource(kBufferTypeDepth, ctx.depth, evd.id, false, inputs, numInputs);
+    getTaggedResource(kBufferTypeMotionVectors, ctx.mvec, evd.id, false, inputs, numInputs);
     // Now we fetch shadow in/out, assuming our plugin does some sort of denoising
-    getTaggedResource(eBufferTypeShadowNoisy, s_ctx.input, evd.id, nullptr, &s_ctx.inputState);
-    getTaggedResource(eBufferTypeShadowDenoised, s_ctx.output, evd.id, nullptr, &s_ctx.outputState);
+    getTaggedResource(kBufferTypeShadowNoisy, ctx.input, evd.id, false, inputs, numInputs);
+    getTaggedResource(kBufferTypeShadowDenoised, ctx.output, evd.id, false, inputs, numInputs);
 
     // If tagged resources are mandatory check if they are provided or not
-    if (!s_ctx.depth || !s_ctx.mvec || !s_ctx.input || !s_ctx.output)
+    if (!ctx.depth || !ctx.mvec || !ctx.input || !ctx.output)
     {
-        SL_LOG_ERROR("Missing mandatory tags for sl.template plugin");
-        return;
+        // Log error
+        return sl::Result::eErrorMissingInputParameter;
     }
 
     // If you need the extents check if they are valid
-    if (!s_ctx.depthExt || !s_ctx.mvecExt)
+    if (!ctx.depth.getExtent() || !ctx.mvec.getExtent())
     {
-        SL_LOG_ERROR("Missing mandatory extents on tagged resources for sl.template plugin");
-        return;
+        // Log error
+        return sl::Result::eErrorMissingInputParameter;
     }
 
     // Initialize your feature if it was never initialized before or if user toggled it back on by setting consts.mode = TemplateMode::eOn
@@ -165,30 +219,25 @@ void templateBeginEvaluation(chi::CommandList pCmdList, const common::EventData&
     // Use compute API to allocated any temporary buffers/textures you need here.
     //
     // You can also check if extents changed, resolution changed (can be passed as a plugin/feature constant for example)
+    return Result::eOk;
 }
 
 //! End evaluation for our plugin (if we use evalFeature mechanism to inject functionality in to the command buffer)
 //! 
-void templateEndEvaluation(chi::CommandList cmdList)
+sl::Result templateEndEvaluation(chi::CommandList cmdList, const common::EventData& evd, const sl::BaseStructure** inputs, uint32_t numInputs)
 {
     // For example, dispatch compute shader work
 
+    auto& ctx = (*tmpl::getContext());
+
     chi::ResourceState mvecState{}, depthState{}, outputState{}, inputState{};
 
-    // Check if state was give to us or not
-    if (s_ctx.mvecState)
-    {
-        // Convert native to SL state
-        CHI_VALIDATE(s_ctx.compute->getResourceState(s_ctx.mvecState, mvecState));
-    }
-    else
-    {
-        // Use internal resource tracking
-        CHI_VALIDATE(s_ctx.compute->getResourceState(s_ctx.mvec, mvecState));
-    }
-    CHI_VALIDATE(s_ctx.compute->getResourceState(s_ctx.depth, depthState));
-    CHI_VALIDATE(s_ctx.compute->getResourceState(s_ctx.input, inputState));
-    CHI_VALIDATE(s_ctx.compute->getResourceState(s_ctx.output, outputState));
+    // Convert native to SL state
+    CHI_VALIDATE(ctx.compute->getResourceState(ctx.mvec.getState(), mvecState));
+    
+    CHI_VALIDATE(ctx.compute->getResourceState(ctx.depth.getState(), depthState));
+    CHI_VALIDATE(ctx.compute->getResourceState(ctx.input.getState(), inputState));
+    CHI_VALIDATE(ctx.compute->getResourceState(ctx.output.getState(), outputState));
 
     // Scoped transition, it will return the resources back to their original states upon leaving this scope
     // 
@@ -196,12 +245,12 @@ void templateEndEvaluation(chi::CommandList cmdList)
     extra::ScopedTasks revTransitions;
     chi::ResourceTransition transitions[] =
     {
-        {s_ctx.mvec, chi::ResourceState::eTextureRead, mvecState},
-        {s_ctx.depth, chi::ResourceState::eTextureRead, depthState},
-        {s_ctx.input, chi::ResourceState::eTextureRead, inputState},
-        {s_ctx.output, chi::ResourceState::eStorageRW, outputState}
+        {ctx.mvec, chi::ResourceState::eTextureRead, mvecState},
+        {ctx.depth, chi::ResourceState::eTextureRead, depthState},
+        {ctx.input, chi::ResourceState::eTextureRead, inputState},
+        {ctx.output, chi::ResourceState::eStorageRW, outputState}
     };
-    CHI_VALIDATE(s_ctx.compute->transitionResources(cmdList, transitions, (uint32_t)countof(transitions), &revTransitions));
+    CHI_VALIDATE(ctx.compute->transitionResources(cmdList, transitions, (uint32_t)countof(transitions), &revTransitions));
 
     // Assuming 1080p dispatch
     uint32_t renderWidth = 1920;
@@ -226,26 +275,27 @@ void templateEndEvaluation(chi::CommandList cmdList)
 
 
     // First we bind our descriptor heaps and other shared state
-    CHI_VALIDATE(s_ctx.compute->bindSharedState(cmdList));
+    CHI_VALIDATE(ctx.compute->bindSharedState(cmdList));
     // Now our kernel
-    CHI_VALIDATE(s_ctx.compute->bindKernel(s_ctx.myDenoisingKernel));
+    CHI_VALIDATE(ctx.compute->bindKernel(ctx.myDenoisingKernel));
     // Now our inputs, binding slot first, register second
     // This has to match your shader exactly
-    CHI_VALIDATE(s_ctx.compute->bindSampler(0, 0, chi::eSamplerLinearClamp));
-    CHI_VALIDATE(s_ctx.compute->bindTexture(1, 0, s_ctx.mvec));
-    CHI_VALIDATE(s_ctx.compute->bindTexture(2, 1, s_ctx.depth));
-    CHI_VALIDATE(s_ctx.compute->bindTexture(3, 2, s_ctx.input));
-    CHI_VALIDATE(s_ctx.compute->bindRWTexture(4, 0, s_ctx.output));
-    CHI_VALIDATE(s_ctx.compute->bindConsts(5, 0, &cb, sizeof(MyParamStruct), 3)); // 3 instances per frame, change as needed (num times we dispatch this kernel with different consants per frame)
-    CHI_VALIDATE(s_ctx.compute->dispatch(grid[0], grid[1], grid[2]));
+    CHI_VALIDATE(ctx.compute->bindSampler(0, 0, chi::eSamplerLinearClamp));
+    CHI_VALIDATE(ctx.compute->bindTexture(1, 0, ctx.mvec));
+    CHI_VALIDATE(ctx.compute->bindTexture(2, 1, ctx.depth));
+    CHI_VALIDATE(ctx.compute->bindTexture(3, 2, ctx.input));
+    CHI_VALIDATE(ctx.compute->bindRWTexture(4, 0, ctx.output));
+    CHI_VALIDATE(ctx.compute->bindConsts(5, 0, &cb, sizeof(MyParamStruct), 3)); // 3 instances per frame, change as needed (num times we dispatch this kernel with different consants per frame)
+    CHI_VALIDATE(ctx.compute->dispatch(grid[0], grid[1], grid[2]));
 
     // NOTE: sl.common will restore the pipeline to its original state 
     // 
-    // When we return to the host from 'evaluateFeature' it will be like SL never changed anything
+    // When we return to the host from 'evaluate' it will be like SL never changed anything
+    return Result::eOk;
 }
 
 //! Get settings for our plugin (optional and depending on if we need to provide any settings back to the host)
-bool slGetSettings(const void* cdata, void* sdata)
+Result slGetSettings(const void* cdata, void* sdata)
 {
     // For example, we can set out constants like this
     // 
@@ -253,19 +303,19 @@ bool slGetSettings(const void* cdata, void* sdata)
     // 
     auto consts = (const TemplateConstants*)cdata;
     auto settings = (TemplateSettings*)sdata;
-    return true;
+    return Result::eOk;
 }
 
 //! Explicit allocation of resources
-bool slAllocateResources(sl::CommandBuffer* cmdBuffer, sl::Feature feature, uint32_t id)
+Result slAllocateResources(sl::CommandBuffer* cmdBuffer, sl::Feature feature, const sl::ViewportHandle& viewport)
 {
-    return true;
+    return Result::eOk;
 }
 
 //! Explicit de-allocation of resources
-bool slFreeResources(sl::Feature feature, uint32_t id)
+Result slFreeResources(sl::Feature feature, const sl::ViewportHandle& viewport)
 {
-    return true;
+    return Result::eOk;
 }
 
 //! Main entry point - starting our plugin
@@ -273,24 +323,28 @@ bool slFreeResources(sl::Feature feature, uint32_t id)
 //! IMPORTANT: Plugins are started based on their priority.
 //! sl.common always starts first since it has priority 0
 //!
-bool slOnPluginStartup(const char* jsonConfig, void* device, param::IParameters* parameters)
+bool slOnPluginStartup(const char* jsonConfig, void* device)
 {
     //! Common startup and setup
     //!     
     SL_PLUGIN_COMMON_STARTUP();
 
+    auto& ctx = (*tmpl::getContext());
+
+    auto parameters = api::getContext()->parameters;
+
     //! Register our evaluate callbacks
     //!
-    //! Note that sl.common handles evaluateFeature calls from the host
+    //! Note that sl.common handles evaluate calls from the host
     //! and distributes eval calls to the right plugin based on the feature id
     //! 
-    if (!param::getPointerParam(parameters, param::common::kPFunRegisterEvaluateCallbacks, &s_ctx.registerEvaluateCallbacks))
+    if (!param::getPointerParam(parameters, param::common::kPFunRegisterEvaluateCallbacks, &ctx.registerEvaluateCallbacks))
     {
-        SL_LOG_ERROR("Cannot obtain `registerEvaluateCallbacks` interface - check that sl.common was initialized correctly");
+        // Log error
         return false;
     }
     //! IMPORTANT: Add new enum in sl.h and match that id in JSON config for this plugin (see below)
-    s_ctx.registerEvaluateCallbacks(/* Change to correct enum */ (Feature)eFeatureTemplate, templateBeginEvaluation, templateEndEvaluation);
+    ctx.registerEvaluateCallbacks(/* Change to correct id */ kFeatureTemplate, templateBeginEvaluation, templateEndEvaluation);
 
     //! Plugin manager gives us the device type and the application id
     //! 
@@ -312,10 +366,10 @@ bool slOnPluginStartup(const char* jsonConfig, void* device, param::IParameters*
 
     //! Now let's obtain compute interface if we need to dispatch some compute work
     //! 
-    s_ctx.platform = (chi::PlatformType)deviceType;
-    if (!param::getPointerParam(parameters, sl::param::common::kComputeAPI, &s_ctx.compute))
+    ctx.platform = (RenderAPI)deviceType;
+    if (!param::getPointerParam(parameters, sl::param::common::kComputeAPI, &ctx.compute))
     {
-        SL_LOG_ERROR("Cannot obtain compute interface - check that sl.common was initialized correctly");
+        // Log error
         return false;
     }
 
@@ -324,17 +378,17 @@ bool slOnPluginStartup(const char* jsonConfig, void* device, param::IParameters*
     //extra::keyboard::getInterface()->registerKey("my_key", extra::keyboard::VirtKey(VK_OEM_6, true, true));
 
     //! Now we create our kernel using the pre-compiled binary blobs (included from somewhere)
-    if (s_ctx.platform == chi::ePlatformTypeVK)
+    if (ctx.platform == RenderAPI::eVulkan)
     {
         // SPIR-V binary blob
         // 
-        //CHI_CHECK_RF(s_ctx.compute->createKernel((void*)myDenoisingKernel_spv, myDenoisingKernel_spv_len, "myDenoisingKernel.cs", "main", s_ctx.myDenoisingKernel));
+        //CHI_CHECK_RF(ctx.compute->createKernel((void*)myDenoisingKernel_spv, myDenoisingKernel_spv_len, "myDenoisingKernel.cs", "main", ctx.myDenoisingKernel));
     }
     else
     {
         // DXBC binary blob
         // 
-        //CHI_CHECK_RF(s_ctx.compute->createKernel((void*)myDenoisingKernel_cs, myDenoisingKernel_cs_len, "myDenoisingKernel.cs", "main", s_ctx.myDenoisingKernel));
+        //CHI_CHECK_RF(ctx.compute->createKernel((void*)myDenoisingKernel_cs, myDenoisingKernel_cs_len, "myDenoisingKernel.cs", "main", ctx.myDenoisingKernel));
     }
     return true;
 }
@@ -346,56 +400,19 @@ bool slOnPluginStartup(const char* jsonConfig, void* device, param::IParameters*
 //!
 void slOnPluginShutdown()
 {
-    // Here we need to release/destroy any resource we created
-    CHI_VALIDATE(s_ctx.compute->destroyKernel(s_ctx.myDenoisingKernel));
+    auto& ctx = (*tmpl::getContext());
 
-    // If we used 'evaluateFeature' mechanism reset the callbacks here
+    // Here we need to release/destroy any resource we created
+    CHI_VALIDATE(ctx.compute->destroyKernel(ctx.myDenoisingKernel));
+
+    // If we used 'evaluate' mechanism reset the callbacks here
     //
     //! IMPORTANT: Add new enum in sl.h and match that id in JSON config for this plugin (see below)
-    s_ctx.registerEvaluateCallbacks(/* Change to correct enum and also update the JSON config below */ (Feature)eFeatureTemplate, nullptr, nullptr);
+    ctx.registerEvaluateCallbacks(/* Change to correct id and also update the JSON config below */ kFeatureTemplate, nullptr, nullptr);
 
     // Common shutdown
     plugin::onShutdown(api::getContext());
 }
-
-//! These are the hooks we need to do whatever our plugin is trying to do
-//! 
-//! See pluginManager.h for the full list of currently supported hooks
-//! 
-//! Hooks are registered and executed by their priority. If it is important 
-//! for your plugin to run before/after some other plugin please check the 
-//! priorities listed by the plugin manager in the log during the startup.
-//!
-//! IMPORTANT: Please note that priority '0' is reserved for the sl.common plugin.
-//! 
-//! IMPORTANT: Please note that id must be provided and it has to match the Feature enum we assign for this plugin
-//!
-static const char* JSON = R"json(
-{
-    "comment_id" : "id must match the sl::Feature enum in sl.h or sl_template.h, for example sl.dlss has id 0 hence eFeatureDLSS = 0",
-    "id" : 65535,
-    "comment_priority" : "plugins are executed in the order of their priority so keep that in mind",
-    "priority" : 1,
-    
-    "comment_namespace" : "rename this to the namespace used for parameters used by your plugin",
-    "namespace" : "template",
-    
-    "comment_optional_dependencies" : "the following lists can be used to specify dependencies, incompatibilities with other plugin(s)",
-    "required_plugins" : ["sl.some_plugin_we_depend_on"],
-    "exclusive_hooks" : ["IDXGISwapChain_SomeFunctionNobodyElseCanUse"],
-    "incompatible_plugins" : ["sl.some_plugin_we_are_not_compatible_with"],
-    
-    "hooks" :
-    [
-        {
-            "class": "IDXGISwapChain",
-            "target" : "Present",
-            "replacement" : "slHookPresent",
-            "base" : "before"
-        }
-    ]
-}
-)json";
 
 //! Example hook to handle SwapChain::Present calls
 //! 
@@ -403,7 +420,7 @@ HRESULT slHookPresent(IDXGISwapChain* swapChain, UINT SyncInterval, UINT Flags, 
 {
     // NOP present hook, we tell host NOT to skip the base implementation and return OK
     // 
-    // This is just an example, if your plugin just needs to do something in `evaluateFeature`
+    // This is just an example, if your plugin just needs to do something in `evaluate`
     // then no hooks are necessary.
     //
     Skip = false;
@@ -412,52 +429,39 @@ HRESULT slHookPresent(IDXGISwapChain* swapChain, UINT SyncInterval, UINT Flags, 
 
 //! Figure out if we are supported on the current hardware or not
 //! 
-uint32_t getSupportedAdapterMask()
+void updateEmbeddedJSON(json& config)
 {
-    // Here we need to return a bitmask indicating on which adapter are we supported
-
-    // If always supported across all adapters simply set all bits to 1
-    uint32_t adapterMask = 0;
-
-    // System capabilities info provided by sl.common
-    common::SystemCaps* info = {};
-    if (!param::getPointerParam(api::getContext()->parameters, sl::param::common::kSystemCaps, &info))
+    // Check if plugin is supported or not on this platform and set the flag accordingly
+    common::SystemCaps* caps = {};
+    param::getPointerParam(api::getContext()->parameters, sl::param::common::kSystemCaps, &caps);
+    common::PFunUpdateCommonEmbeddedJSONConfig* updateCommonEmbeddedJSONConfig{};
+    param::getPointerParam(api::getContext()->parameters, sl::param::common::kPFunUpdateCommonEmbeddedJSONConfig, &updateCommonEmbeddedJSONConfig);
+    if (caps && updateCommonEmbeddedJSONConfig)
     {
-        // Failed, do your own HW checks
+        common::PluginInfo info{};
+        // Specify minimum driver version we need
+        info.minDriver = sl::Version(455, 0, 0);
+        // SL does not work on Win7, only Win10+
+        info.minOS = sl::Version(10, 0, 0);
+        // Specify 0 if our plugin runs on any adapter otherwise specify enum value `NV_GPU_ARCHITECTURE_*` from NVAPI
+        info.minGPUArchitecture = 0;
+        updateCommonEmbeddedJSONConfig(&config, info);
     }
-    else
-    {
-        for (uint32_t i = 0; i < info->gpuCount; i++)
-        {
-            // For example, we want to check for Turing+ to enable our feature
-            auto turingOrBetter = info->architecture[i] >= NV_GPU_ARCHITECTURE_ID::NV_GPU_ARCHITECTURE_TU100;
-            if (turingOrBetter)
-            {
-                adapterMask |= 1 << i;
-            }
-        }
-    }
-    return adapterMask;
 }
-
-//! Define our plugin, make sure to update version numbers in versions.h
-SL_PLUGIN_DEFINE("sl.template", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON, getSupportedAdapterMask())
 
 //! The only exported function - gateway to all functionality
 SL_EXPORT void* slGetPluginFunction(const char* functionName)
 {
     //! Forward declarations
-    const char* slGetPluginJSONConfig();
-    void slSetParameters(sl::param::IParameters * p);
+    bool slOnPluginLoad(sl::param::IParameters * params, const char* loaderJSON, const char** pluginJSON);
 
     //! Redirect to OTA if any
     SL_EXPORT_OTA;
 
     //! Core API
-    SL_EXPORT_FUNCTION(slSetParameters);
+    SL_EXPORT_FUNCTION(slOnPluginLoad);
     SL_EXPORT_FUNCTION(slOnPluginShutdown);
     SL_EXPORT_FUNCTION(slOnPluginStartup);
-    SL_EXPORT_FUNCTION(slGetPluginJSONConfig);
     SL_EXPORT_FUNCTION(slSetConstants);
     SL_EXPORT_FUNCTION(slGetSettings);
     SL_EXPORT_FUNCTION(slAllocateResources);

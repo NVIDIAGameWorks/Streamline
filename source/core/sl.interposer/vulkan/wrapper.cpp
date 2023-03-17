@@ -22,11 +22,20 @@
 
 #include <unordered_set>
 
+// sl_hooks.h keys off of this to know that Vulkan is in use.  Normally this is defined in vulkan_core.h when an
+// app compiles it in.  In the case here, an early inclusion of sl_hooks.h (before vulkan.h) leads to it not being
+// defined inside of SL itself.  This works around that issue
+#define VK_VERSION_1_0 1
+
+#include "include/sl.h"
 #include "source/core/sl.api/internal.h"
 #include "source/core/sl.log/log.h"
 #include "source/core/sl.param/parameters.h"
 #include "source/core/sl.plugin-manager/pluginManager.h"
 #include "source/core/sl.interposer/vulkan/layer.h"
+#include "source/core/sl.interposer/hook.h"
+#include "include/sl_hooks.h"
+#include "include/sl_helpers_vk.h"
 
 HMODULE s_module = {};
 
@@ -49,6 +58,33 @@ HMODULE loadVulkanLibrary()
     return s_module;
 }
 
+//! Only used when manually hooking Vulkan API
+//! 
+//! Host is in charge and providing information we need
+//! 
+sl::Result processVulkanInterface(const sl::VulkanInfo* extension)
+{
+    if (!loadVulkanLibrary())
+    {
+        SL_LOG_ERROR( "Failed to load Vulkan library");
+        return sl::Result::eErrorVulkanAPI;
+    }
+
+    s_vk.instance = extension->instance;
+    s_vk.device = extension->device;
+    s_vk.getDeviceProcAddr = (PFN_vkGetDeviceProcAddr)GetProcAddress(s_module, "vkGetDeviceProcAddr");
+    s_vk.getInstanceProcAddr = (PFN_vkGetInstanceProcAddr)GetProcAddress(s_module, "vkGetInstanceProcAddr");
+    s_vk.graphicsQueueFamily = extension->graphicsQueueFamily;
+    s_vk.graphicsQueueIndex = extension->graphicsQueueIndex;
+    s_vk.computeQueueFamily = extension->computeQueueFamily;
+    s_vk.computeQueueIndex = extension->computeQueueIndex;    
+
+    // Allow all plugins to access this information
+    sl::param::getInterface()->set(sl::param::global::kVulkanTable, &s_vk);
+
+    return sl::Result::eOk;
+}
+
 extern "C"
 {
 
@@ -59,7 +95,7 @@ extern "C"
     {
         if (!loadVulkanLibrary())
         {
-            SL_LOG_ERROR("Failed to load Vulkan library");
+            SL_LOG_ERROR( "Failed to load Vulkan library");
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
@@ -69,7 +105,7 @@ extern "C"
 
         if (!createInstance)
         {
-            SL_LOG_ERROR("Failed to map vkCreateInstance");
+            SL_LOG_ERROR( "Failed to map vkCreateInstance");
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
@@ -88,15 +124,32 @@ extern "C"
         createInfo.pApplicationInfo = &appInfo;
 
         // Build up a list of extensions to enable
-        std::unordered_set<std::string> extensionSet = {
+        std::unordered_set<std::string> extensionSet =
+        {
 #ifndef SL_PRODUCTION
             VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
 #endif
-
-            VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
-            VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME,
-            VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME
         };
+
+        auto pluginManager = sl::plugin_manager::getInterface();
+        std::vector<json> configs;
+        pluginManager->getLoadedFeatureConfigs(configs);
+        for (auto& cfg : configs)
+        {
+            if (cfg.contains("/external/vk/instance/extensions"_json_pointer))
+            {
+                std::vector<std::string> pluginExtensions;
+                cfg["external"]["vk"]["instance"]["extensions"].get_to(pluginExtensions);
+                for (auto ext : pluginExtensions)
+                {
+                    auto res = extensionSet.insert(ext);
+                    if (res.second)
+                    {
+                        SL_LOG_INFO("Adding instance extension '%s'", ext.c_str());
+                    }
+                }
+            }
+        }
 
         for (uint32_t i = 0; i < createInfo.enabledExtensionCount; i++)
         {
@@ -120,20 +173,23 @@ extern "C"
         {
             layers.push_back(createInfo.ppEnabledLayerNames[i]);
         }
-#if 0
-        if (std::find(layers.begin(), layers.end(), "VK_LAYER_KHRONOS_validation") == layers.end())
+
+        if (sl::interposer::getInterface()->getConfig().vkValidation)
         {
-            layers.push_back("VK_LAYER_KHRONOS_validation");
+            if (std::find(layers.begin(), layers.end(), "VK_LAYER_KHRONOS_validation") == layers.end())
+            {
+                layers.push_back("VK_LAYER_KHRONOS_validation");
+                sl::param::getInterface()->set(sl::param::interposer::kVKValidationActive, true);
+            }
         }
-#endif
+
         createInfo.enabledLayerCount = (uint32_t)layers.size();
         createInfo.ppEnabledLayerNames = layers.data();
 #endif
-
         auto res = createInstance(&createInfo, pAllocator, pInstance);
         if (res != VK_SUCCESS)
         {
-            SL_LOG_ERROR("vkCreateInstance failed");
+            SL_LOG_ERROR( "vkCreateInstance failed");
             return res;
         }
 
@@ -151,7 +207,7 @@ extern "C"
         auto lib = loadVulkanLibrary();
         if (!lib)
         {
-            SL_LOG_ERROR("Failed to load Vulkan library");
+            SL_LOG_ERROR( "Failed to load Vulkan library");
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         auto trampoline = (PFN_vkEnumerateInstanceExtensionProperties)GetProcAddress(lib, "vkEnumerateInstanceExtensionProperties");
@@ -163,7 +219,7 @@ extern "C"
         auto lib = loadVulkanLibrary();
         if (!lib)
         {
-            SL_LOG_ERROR("Failed to load Vulkan library");
+            SL_LOG_ERROR( "Failed to load Vulkan library");
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         auto trampoline = (PFN_vkEnumerateInstanceLayerProperties)GetProcAddress(lib, "vkEnumerateInstanceLayerProperties");
@@ -175,24 +231,52 @@ extern "C"
         auto lib = loadVulkanLibrary();
         if (!lib)
         {
-            SL_LOG_ERROR("Failed to load Vulkan library");
+            SL_LOG_ERROR( "Failed to load Vulkan library");
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
         auto createInfo = *pCreateInfo;
 
         // Enable extra extensions SL requires
-        std::unordered_set<std::string> extensionSet = {
-            VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
-
-            VK_KHR_MAINTENANCE_4_EXTENSION_NAME,
-            VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
-            VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
-#ifdef WIN32
-            VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME,
-            VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME,
-#endif
+        std::unordered_set<std::string> extensionSet =
+        {
+            VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME
         };
+
+        // Figure out what extra features we need 
+        uint32_t extraGraphicsQueues = 0;
+        uint32_t extraComputeQueues = 0;
+        auto pluginManager = sl::plugin_manager::getInterface();
+        std::vector<json> configs;
+        pluginManager->getLoadedFeatureConfigs(configs);
+        for (auto& cfg : configs)
+        {
+            // Device extensions
+            if (cfg.contains("/external/vk/device/extensions"_json_pointer))
+            {
+                std::vector<std::string> pluginExtensions;
+                cfg["external"]["vk"]["device"]["extensions"].get_to(pluginExtensions);
+                for (auto ext : pluginExtensions)
+                {
+                    auto res = extensionSet.insert(ext);
+                    if (res.second)
+                    {
+                        SL_LOG_INFO("Adding device extension '%s' requested by a plugin(s)", ext.c_str());
+                    }
+                }
+            }
+            // Additional queues?
+            if (cfg.contains("/external/vk/device/queues/graphics/count"_json_pointer))
+            {
+                extraGraphicsQueues += cfg["external"]["vk"]["device"]["queues"]["graphics"]["count"];
+                SL_LOG_INFO("Adding extra %u graphics queue(s) requested by a plugin(s)", extraGraphicsQueues);
+            }
+            if (cfg.contains("/external/vk/device/queues/compute/count"_json_pointer))
+            {
+                extraComputeQueues += cfg["external"]["vk"]["device"]["queues"]["compute"]["count"];
+                SL_LOG_INFO("Adding extra %u compute queue(s) requested by a plugin(s)", extraComputeQueues);
+            }
+        }
 
         for (uint32_t i = 0; i < createInfo.enabledExtensionCount; i++)
         {
@@ -203,24 +287,45 @@ extern "C"
         extensions.reserve(extensionSet.size());
         for (auto& e : extensionSet)
         {
-            extensions.push_back(e.c_str());
+            // VK validation complains about 'VK_EXT_buffer_device_address' and 'bufferDeviceAddress' VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES set at the same time
+            if (e != std::string("VK_EXT_buffer_device_address") && e != std::string("VK_KHR_buffer_device_address"))
+            {
+                extensions.push_back(e.c_str());
+            }
         }
 
         createInfo.enabledExtensionCount = (uint32_t)extensions.size();
         createInfo.ppEnabledExtensionNames = extensions.data();
 
-        VkPhysicalDeviceVulkan13Features enable13Features{};
-        enable13Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
-        enable13Features.privateData = true;
-        enable13Features.pNext = (void*)createInfo.pNext;
+        // Check if host is already specifying 1.2 features
+        auto features12 = (VkPhysicalDeviceVulkan12Features*)createInfo.pNext;
+        while (features12)
+        {
+            if (features12->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES)
+            {
+                break;
+            }
+            features12 = (VkPhysicalDeviceVulkan12Features*)features12->pNext;
+        }
 
         VkPhysicalDeviceVulkan12Features enable12Features{};
-        enable12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
-        enable12Features.timelineSemaphore = true;
-        enable12Features.descriptorIndexing = true;
-        enable12Features.bufferDeviceAddress = true;
-        enable12Features.pNext = (void*)&enable13Features;
-        createInfo.pNext = &enable12Features;
+
+        // Update either existing features or add ours to the chain
+        if (features12)
+        {
+            features12->timelineSemaphore = true;
+            features12->descriptorIndexing = true;
+            features12->bufferDeviceAddress = true;
+        }
+        else
+        {
+            enable12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+            enable12Features.timelineSemaphore = true;
+            enable12Features.descriptorIndexing = true;
+            enable12Features.bufferDeviceAddress = true;
+            enable12Features.pNext = (void*)createInfo.pNext;
+            createInfo.pNext = &enable12Features;
+        }
 
         auto& dt = s_vk.dispatchInstanceMap[s_vk.instance];
 
@@ -237,17 +342,17 @@ extern "C"
         {
             if ((queueFamilyProperties[i].queueFlags & VK_QUEUE_GRAPHICS_BIT))
             {
-                SL_LOG_VERBOSE("Found Vulkan graphics queue family at index %u", i);
+                SL_LOG_VERBOSE("Found Vulkan graphics queue family at index %u - max queues allowed %u", i, queueFamilyProperties[i].queueCount);
                 s_vk.graphicsQueueFamily = i;
             }
             else if ((queueFamilyProperties[i].queueFlags & VK_QUEUE_COMPUTE_BIT))
             {
-                SL_LOG_VERBOSE("Found Vulkan compute queue family at index %u", i);
+                SL_LOG_VERBOSE("Found Vulkan compute queue family at index %u - max queues allowed %u", i, queueFamilyProperties[i].queueCount);
                 s_vk.computeQueueFamily = i;
             }
         }
 
-        // We have to add an extra graphics and compute queues for SL workloads
+        // Check and add extra graphics and compute queues for SL workloads
         s_vk.computeQueueIndex = 0;
         s_vk.graphicsQueueIndex = 0;
         std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
@@ -256,25 +361,35 @@ extern "C"
             queueCreateInfos.push_back(createInfo.pQueueCreateInfos[i]);
             if (createInfo.pQueueCreateInfos[i].queueFamilyIndex == s_vk.computeQueueFamily)
             {
+                if (queueFamilyProperties[s_vk.computeQueueFamily].queueCount < queueCreateInfos.back().queueCount + extraComputeQueues)
+                {
+                    SL_LOG_WARN("SL feature(s) requiring more compute queues than available on this device");
+                    continue;
+                }
                 s_vk.computeQueueIndex++;
-                queueCreateInfos.back().queueCount++;
+                queueCreateInfos.back().queueCount += extraComputeQueues; // defaults to 0 unless requested otherwise by plugin(s)
             }
             if (createInfo.pQueueCreateInfos[i].queueFamilyIndex == s_vk.graphicsQueueFamily)
             {
+                if (queueFamilyProperties[s_vk.graphicsQueueFamily].queueCount < queueCreateInfos.back().queueCount + extraGraphicsQueues)
+                {
+                    SL_LOG_WARN("SL feature(s) requiring more graphics queues than available on this device");
+                    continue;
+                }
                 s_vk.graphicsQueueIndex++;
-                queueCreateInfos.back().queueCount += 2;
+                queueCreateInfos.back().queueCount += extraGraphicsQueues; // defaults to 0 unless requested otherwise by plugin(s)
             }
         }
 
         const float defaultQueuePriority = 0.0f;
         VkDeviceQueueCreateInfo queueInfo{};
 
-        if (s_vk.computeQueueIndex == 0)
+        if (extraComputeQueues > 0 && s_vk.computeQueueIndex == 0 && queueFamilyProperties[s_vk.computeQueueFamily].queueCount >= extraComputeQueues)
         {
-            // We have to add compute queue explicitly since host has none
+            // We have to add compute queue(s) explicitly since host has none
             queueInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
             queueInfo.queueFamilyIndex = s_vk.computeQueueFamily;
-            queueInfo.queueCount = 1;
+            queueInfo.queueCount = extraComputeQueues;
             queueInfo.pQueuePriorities = &defaultQueuePriority;
             queueCreateInfos.push_back(queueInfo);
         }
@@ -287,9 +402,13 @@ extern "C"
 
         if (res != VK_SUCCESS)
         {
-            SL_LOG_ERROR("vkCreateDevice failed");
+            SL_LOG_ERROR( "vkCreateDevice failed");
             return res;
         }
+        s_vk.instance = s_vk.instanceDeviceMap[physicalDevice];
+        s_vk.mapVulkanInstanceAPI(s_vk.instance);
+        s_idt = s_vk.dispatchInstanceMap[s_vk.instance];
+
         s_vk.device = *pDevice;
         s_vk.mapVulkanDeviceAPI(*pDevice);
 
@@ -297,7 +416,6 @@ extern "C"
 
         s_ddt = s_vk.dispatchDeviceMap[s_vk.device];
 
-        auto pluginManager = sl::plugin_manager::getInterface();
         pluginManager->setVulkanDevice(physicalDevice, *pDevice, s_vk.instance);
         pluginManager->initializePlugins();
 
@@ -307,11 +425,31 @@ extern "C"
     void VKAPI_CALL vkDestroyInstance(VkInstance Instance, const VkAllocationCallbacks* Allocator)
     {
         s_idt.DestroyInstance(Instance, Allocator);
+        auto it = s_vk.instanceDeviceMap.begin();
+        while (it != s_vk.instanceDeviceMap.end())
+        {
+            if ((*it).second == Instance)
+            {
+                it = s_vk.instanceDeviceMap.erase(it);
+            }
+            else
+            {
+                it++;
+            }
+        }
     }
 
     VkResult VKAPI_CALL vkEnumeratePhysicalDevices(VkInstance Instance, uint32_t* PhysicalDeviceCount, VkPhysicalDevice* PhysicalDevices)
     {
         VkResult Result = s_idt.EnumeratePhysicalDevices(Instance, PhysicalDeviceCount, PhysicalDevices);
+        if (PhysicalDevices)
+        {
+            auto i = *PhysicalDeviceCount;
+            while (i--)
+            {
+                s_vk.instanceDeviceMap[PhysicalDevices[i]] = Instance;
+            }
+        }
         return Result;
     }
 
@@ -564,13 +702,7 @@ extern "C"
 
     VkResult VKAPI_CALL vkCreateImage(VkDevice Device, const VkImageCreateInfo* CreateInfo, const VkAllocationCallbacks* Allocator, VkImage* Image)
     {
-        VkResult Result = s_ddt.CreateImage(Device, CreateInfo, Allocator, Image);
-
-        using vkCreateImage_t = VkResult(VkDevice Device, const VkImageCreateInfo* CreateInfo, const VkAllocationCallbacks* Allocator, VkImage* Image);
-        const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooks(FunctionHookID::eVulkan_CreateImage);
-        for (auto hook : hooks) ((vkCreateImage_t*)hook)(Device, CreateInfo, Allocator, Image);
-
-        return Result;
+        return s_ddt.CreateImage(Device, CreateInfo, Allocator, Image);
     }
 
     void VKAPI_CALL vkDestroyImage(VkDevice Device, VkImage Image, const VkAllocationCallbacks* Allocator)
@@ -752,10 +884,6 @@ extern "C"
     {
         auto res = s_ddt.BeginCommandBuffer(CommandBuffer, BeginInfo);
 
-        using vkBeginCommandBuffer_t = void(VkCommandBuffer CommandBuffer, const VkCommandBufferBeginInfo* BeginInfo);
-        const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooks(FunctionHookID::eVulkan_BeginCommandBuffer);
-        for (auto hook : hooks) ((vkBeginCommandBuffer_t*)hook)(CommandBuffer, BeginInfo);
-
         return res;
     }
 
@@ -772,10 +900,6 @@ extern "C"
     void VKAPI_CALL vkCmdBindPipeline(VkCommandBuffer CommandBuffer, VkPipelineBindPoint PipelineBindPoint, VkPipeline Pipeline)
     {
         s_ddt.CmdBindPipeline(CommandBuffer, PipelineBindPoint, Pipeline);
-
-        using vkCmdBindPipeline_t = void(VkCommandBuffer CommandBuffer, VkPipelineBindPoint PipelineBindPoint, VkPipeline Pipeline);
-        const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooks(FunctionHookID::eVulkan_CmdBindPipeline);
-        for (auto hook : hooks) ((vkCmdBindPipeline_t*)hook)(CommandBuffer, PipelineBindPoint, Pipeline);
     }
 
     void VKAPI_CALL vkCmdSetViewport(VkCommandBuffer CommandBuffer, uint32_t FirstViewport, uint32_t ViewportCount, const VkViewport* Viewports)
@@ -826,10 +950,6 @@ extern "C"
     void VKAPI_CALL vkCmdBindDescriptorSets(VkCommandBuffer CommandBuffer, VkPipelineBindPoint PipelineBindPoint, VkPipelineLayout Layout, uint32_t FirstSet, uint32_t DescriptorSetCount, const VkDescriptorSet* DescriptorSets, uint32_t DynamicOffsetCount, const uint32_t* DynamicOffsets)
     {
         s_ddt.CmdBindDescriptorSets(CommandBuffer, PipelineBindPoint, Layout, FirstSet, DescriptorSetCount, DescriptorSets, DynamicOffsetCount, DynamicOffsets);
-
-        using vkCmdBindDescriptorSets_t = void(VkCommandBuffer CommandBuffer, VkPipelineBindPoint PipelineBindPoint, VkPipelineLayout Layout, uint32_t FirstSet, uint32_t DescriptorSetCount, const VkDescriptorSet* DescriptorSets, uint32_t DynamicOffsetCount, const uint32_t* DynamicOffsets);
-        const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooks(FunctionHookID::eVulkan_CmdBindDescriptorSets);
-        for (auto hook : hooks) ((vkCmdBindDescriptorSets_t*)hook)(CommandBuffer, PipelineBindPoint, Layout, FirstSet, DescriptorSetCount, DescriptorSets, DynamicOffsetCount, DynamicOffsets);
     }
 
     void VKAPI_CALL vkCmdBindIndexBuffer(VkCommandBuffer CommandBuffer, VkBuffer Buffer, VkDeviceSize Offset, VkIndexType IndexType)
@@ -958,13 +1078,6 @@ extern "C"
         uint32_t ImageMemoryBarrierCount, const VkImageMemoryBarrier* ImageMemoryBarriers)
     {
         s_ddt.CmdPipelineBarrier(CommandBuffer, SrcStageMask, DstStageMask, DependencyFlags, MemoryBarrierCount, MemoryBarriers, BufferMemoryBarrierCount, BufferMemoryBarriers, ImageMemoryBarrierCount, ImageMemoryBarriers);
-
-        using vkCmdPipelineBarrier_t = void(VkCommandBuffer CommandBuffer, VkPipelineStageFlags SrcStageMask, VkPipelineStageFlags DstStageMask, VkDependencyFlags DependencyFlags,
-            uint32_t MemoryBarrierCount, const VkMemoryBarrier* MemoryBarriers,
-            uint32_t BufferMemoryBarrierCount, const VkBufferMemoryBarrier* BufferMemoryBarriers,
-            uint32_t ImageMemoryBarrierCount, const VkImageMemoryBarrier* ImageMemoryBarriers);
-        const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooks(FunctionHookID::eVulkan_CmdPipelineBarrier);
-        for (auto hook : hooks) ((vkCmdPipelineBarrier_t*)hook)(CommandBuffer, SrcStageMask, DstStageMask, DependencyFlags, MemoryBarrierCount, MemoryBarriers, BufferMemoryBarrierCount, BufferMemoryBarriers, ImageMemoryBarrierCount, ImageMemoryBarriers);
     }
 
     void VKAPI_CALL vkCmdBeginQuery(VkCommandBuffer CommandBuffer, VkQueryPool QueryPool, uint32_t Query, VkQueryControlFlags Flags)
@@ -1020,10 +1133,9 @@ extern "C"
 
     VkResult VKAPI_CALL vkCreateSwapchainKHR(VkDevice Device, const VkSwapchainCreateInfoKHR* CreateInfo, const VkAllocationCallbacks* Allocator, VkSwapchainKHR* Swapchain)
     {
-        using vkCreateSwapchainKHR_t = VkResult(VkDevice Device, const VkSwapchainCreateInfoKHR* CreateInfo, const VkAllocationCallbacks* Allocator, VkSwapchainKHR* Swapchain, bool& Skip);
-        const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eVulkan_CreateSwapchainKHR);
+        const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(sl::FunctionHookID::eVulkan_CreateSwapchainKHR);
         bool skip = false;
-        for (auto hook : hooks) ((vkCreateSwapchainKHR_t*)hook)(Device, CreateInfo, Allocator, Swapchain, skip);
+        for (auto [hook, feature] : hooks) ((sl::PFunVkCreateSwapchainKHRBefore*)hook)(Device, CreateInfo, Allocator, Swapchain, skip);
 
         VkResult result = VK_SUCCESS;
         if (!skip)
@@ -1035,15 +1147,20 @@ extern "C"
 
     void VKAPI_CALL vkDestroySwapchainKHR(VkDevice Device, VkSwapchainKHR Swapchain, const VkAllocationCallbacks* Allocator)
     {
-        s_ddt.DestroySwapchainKHR(Device, Swapchain, Allocator);
+        const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(sl::FunctionHookID::eVulkan_DestroySwapchainKHR);
+        bool skip = false;
+        for (auto [hook, feature] : hooks) ((sl::PFunVkDestroySwapchainKHRBefore*)hook)(Device, Swapchain, Allocator, skip);
+        if (!skip)
+        {
+            s_ddt.DestroySwapchainKHR(Device, Swapchain, Allocator);
+        }
     }
 
     VkResult VKAPI_CALL vkGetSwapchainImagesKHR(VkDevice Device, VkSwapchainKHR Swapchain, uint32_t* SwapchainImageCount, VkImage* SwapchainImages)
     {
-        using vkGetSwapchainImagesKHR_t = VkResult(VkDevice Device, VkSwapchainKHR Swapchain, uint32_t* SwapchainImageCount, VkImage* SwapchainImages, bool& Skip);
-        const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eVulkan_GetSwapchainImagesKHR);
+        const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(sl::FunctionHookID::eVulkan_GetSwapchainImagesKHR);
         bool skip = false;
-        for (auto hook : hooks) ((vkGetSwapchainImagesKHR_t*)hook)(Device, Swapchain, SwapchainImageCount, SwapchainImages, skip);
+        for (auto [hook, feature] : hooks) ((sl::PFunVkGetSwapchainImagesKHRBefore*)hook)(Device, Swapchain, SwapchainImageCount, SwapchainImages, skip);
 
         VkResult result = VK_SUCCESS;
         if (!skip)
@@ -1055,12 +1172,19 @@ extern "C"
 
     VkResult VKAPI_CALL vkAcquireNextImageKHR(VkDevice Device, VkSwapchainKHR Swapchain, uint64_t Timeout, VkSemaphore Semaphore, VkFence Fence, uint32_t* ImageIndex)
     {
-        using vkAcquireNextImageKHR_t = VkResult(VkDevice Device, VkSwapchainKHR Swapchain, uint64_t Timeout, VkSemaphore Semaphore, VkFence Fence, uint32_t* ImageIndex, bool& Skip);
-        const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eVulkan_AcquireNextImageKHR);
+        const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(sl::FunctionHookID::eVulkan_AcquireNextImageKHR);
         bool skip = false;
-        for (auto hook : hooks) ((vkAcquireNextImageKHR_t*)hook)(Device, Swapchain, Timeout, Semaphore, Fence, ImageIndex, skip);
-
         VkResult result = VK_SUCCESS;
+        for (auto [hook, feature] : hooks)
+        {
+            result = ((sl::PFunVkAcquireNextImageKHRBefore*)hook)(Device, Swapchain, Timeout, Semaphore, Fence, ImageIndex, skip);
+            // report error on first fail
+            if (result != VK_SUCCESS)
+            {
+                return result;
+            }
+        }
+
         if (!skip)
         {
             result = s_ddt.AcquireNextImageKHR(Device, Swapchain, Timeout, Semaphore, Fence, ImageIndex);
@@ -1070,17 +1194,24 @@ extern "C"
 
     VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue Queue, const VkPresentInfoKHR* PresentInfo)
     {
-        using vkQueuePresentKHR_t = VkResult(VkQueue Queue, const VkPresentInfoKHR* PresentInfo, bool& Skip);
-        const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eVulkan_Present);
+        const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(sl::FunctionHookID::eVulkan_Present);
         bool skip = false;
-        for (auto hook : hooks) ((vkQueuePresentKHR_t*)hook)(Queue, PresentInfo, skip);
+        VkResult result = VK_SUCCESS;
+        for (auto [hook, feature] : hooks)
+        {
+            result = ((sl::PFunVkQueuePresentKHRBefore*)hook)(Queue, PresentInfo, skip);
+            // report error on first fail
+            if (result != VK_SUCCESS)
+            {
+                return result;
+            }
+        }
 
-        VkResult Result = {};
         if (!skip)
         {
-            Result = s_ddt.QueuePresentKHR(Queue, PresentInfo);
+            result = s_ddt.QueuePresentKHR(Queue, PresentInfo);
         }
-        return Result;
+        return result;
     }
 
     VkResult VKAPI_CALL vkGetPhysicalDeviceSurfaceCapabilitiesKHR(VkPhysicalDevice PhysicalDevice, VkSurfaceKHR Surface, VkSurfaceCapabilitiesKHR* SurfaceCapabilities)
@@ -1133,11 +1264,18 @@ if (strcmp(pName, #F) == 0)          \
     {
         if (!loadVulkanLibrary())
         {
-            SL_LOG_ERROR("Failed to load Vulkan library");
+            SL_LOG_ERROR( "Failed to load Vulkan library");
             return nullptr;
         }
 
+        if (!s_ddt.GetDeviceProcAddr)
+        {
+            s_ddt.GetDeviceProcAddr = (PFN_vkGetDeviceProcAddr)GetProcAddress(s_module, "vkGetDeviceProcAddr");
+        }
+
         // Redirect only the hooks we need
+        SL_INTERCEPT(vkGetInstanceProcAddr);
+        SL_INTERCEPT(vkGetDeviceProcAddr);
         SL_INTERCEPT(vkQueuePresentKHR);
         SL_INTERCEPT(vkCreateImage);
         SL_INTERCEPT(vkCmdPipelineBarrier);
@@ -1145,6 +1283,7 @@ if (strcmp(pName, #F) == 0)          \
         SL_INTERCEPT(vkCmdBindDescriptorSets);
         SL_INTERCEPT(vkCreateSwapchainKHR);
         SL_INTERCEPT(vkGetSwapchainImagesKHR);
+        SL_INTERCEPT(vkDestroySwapchainKHR);
         SL_INTERCEPT(vkAcquireNextImageKHR);
         SL_INTERCEPT(vkBeginCommandBuffer);
 
@@ -1155,22 +1294,24 @@ if (strcmp(pName, #F) == 0)          \
     {
         if (!loadVulkanLibrary())
         {
-            SL_LOG_ERROR("Failed to load Vulkan library");
+            SL_LOG_ERROR( "Failed to load Vulkan library");
             return nullptr;
         }
 
         // this can be called before vkCreateInstance, so we may not have the pointer table set up yet
-        PFN_vkGetInstanceProcAddr trampoline = s_idt.GetInstanceProcAddr;
-        if (!trampoline)
+        if (!s_idt.GetInstanceProcAddr)
         {
-            trampoline = (PFN_vkGetInstanceProcAddr)GetProcAddress(s_module, "vkGetInstanceProcAddr");
+            s_idt.GetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)GetProcAddress(s_module, "vkGetInstanceProcAddr");
         }
     	
         // Redirect only the hooks we need
+        SL_INTERCEPT(vkGetInstanceProcAddr);
         SL_INTERCEPT(vkGetDeviceProcAddr);
         SL_INTERCEPT(vkCreateInstance);
+        SL_INTERCEPT(vkDestroyInstance);
         SL_INTERCEPT(vkCreateDevice);
-        SL_INTERCEPT(vkGetDeviceProcAddr);
+        SL_INTERCEPT(vkDestroyDevice);
+        SL_INTERCEPT(vkEnumeratePhysicalDevices);
 
         SL_INTERCEPT(vkQueuePresentKHR);
         SL_INTERCEPT(vkCreateImage);
@@ -1178,11 +1319,12 @@ if (strcmp(pName, #F) == 0)          \
         SL_INTERCEPT(vkCmdBindPipeline);
         SL_INTERCEPT(vkCmdBindDescriptorSets);
         SL_INTERCEPT(vkCreateSwapchainKHR);
+        SL_INTERCEPT(vkDestroySwapchainKHR);
         SL_INTERCEPT(vkGetSwapchainImagesKHR);
         SL_INTERCEPT(vkAcquireNextImageKHR);
         SL_INTERCEPT(vkBeginCommandBuffer);
 
-        return trampoline(instance, pName);
+        return s_idt.GetInstanceProcAddr(instance, pName);
     }
 
 } // extern "C"

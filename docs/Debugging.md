@@ -3,10 +3,6 @@
 > This document applies to non-production, development builds only.  JSON configuration is disabled in production builds.
 > Additionally, you will need to turn off any checks for signed libraries when loading Streamline libraries in order to be able to load the non-production libraries.
 
-## Symbols
-
-Symbols matching the production DLLs in `bin/x64` root are provided in `symbols/`, and can be used for basic debugging with production, signed, DLLs.
-
 ## JSON Config File(s)
 
 ### Location of the JSON
@@ -44,6 +40,29 @@ Place the `sl.interposer.json` file (located in `./scripts/`) in the game's work
 
 When the game starts, if the flag is set to off, interposing will be completely disabled. This can be used to check for added CPU overhead in games.
 
+## How to force use of proxies
+
+Place the `sl.interposer.json` file (located in `./scripts/`) in the game's working directory. Edit the following line(s):
+
+```json
+{
+	"forceProxies": true
+}
+```
+
+> NOTE:
+> This effectively forces `slGetNativeInterface` to return proxies all the time. Useful for debugging and redirecting/changing behavior by intercepting all APIs for command queues, lists, devices etc.
+## How to track engine D3D12 allocations
+
+Place the `sl.interposer.json` file (located in `./scripts/`) in the game's working directory. Edit the following line(s):
+
+```json
+{
+	"trackEngineAllocations": true
+}
+```
+> NOTE:
+> This only works for D3D12 at the moment.
 ## How to override plugin location
 
 Place the `sl.interposer.json` file (located in `./scripts/`) in the game's working directory. Edit the following line(s):
@@ -123,3 +142,19 @@ Place the `sl.common.json` file (located in `./scripts/`) in the game's working 
 ```
 
 Note that `"key"` lines specify the *decimal* number of the Windows Virtual Key Code (`VK_*`) for the desired key.
+
+## How to override DLSS-G settings
+
+Place the `sl.dlss_g.json` file (located in `./scripts/`) in the game's working directory. Edit the following line(s):
+
+```json
+{
+	"_comment_compute" : "use compute queue or not, if game crashes set this back to false since some drivers might be buggy",
+	"useCompute": true,
+	"_comment_frames" : "optimal defaults - 1 @4K, 2 @1440p, 3 @1080p",
+	"numFramesToGenerate":  1,
+	"_comment_mode" : "possible modes cur, prev, auto - async flush current or previous frame or decide automatically",
+	"mode" : "auto",
+	"showDebugText" : true
+}
+```

@@ -1,0 +1,18 @@
+#version 450
+
+layout (local_size_x=16,local_size_y=16,local_size_z=1) in;
+
+layout(push_constant) uniform PushConsts {
+   ivec4 offsetSize;
+   vec4 value;
+} pushConsts;
+
+layout (set = 0, binding = 0) uniform writeonly image2D result;
+
+void main()
+{
+	if (gl_GlobalInvocationID.x < pushConsts.offsetSize.z &&
+	    gl_GlobalInvocationID.y < pushConsts.offsetSize.w) {
+	    imageStore(result, ivec2(gl_GlobalInvocationID.xy) + pushConsts.offsetSize.xy, pushConsts.value);
+	}
+}

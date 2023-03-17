@@ -28,6 +28,8 @@
 #include <atomic>
 #include <map>
 
+#include "source/core/sl.exception/exception.h"
+
 using namespace std::chrono_literals;
 
 namespace sl
@@ -47,14 +49,21 @@ struct ThreadContext
 
     ~ThreadContext()
     {
-        for (auto &t : threads)
+        clear();
+    }
+
+    void clear()
+    {
+        for (auto& t : threads)
         {
             delete t;
         }
-        for (auto &t : threadMap)
+        for (auto& t : threadMap)
         {
             delete t.second;
         }
+        threads.clear();
+        threadMap.clear();
     }
 
     T &getContext()
@@ -116,8 +125,10 @@ class WorkerThread
     std::condition_variable m_cvf;
     std::atomic<bool> m_quit = false;
     std::atomic<bool> m_flush = false;
+    size_t m_jobCount = 0;
     std::thread m_thread;
     std::vector<std::function<void(void)>> m_work{};
+    std::wstring m_name;
 
     void workerFunction()
     {
@@ -135,17 +146,23 @@ class WorkerThread
             {
                 auto func = m_work.front();
                 lock.unlock();
+                // NOTE: No need to wrap this in the exception handler
+                // since all internal workers are already executing within one.
                 func();
                 lock.lock();
                 m_work.erase(m_work.begin());
+                m_jobCount--;
             }
         }
     }
 
 public:
 
+    WorkerThread(const WorkerThread&) = delete;
+
     WorkerThread(const wchar_t* name, int priority)
     { 
+        m_name = name;
         m_thread = std::thread(&WorkerThread::workerFunction, this);
         if (!SetThreadPriority(m_thread.native_handle(), priority))
         {
@@ -161,18 +178,30 @@ public:
         m_thread.join();
     }
 
-    void flush()
+    std::cv_status flush(uint32_t timeout = 500)
     {
+        std::cv_status res = std::cv_status::no_timeout;
         if (!m_flush.exchange(true))
         {
             std::unique_lock<std::mutex> lock(m_mtx);
             if (!m_work.empty())
             {
                 // Wait and free the lock
-                m_cvf.wait(lock);
+                res = m_cvf.wait_for(lock, std::chrono::milliseconds(timeout));
+                if (res == std::cv_status::timeout)
+                {
+                    SL_LOG_WARN("Worker thread '%S' timed out", m_name.c_str());
+                }
             }
             m_flush = false;
         }
+        return res;
+    }
+
+    size_t getJobCount() 
+    { 
+        std::unique_lock<std::mutex> lock(m_mtx);
+        return m_jobCount; 
     }
 
     bool scheduleWork(const std::function<void(void)>& func)
@@ -180,6 +209,7 @@ public:
         std::unique_lock<std::mutex> lock(m_mtx);
         m_work.push_back(func);
         m_cv.notify_one();
+        m_jobCount++;
         return true;
     }
 };

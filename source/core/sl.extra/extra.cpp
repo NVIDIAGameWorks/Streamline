@@ -22,6 +22,8 @@
 
 #include <map>
 #include <string>
+#include <Windows.h>
+#include <tlhelp32.h>
 
 #include "source/core/sl.log/log.h"
 #include "source/core/sl.api/internal.h"
@@ -58,10 +60,10 @@ struct Keyboard : IKeyboard
         auto key = m_keys[name];
         // Only if we have focus, otherwise ignore keys
 #ifdef SL_WINDOWS
-        HWND wnd = GetForegroundWindow();
-        DWORD dwProcessId = 0;
-        GetWindowThreadProcessId(wnd, &dwProcessId);
-        if (GetCurrentProcessId() != dwProcessId) return false;
+        if (!hasFocus())
+        {
+            return false;
+        }
 
         // Table of currently pressed keys with all possible combinations of modifier keys
         // indexed by the virtual key itself and the current state of each modifier key, using
@@ -92,6 +94,39 @@ struct Keyboard : IKeyboard
         return m_keys[name];
     }
 
+    virtual bool hasFocus() override final
+    {
+#ifdef SL_WINDOWS
+        HWND wnd = GetForegroundWindow();
+        DWORD pidWindow = 0;
+        GetWindowThreadProcessId(wnd, &pidWindow);
+        auto pidCurrent = GetCurrentProcessId();
+        if (pidCurrent != pidWindow)
+        {
+            // Check if parent process own the foreground window
+            if (!m_processEntry.dwSize)
+            {
+                HANDLE h = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+                m_processEntry.dwSize = sizeof(PROCESSENTRY32);
+                if (Process32First(h, &m_processEntry))
+                {
+                    do
+                    {
+                        if (m_processEntry.th32ProcessID == pidCurrent)
+                        {
+                            break;
+                        }
+                    } while (Process32Next(h, &m_processEntry));
+                }
+                CloseHandle(h);
+            }
+            return m_processEntry.th32ParentProcessID == pidWindow;
+        }
+#endif
+        return true;
+    }
+
+    PROCESSENTRY32 m_processEntry{};
     std::map<std::string, VirtKey> m_keys;
 };
 

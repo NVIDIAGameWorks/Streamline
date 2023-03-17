@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include <d3d11_1.h>
+#include <d3d11_4.h>
 #include <future>
 
 #include "source/core/sl.thread/thread.h"
@@ -81,20 +81,23 @@ class D3D11 : public Generic
     using MapSectionPerf = std::map<std::string, PerfData>;
     MapSectionPerf m_sectionPerfMap[MAX_NUM_NODES] = {};
 
-    ID3D11Device         *m_device     = nullptr;
+    ID3D11Device *m_device = nullptr;
+    ID3D11Device5* m_device5 = nullptr;
+
+    chi::Kernel m_copyKernel{};
 
     bool m_dbgSupportRs2RelaxedConversionRules = false;
 
-    ID3D11DeviceContext* m_context = {};
-
+    ID3D11DeviceContext* m_context{};
+    ID3D11DeviceContext* m_immediateContext{};
     UINT m_visibleNodeMask = 0;
 
-    std::map<Resource, std::map<uint32_t,ResourceDriverDataD3D11>> m_resourceData;
+    std::map<ID3D11Resource*, std::map<uint32_t,ResourceDriverDataD3D11>> m_resourceData;
     ID3D11SamplerState* m_samplers[eSamplerCount];
 
     thread::ThreadContext<DispatchDataD3D11> m_dispatchContext;
 
-    virtual void destroyResourceDeferredImpl(const Resource InResource) override final;
+    virtual int destroyResourceDeferredImpl(const Resource InResource) override final;
     virtual std::wstring getDebugName(Resource res) override final;
 
     ComputeStatus transitionResourceImpl(CommandList InCmdList, const ResourceTransition *transisitions, uint32_t count) override final;
@@ -113,13 +116,20 @@ public:
     virtual ComputeStatus shutdown() override final;
     virtual ComputeStatus clearCache() override final;
 
-    virtual ComputeStatus getPlatformType(PlatformType &OutType) override final;
+    virtual ComputeStatus getRenderAPI(RenderAPI &OutType) override final;
+
+    // Don't fail this on d3d11 since it is irrelevant
+    virtual ComputeStatus getNativeResourceState(ResourceState state, uint32_t& nativeState) override final { return ComputeStatus::eOk; };
+    virtual ComputeStatus getResourceState(uint32_t nativeState, ResourceState& state) override final { return ComputeStatus::eOk; };
+    virtual ComputeStatus getResourceState(Resource resource, ResourceState& state) override final { return ComputeStatus::eOk; };
 
     virtual ComputeStatus createKernel(void *InCubinBlob, unsigned int InCubinBlobSize, const char* fileName, const char *EntryPoint, Kernel &OutKernel) override final;
     virtual ComputeStatus destroyKernel(Kernel& kernel) override final;
 
     virtual ComputeStatus createCommandListContext(CommandQueue queue, uint32_t count, ICommandListContext*& ctx, const char friendlyName[]) override final;
     virtual ComputeStatus destroyCommandListContext(ICommandListContext* ctx) override final;
+
+    virtual ComputeStatus createFence(FenceFlags flags, uint64_t initialValue, Fence& outFence, const char friendlyName[])  override final;
 
     virtual ComputeStatus createCommandQueue(CommandQueueType type, CommandQueue& queue, const char friendlyName[], uint32_t index) override final;
     virtual ComputeStatus destroyCommandQueue(CommandQueue& queue) override final;
@@ -142,9 +152,6 @@ public:
 
     virtual ComputeStatus clearView(CommandList cmdList, Resource InResource, const float4 Color, const RECT * pRect, unsigned int NumRects, CLEAR_TYPE &outType) override final;
     
-    virtual ComputeStatus onHostResourceCreated(Resource resource, const ResourceInfo& info) override final { return eComputeStatusOk; }
-    virtual ComputeStatus setResourceState(Resource resource, ResourceState state, uint32_t subresource = kAllSubResources) override final { return eComputeStatusOk; }
-
     virtual ComputeStatus insertGPUBarrierList(CommandList cmdList, const Resource* InResources, unsigned int InResourceCount, BarrierType InBarrierType = eBarrierTypeUAV) override final;
     virtual ComputeStatus insertGPUBarrier(CommandList cmdList, Resource InResource, BarrierType InBarrierType) override final;
     virtual ComputeStatus copyResource(CommandList cmdList, Resource InDstResource, Resource InSrcResource) override final;
@@ -164,6 +171,14 @@ public:
     virtual ComputeStatus endPerfSection(CommandList cmdList, const char *key, float &OutAvgTimeMS, unsigned int node) override final;
     virtual ComputeStatus beginProfiling(CommandList cmdList, UINT metadata, const char* marker) override final;
     virtual ComputeStatus endProfiling(CommandList cmdList) override final;
+
+    virtual ComputeStatus notifyOutOfBandCommandQueue(CommandQueue queue, OutOfBandCommandQueueType type) override final;
+    virtual ComputeStatus setAsyncFrameMarker(CommandQueue queue, ReflexMarker marker, uint64_t frameId) override final;
+
+    virtual ComputeStatus prepareTranslatedResources(CommandList cmdList, const std::vector<std::pair<chi::TranslatedResource, chi::ResourceDescription>>& resourceList) override final;
+    virtual ComputeStatus createSharedHandle(Resource res, Handle& handle)  override final;
+    virtual ComputeStatus destroySharedHandle(Handle& handle)  override final;
+    virtual ComputeStatus getResourceFromSharedHandle(ResourceType type, Handle handle, Resource& res)  override final;
 };
 
 }

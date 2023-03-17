@@ -30,6 +30,8 @@ using json = nlohmann::json;
 
 namespace sl
 {
+using Feature = uint32_t;
+
 namespace interposer
 {
 
@@ -66,11 +68,31 @@ struct ExportedFunction
 
 using ExportedFunctionList = std::vector<ExportedFunction>;
 
+struct InterposerConfig
+{
+    bool enableInterposer = true;
+    bool loadAllFeatures = false;
+    bool showConsole = false;
+    bool vkValidation = false;
+    bool useDXGIProxy = true; // Avoids DXGI factory v-table injection if set to true
+    bool waitForDebugger = false;
+    bool forceProxies = false;
+    bool forceNonNVDA = false;
+    bool trackEngineAllocations = false;
+    float logMessageDelayMs = 5000.0f;
+    uint32_t logLevel = 2;
+    std::string logPath{};
+    std::string pathToPlugins{};
+    std::vector<Feature> loadSpecificFeatures{};
+};
+
 struct IHook
 {
+    virtual void setUseDXGIProxy(bool value) = 0;
     virtual void setEnabled(bool value) = 0;
     virtual bool isEnabled() const = 0;
-    virtual const json& getConfig() const = 0;
+    virtual const InterposerConfig& getConfig() const = 0;
+    virtual const std::wstring& getConfigPath() const = 0;
     virtual bool enumerateModuleExports(const wchar_t* systemModule, ExportedFunctionList& exportedFunctions) = 0;
     virtual bool registerHookForClassInstance(IUnknown* instance, uint32_t virtualTableOffset, ExportedFunction& f) = 0;
     virtual bool restoreOriginalCode(ExportedFunction& f) = 0;

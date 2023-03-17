@@ -43,6 +43,7 @@
 #ifdef SL_WINDOWS
 #include <KnownFolders.h>
 #include <ShlObj.h>
+EXTERN_C IMAGE_DOS_HEADER __ImageBase; // MS linker feature
 #else
 #include <linux/limits.h>
 #endif
@@ -86,11 +87,11 @@ inline FILE* open(const wchar_t* path, const wchar_t* mode)
     {
         if (errno != ENOENT)
         {
-            SL_LOG_ERROR("Unable to open file %S - error = %d", path, errno);
+            SL_LOG_ERROR( "Unable to open file %S - error = %d", path, errno);
         }
         else
         {
-            SL_LOG_ERROR("File '%S' does not exist", path);
+            SL_LOG_ERROR( "File '%S' does not exist", path);
         }
     }
     return file;
@@ -106,6 +107,12 @@ inline void close(FILE* file)
     fclose(file);
 }
 
+//! Attempt to read data of specified size from file.
+//! Returns number of bytes read.
+//! 
+//! IMPORTANT: strings (char*/wchar_t*) won't be null-terminated unless the file contents
+//! contain it and chunkSize includes it.  Make sure to null-terminate strings where
+//! required.
 inline size_t readChunk(FILE* file, void* chunk, size_t chunkSize)
 {
     return fread(chunk, 1, chunkSize, file);
@@ -164,10 +171,10 @@ inline std::vector<uint8_t> read(const wchar_t* fname)
     return ret_buffer;
 }
 
-inline const char* getTmpFileName()
+inline const wchar_t* getTmpPath()
 {
-    static std::string g_result;
-    g_result = fs::temp_directory_path().string();
+    static std::wstring g_result;
+    g_result = fs::temp_directory_path().wstring();
     return g_result.c_str();
 }
 
@@ -233,7 +240,7 @@ inline bool remove(const wchar_t* path)
     int result = ::SHFileOperationW(&fileOperation);
     if (result != 0)
     {
-        SL_LOG_ERROR("Failed to delete file '%S' (error code: %d)", path, result);
+        SL_LOG_ERROR( "Failed to delete file '%S' (error code: %d)", path, result);
     }
     else
     {
@@ -252,7 +259,7 @@ inline bool move(const wchar_t* from, const wchar_t* to)
 #if SL_WINDOWS
     if (!MoveFileW(from, to))
     {
-        SL_LOG_ERROR("File move failed: '%S' -> '%S' (error code %" PRIu32 ")", from, to, GetLastError());
+        SL_LOG_ERROR( "File move failed: '%S' -> '%S' (error code %" PRIu32 ")", from, to, GetLastError());
         return false;
     }
     return true;
@@ -272,10 +279,23 @@ inline bool createDirectoryRecursively(const wchar_t* path)
     fs::create_directories(path, ec);
     if (ec)
     {
-        SL_LOG_ERROR("createDirectoryRecursively failed with %s", ec.message().c_str());
+        SL_LOG_ERROR( "createDirectoryRecursively failed with %s", ec.message().c_str());
         return false;
     }
     return true;
+}
+
+inline std::wstring getModulePath()
+{
+    std::wstring res;
+#ifdef SL_WINDOWS
+    wchar_t modulePath[MAX_PATH] = { 0 };
+    GetModuleFileNameW((HINSTANCE)&__ImageBase, modulePath, MAX_PATH);
+    fs::path dllPath(modulePath);
+    dllPath.remove_filename();
+    res = dllPath.c_str();
+#endif
+    return res;
 }
 
 inline std::wstring getExecutablePath()
@@ -291,6 +311,27 @@ inline std::wstring getExecutablePath()
     searchPathW.erase(searchPathW.rfind('\\'));
     return searchPathW + L"\\";
 #endif
+}
+
+inline std::wstring getExecutableName()
+{
+#ifdef SL_LINUX
+    char exePath[PATH_MAX] = {};
+    readlink("/proc/self/exe", exePath, sizeof(exePath));
+    return extra::toWStr(exePath);
+#else
+    WCHAR pathAbsW[MAX_PATH] = {};
+    GetModuleFileNameW(GetModuleHandleA(NULL), pathAbsW, ARRAYSIZE(pathAbsW));
+    std::wstring searchPathW = pathAbsW;
+    searchPathW = searchPathW.substr(searchPathW.rfind('\\') + 1);
+    searchPathW.erase(searchPathW.rfind('.'));
+    return searchPathW;
+#endif
+}
+
+inline bool isRelativePath(const std::wstring& path)
+{
+    return fs::path(path).is_relative();
 }
 
 class scoped_dir_change

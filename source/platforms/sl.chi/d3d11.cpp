@@ -20,9 +20,12 @@
 * SOFTWARE.
 */
 
+#include <d3d11_4.h>
+
 #include "source/core/sl.log/log.h"
 #include "source/platforms/sl.chi/d3d11.h"
 #include "external/nvapi/nvapi.h"
+#include "_artifacts/shaders/copy_cs.h"
 
 namespace sl
 {
@@ -35,9 +38,202 @@ ICompute *getD3D11()
     return &s_d3d11;
 }
 
+struct D3D11CommandListContext : public ICommandListContext
+{
+    ID3D11DeviceContext4* m_cmdCtxImmediate{};
+    std::wstring m_name;
+    uint64_t m_syncValue = 0;
+    Fence m_fence{};
+    ICompute* m_compute{};
+
+    void init(const char* debugName, ID3D11Device* device, ICompute* ci)
+    {
+        std::string tmp = debugName;
+        m_name = extra::utf8ToUtf16(debugName);
+        m_compute = ci;
+
+        ID3D11DeviceContext* cmdCtx;
+        device->GetImmediateContext(&cmdCtx);
+        if (cmdCtx)
+        {
+            cmdCtx->Release();
+            cmdCtx->QueryInterface(&m_cmdCtxImmediate);
+            if (!m_cmdCtxImmediate)
+            {
+                SL_LOG_ERROR( "Failed to obtain ID3D11DeviceContext4");
+            }
+            else
+            {
+                m_compute->createFence(eFenceFlagsShared, m_syncValue, m_fence, "sl.dlssg.d3d11.fence");
+            }
+        }
+    }
+
+    void shutdown()
+    {
+        m_compute->destroyFence(m_fence);
+        SL_SAFE_RELEASE(m_cmdCtxImmediate);
+    }
+
+    RenderAPI getType() { return RenderAPI::eD3D11; }
+
+    void signalGPUFenceAt(uint32_t index)
+    {
+        signalGPUFence(m_fence, ++m_syncValue);
+    }
+
+    void signalGPUFence(Fence fence, uint64_t syncValue)
+    {
+        if (FAILED(m_cmdCtxImmediate->Signal((ID3D11Fence*)fence, syncValue)))
+        {
+            SL_LOG_ERROR( "Failed to signal on the command queue");
+        }
+    }
+
+    WaitStatus waitCPUFence(Fence fence, uint64_t syncValue)
+    {
+        assert(false);
+        SL_LOG_ERROR("Not implemented");
+        return WaitStatus::eError;
+    }
+
+    void waitGPUFence(Fence fence, uint64_t syncValue)
+    {
+        if (FAILED(m_cmdCtxImmediate->Wait((ID3D11Fence*)fence, syncValue)))
+        {
+            SL_LOG_ERROR( "Failed to signal on the command queue");
+        }
+    }
+
+    CommandList getCmdList()
+    {
+        return m_cmdCtxImmediate;
+    }
+
+    CommandQueue getCmdQueue()
+    {
+        return m_cmdCtxImmediate;
+    }
+
+    CommandAllocator getCmdAllocator()
+    {
+        assert(false);
+        SL_LOG_ERROR( "Not implemented");
+        return nullptr;
+    }
+
+    Handle getFenceEvent()
+    {
+        assert(false);
+        SL_LOG_ERROR( "Not implemented");
+        return nullptr;
+    }
+
+    Fence getFence(uint32_t index)
+    {
+        // Only one fence in d3d11 case
+        return m_fence;
+    }
+
+    bool beginCommandList()
+    {
+        assert(false);
+        SL_LOG_ERROR( "Not implemented");
+        return false;
+    }
+
+    bool executeCommandList(const sl::chi::GPUSyncInfo*)
+    {
+        assert(false);
+        SL_LOG_ERROR( "Not implemented");
+        return false;
+    }
+
+    bool isCommandListRecording()
+    {
+        assert(false);
+        SL_LOG_ERROR( "Not implemented");
+        return false;
+    }
+
+    WaitStatus flushAll()
+    {
+        return WaitStatus::eNoTimeout;
+    }
+
+    uint32_t getBufferCount()
+    {
+        assert(false);
+        SL_LOG_ERROR( "Not implemented");
+        return 0;
+    }
+
+    uint32_t getCurrentCommandListIndex()
+    {
+        return 0;
+    }
+
+    uint64_t getSyncValueAtIndex(uint32_t idx)
+    {
+        return m_syncValue;
+    }
+    
+    SyncPoint getNextSyncPoint()
+    {
+        return { m_fence, m_syncValue + 1 };
+    }
+
+    int acquireNextBufferIndex(SwapChain chain, uint32_t& index, sl::chi::Fence* semaphore)
+    {
+        assert(false);
+        SL_LOG_ERROR( "Not implemented");
+        return 0;
+    }
+
+    WaitStatus waitForCommandListToFinish(uint32_t index)
+    {
+        assert(false);
+        SL_LOG_ERROR( "Not implemented");
+        return WaitStatus::eError;
+    }
+
+    bool didCommandListFinish(uint32_t index)
+    {
+        assert(false);
+        SL_LOG_ERROR( "Not implemented");
+        return false;
+    }
+
+    void syncGPU(const GPUSyncInfo* info)
+    {
+        assert(false);
+        SL_LOG_ERROR("Not implemented");
+    }
+
+    void waitOnGPUForTheOtherQueue(const ICommandListContext* other, uint32_t clIndex, uint64_t syncValue)
+    {
+        assert(false);
+        SL_LOG_ERROR( "Not implemented");
+    }
+
+    WaitStatus waitForCommandList(FlushType ft)
+    {
+        assert(false);
+        SL_LOG_ERROR( "Not implemented");
+        return WaitStatus::eError;
+    }
+
+    int present(SwapChain chain, uint32_t sync, uint32_t flags, void* params)
+    {
+        assert(false);
+        SL_LOG_ERROR( "Not implemented");
+        return 0;
+    }
+};
+
 std::wstring D3D11::getDebugName(Resource res)
 {
-    auto unknown = (IUnknown*)res;
+    auto unknown = (IUnknown*)(res->native);
     ID3D11Resource* pageable;
     IDXGIObject* dxgi;
     unknown->QueryInterface(&pageable);
@@ -92,14 +288,22 @@ ComputeStatus D3D11::init(Device InDevice, param::IParameters* params)
     Generic::init(InDevice, params);
 
     m_device = (ID3D11Device*)InDevice;
+    m_device->GetImmediateContext(&m_immediateContext);
+
+    m_device->QueryInterface(&m_device5);
+    if (!m_device5)
+    {
+        SL_LOG_ERROR( "Failed to obtain ID3D11Device5");
+        return ComputeStatus::eError;
+    }
 
     UINT NodeCount = 1;
     m_visibleNodeMask = (1 << NodeCount) - 1;
 
     if (NodeCount > MAX_NUM_NODES)
     {
-        SL_LOG_ERROR(" too many GPU nodes");
-        return eComputeStatusError;
+        SL_LOG_ERROR( " too many GPU nodes");
+        return ComputeStatus::eError;
     }
 
     HRESULT hr = S_OK;
@@ -193,13 +397,19 @@ ComputeStatus D3D11::init(Device InDevice, param::IParameters* params)
         m_device->CreateSamplerState(&sampDesc, &m_samplers[eSamplerAnisoClamp]);
     }
 
+    createKernel(copy_cs, copy_cs_len, "copy.cs", "main", m_copyKernel);
+
     genericPostInit();
 
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::shutdown()
 {
+    m_context = {};
+    SL_SAFE_RELEASE(m_immediateContext);
+    SL_SAFE_RELEASE(m_device5);
+
     for (auto i = 0; i < eSamplerCount; i++)
     {
         SL_SAFE_RELEASE(m_samplers[i]);
@@ -218,7 +428,7 @@ ComputeStatus D3D11::shutdown()
 
     clearCache();
 
-    ComputeStatus Res = eComputeStatusOk;
+    ComputeStatus Res = ComputeStatus::eOk;
     for (auto& k : m_kernels)
     {
         auto kernel = (KernelDataD3D11*)k.second;
@@ -262,20 +472,20 @@ ComputeStatus D3D11::clearCache()
         m_context->ClearState();
     }
 
-    return eComputeStatusOk;
+    return Generic::clearCache();
 }
 
-ComputeStatus D3D11::getPlatformType(PlatformType &OutType)
+ComputeStatus D3D11::getRenderAPI(RenderAPI &OutType)
 {
-    OutType = ePlatformTypeD3D11;
-    return eComputeStatusOk;
+    OutType = RenderAPI::eD3D11;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::createKernel(void *blobData, unsigned int blobSize, const char* fileName, const char *entryPoint, Kernel &kernel)
 {
     if (!blobData || !fileName || !entryPoint)
     {
-        return eComputeStatusInvalidArgument;
+        return ComputeStatus::eInvalidArgument;
     }
 
     size_t hash = 0;
@@ -295,11 +505,11 @@ ComputeStatus D3D11::createKernel(void *blobData, unsigned int blobSize, const c
         hash_combine(hash, ((char*)blobData)[i]);
     }
 
-    ComputeStatus Res = eComputeStatusOk;
+    ComputeStatus Res = ComputeStatus::eOk;
     KernelDataD3D11 *data = {};
     bool missing = false;
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::scoped_lock lock(m_mutexKernel);
         auto it = m_kernels.find(hash);
         missing = it == m_kernels.end();
         if (missing)
@@ -324,23 +534,23 @@ ComputeStatus D3D11::createKernel(void *blobData, unsigned int blobSize, const c
             memcpy(data->kernelBlob.data(), blob, blobSize);
             if (FAILED(m_device->CreateComputeShader(data->kernelBlob.data(), data->kernelBlob.size(), nullptr, &data->shader)))
             {
-                SL_LOG_ERROR("Failed to create shader %s:%s", fileName, entryPoint);
-                return eComputeStatusError;
+                SL_LOG_ERROR( "Failed to create shader %s:%s", fileName, entryPoint);
+                return ComputeStatus::eError;
             }
             SL_LOG_VERBOSE("Creating DXBC kernel %s:%s hash %llu", fileName, entryPoint, hash);
         }
         else
         {
-            SL_LOG_ERROR("Unsupported kernel blob");
-            return eComputeStatusInvalidArgument;
+            SL_LOG_ERROR( "Unsupported kernel blob");
+            return ComputeStatus::eInvalidArgument;
         }
     }
     else
     {
         if (data->entryPoint != entryPoint || data->name != fileName)
         {
-            SL_LOG_ERROR("Shader %s:%s has overlapping hash with shader %s:%s", data->name.c_str(), data->entryPoint.c_str(), fileName, entryPoint);
-            return eComputeStatusError;
+            SL_LOG_ERROR( "Shader %s:%s has overlapping hash with shader %s:%s", data->name.c_str(), data->entryPoint.c_str(), fileName, entryPoint);
+            return ComputeStatus::eError;
         }
         SL_LOG_WARN("Kernel %s:%s with hash 0x%llx already created!", fileName, entryPoint, hash);
     }
@@ -350,24 +560,24 @@ ComputeStatus D3D11::createKernel(void *blobData, unsigned int blobSize, const c
 
 ComputeStatus D3D11::destroyKernel(Kernel& InKernel)
 {
-    if (!InKernel) return eComputeStatusOk; // fine to destroy null kernels
-    std::lock_guard<std::mutex> lock(m_mutex);
+    if (!InKernel) return ComputeStatus::eOk; // fine to destroy null kernels
+    std::scoped_lock lock(m_mutexKernel);
     auto it = m_kernels.find(InKernel);
     if (it == m_kernels.end())
     {
-        return eComputeStatusInvalidCall;
+        return ComputeStatus::eInvalidCall;
     }
     KernelDataD3D11* data = (KernelDataD3D11*)(it->second);
     SL_LOG_VERBOSE("Destroying kernel %s", data->name.c_str());
     delete it->second;
     m_kernels.erase(it);
     InKernel = {};
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::pushState(CommandList cmdList)
 {
-    if (!cmdList) return eComputeStatusOk;
+    if (!cmdList) return ComputeStatus::eOk;
 
     auto& threadD3D11 = *(chi::D3D11ThreadContext*)m_getThreadContext();
     auto context = (ID3D11DeviceContext*)cmdList;
@@ -388,12 +598,12 @@ ComputeStatus D3D11::pushState(CommandList cmdList)
     context->CSSetUnorderedAccessViews(0, chi::kMaxD3D11Items, nullUAVs, nullptr);
     context->CSSetShaderResources(0, chi::kMaxD3D11Items, nullSRVs);
 
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::popState(CommandList cmdList)
 {
-    if (!cmdList) return eComputeStatusOk;
+    if (!cmdList) return ComputeStatus::eOk;
 
     auto& threadD3D11 = *(chi::D3D11ThreadContext*)m_getThreadContext();
     auto context = (ID3D11DeviceContext*)cmdList;
@@ -420,23 +630,32 @@ ComputeStatus D3D11::popState(CommandList cmdList)
 
     threadD3D11 = {};
 
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::createCommandListContext(CommandQueue queue, uint32_t count, ICommandListContext*& ctx, const char friendlyName[])
 {
-    ctx = {};
-    return eComputeStatusNoImplementation;
+    auto ctx1 = new D3D11CommandListContext();
+    ctx1->init(friendlyName, m_device, this);
+    ctx = ctx1;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::destroyCommandListContext(ICommandListContext* ctx)
 {
-    return eComputeStatusNoImplementation;
+    if (ctx)
+    {
+        ((D3D11CommandListContext*)ctx)->shutdown();
+        delete ctx;
+    }
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::createCommandQueue(CommandQueueType type, CommandQueue& queue, const char friendlyName[], uint32_t index)
 {    
-    return eComputeStatusNoImplementation;
+    queue = m_immediateContext;
+    m_immediateContext->AddRef();
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::destroyCommandQueue(CommandQueue& queue)
@@ -446,23 +665,44 @@ ComputeStatus D3D11::destroyCommandQueue(CommandQueue& queue)
         auto tmp = (IUnknown*)queue;
         SL_SAFE_RELEASE(tmp);
     }    
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
+}
+
+ComputeStatus D3D11::createFence(FenceFlags flags, uint64_t initialValue, Fence& outFence, const char friendlyName[])
+{
+    ID3D11Fence* fence{};
+    D3D11_FENCE_FLAG d3d11Flags = D3D11_FENCE_FLAG_NONE;
+    if (flags & eFenceFlagsShared)
+    {
+        d3d11Flags |= D3D11_FENCE_FLAG_SHARED;
+    }
+    if (FAILED(m_device5->CreateFence(initialValue, d3d11Flags, IID_PPV_ARGS(&fence))))
+    {
+        SL_LOG_ERROR( "Failed to create ID3D11Fence");
+    }
+    else
+    {
+        outFence = fence;
+        sl::Resource r(ResourceType::eFence, fence);
+        setDebugName(&r, friendlyName);
+    }
+    return fence ? ComputeStatus::eOk : ComputeStatus::eError;
 }
 
 ComputeStatus D3D11::setFullscreenState(SwapChain chain, bool fullscreen, Output out)
 {
-    if (!chain) return eComputeStatusInvalidArgument;
+    if (!chain) return ComputeStatus::eInvalidArgument;
     IDXGISwapChain* swapChain = (IDXGISwapChain*)chain;
     if (FAILED(swapChain->SetFullscreenState(fullscreen, (IDXGIOutput*)out)))
     {
-        SL_LOG_ERROR("Failed to set fullscreen state");
+        SL_LOG_ERROR( "Failed to set fullscreen state");
     }
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::getRefreshRate(SwapChain chain, float& refreshRate)
 {
-    if (!chain) return eComputeStatusInvalidArgument;
+    if (!chain) return ComputeStatus::eInvalidArgument;
     IDXGISwapChain* swapChain = (IDXGISwapChain*)chain;
     IDXGIOutput* dxgiOutput;
     HRESULT hr = swapChain->GetContainingOutput(&dxgiOutput);
@@ -509,7 +749,7 @@ ComputeStatus D3D11::getRefreshRate(SwapChain chain, float& refreshRate)
                                     UINT denominator = p.targetInfo.refreshRate.Denominator;
                                     double refrate = (double)numerator / (double)denominator;
                                     refreshRate = (float)refrate;
-                                    return eComputeStatusOk;
+                                    return ComputeStatus::eOk;
                                 }
                             }
                         }
@@ -518,8 +758,8 @@ ComputeStatus D3D11::getRefreshRate(SwapChain chain, float& refreshRate)
             }
         }
     }
-    SL_LOG_ERROR("Failed to retreive refresh rate from swapchain 0x%llx", chain);
-    return eComputeStatusError;
+    SL_LOG_ERROR( "Failed to retreive refresh rate from swapchain 0x%llx", chain);
+    return ComputeStatus::eError;
 }
 
 ComputeStatus D3D11::getSwapChainBuffer(SwapChain chain, uint32_t index, Resource& buffer)
@@ -527,57 +767,59 @@ ComputeStatus D3D11::getSwapChainBuffer(SwapChain chain, uint32_t index, Resourc
     ID3D11Resource* tmp;
     if (FAILED(((IDXGISwapChain*)chain)->GetBuffer(index, IID_PPV_ARGS(&tmp))))
     {
-        SL_LOG_ERROR("Failed to get buffer from swapchain");
-        return eComputeStatusError;
+        SL_LOG_ERROR( "Failed to get buffer from swapchain");
+        return ComputeStatus::eError;
     }
-    buffer = tmp;
-    return eComputeStatusOk;
+    buffer = new sl::Resource(ResourceType::eTex2d, tmp);
+    // We free these buffers but never allocate them so account for the VRAM
+    manageVRAM(buffer, VRAMOperation::eAlloc);
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::bindSharedState(CommandList cmdList, UINT node)
 {
-    if (!cmdList) return eComputeStatusInvalidArgument;
+    if (!cmdList) return ComputeStatus::eInvalidArgument;
 
     m_context = (ID3D11DeviceContext*)cmdList;
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::bindKernel(const Kernel kernelToBind)
 {
-    if (!m_context) return eComputeStatusInvalidArgument;
+    if (!m_context) return ComputeStatus::eInvalidArgument;
 
     auto& ctx = m_dispatchContext.getContext();
     
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::scoped_lock lock(m_mutexKernel);
         auto it = m_kernels.find(kernelToBind);
         if (it == m_kernels.end())
         {
-            SL_LOG_ERROR("Trying to bind kernel which has not been created");
-            return eComputeStatusInvalidCall;
+            SL_LOG_ERROR( "Trying to bind kernel which has not been created");
+            return ComputeStatus::eInvalidCall;
         }
         ctx.kernel = (KernelDataD3D11*)(*it).second;
     }
 
     m_context->CSSetShader(ctx.kernel->shader, nullptr, 0);
 
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::bindSampler(uint32_t pos, uint32_t base, Sampler sampler)
 {
     auto& ctx = m_dispatchContext.getContext();
-    if (!m_context || !ctx.kernel || base >= 8) return eComputeStatusInvalidArgument;
+    if (!m_context || !ctx.kernel || base >= 8) return ComputeStatus::eInvalidArgument;
 
     m_context->CSSetSamplers(base, 1, &m_samplers[sampler]);
 
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::bindConsts(uint32_t pos, uint32_t base, void *data, size_t dataSize, uint32_t instances)
 {
     auto& ctx = m_dispatchContext.getContext();
-    if (!m_context || !ctx.kernel) return eComputeStatusInvalidArgument;
+    if (!m_context || !ctx.kernel) return ComputeStatus::eInvalidArgument;
 
     auto it = ctx.kernel->constBuffers.find(base);
     if (it == ctx.kernel->constBuffers.end())
@@ -588,32 +830,37 @@ ComputeStatus D3D11::bindConsts(uint32_t pos, uint32_t base, void *data, size_t 
         desc.height = 1;
         desc.heapType = eHeapTypeUpload;
         desc.state = ResourceState::eConstantBuffer;
-        createBuffer(desc, buffer, "const buffer");
-        ctx.kernel->constBuffers[base] = (ID3D11Buffer*)buffer;
+        createBuffer(desc, buffer, "sl.d3d11.const_buffer");
+        ctx.kernel->constBuffers[base] = (ID3D11Buffer*)(buffer->native);
     }
     auto buffer = ctx.kernel->constBuffers[base];
     D3D11_MAPPED_SUBRESOURCE bufferData = {};
     m_context->Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &bufferData);
     if (!bufferData.pData)
     {
-        SL_LOG_ERROR("Failed to map constant buffer");
-        return eComputeStatusError;
+        SL_LOG_ERROR( "Failed to map constant buffer");
+        return ComputeStatus::eError;
     }
     memcpy(bufferData.pData, data, dataSize);
     m_context->Unmap(buffer, 0);
 
     m_context->CSSetConstantBuffers(base, 1, &buffer);
 
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::bindTexture(uint32_t pos, uint32_t base, Resource resource, uint32_t mipOffset, uint32_t mipLevels)
 {
     auto& ctx = m_dispatchContext.getContext();
-    if (!m_context || !ctx.kernel) return eComputeStatusInvalidArgument;
+    if (!m_context || !ctx.kernel) return ComputeStatus::eInvalidArgument;
 
-    ResourceDriverDataD3D11 data;
-    auto res = getTextureDriverData(resource, data, mipOffset, mipLevels);
+    // Allow null resource
+    auto res = ComputeStatus::eOk;
+    ResourceDriverDataD3D11 data{};
+    if (resource)
+    {
+        res = getTextureDriverData(resource, data, mipOffset, mipLevels);
+    }
 
     m_context->CSSetShaderResources(base, 1, &data.SRV);
 
@@ -623,10 +870,15 @@ ComputeStatus D3D11::bindTexture(uint32_t pos, uint32_t base, Resource resource,
 ComputeStatus D3D11::bindRWTexture(uint32_t pos, uint32_t base, Resource resource, uint32_t mipOffset)
 {
     auto& ctx = m_dispatchContext.getContext();
-    if (!m_context || !ctx.kernel) return eComputeStatusInvalidArgument;
+    if (!m_context || !ctx.kernel) return ComputeStatus::eInvalidArgument;
 
-    ResourceDriverDataD3D11 data;
-    auto res = getSurfaceDriverData(resource, data, mipOffset);
+    // Allow null resource
+    auto res = ComputeStatus::eOk;
+    ResourceDriverDataD3D11 data{};
+    if (resource)
+    {
+        res = getSurfaceDriverData(resource, data, mipOffset);
+    }
 
     m_context->CSSetUnorderedAccessViews(base, 1, &data.UAV, nullptr);
 
@@ -643,19 +895,20 @@ ComputeStatus D3D11::bindRawBuffer(uint32_t pos, uint32_t base, Resource resourc
 ComputeStatus D3D11::dispatch(unsigned int blocksX, unsigned int blocksY, unsigned int blocksZ)
 {
     auto& ctx = m_dispatchContext.getContext();
-    if (!m_context || !ctx.kernel) return eComputeStatusInvalidArgument;
+    if (!m_context || !ctx.kernel) return ComputeStatus::eInvalidArgument;
      
     m_context->Dispatch(blocksX, blocksY, blocksZ);
 
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::getTextureDriverData(Resource res, ResourceDriverDataD3D11&data, uint32_t mipOffset, uint32_t mipLevels, Sampler sampler)
 {
-    ID3D11Resource *resource = (ID3D11Resource*)res;
-    if (!resource) return eComputeStatusInvalidArgument;
+    if (!res || !res->native) return ComputeStatus::eInvalidArgument;
 
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::scoped_lock lock(m_mutexResource);
+
+    ID3D11Resource* resource = (ID3D11Resource*)(res->native);
 
     uint32_t hash = (mipOffset << 16) | mipLevels;
 
@@ -666,18 +919,16 @@ ComputeStatus D3D11::getTextureDriverData(Resource res, ResourceDriverDataD3D11&
         ResourceDescription Desc;
         getResourceDescription(res, Desc);
 
-        ID3D11Resource* Resource = (ID3D11Resource*)res;
-
         D3D11_SHADER_RESOURCE_VIEW_DESC SRVDesc;
         SRVDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
         SRVDesc.Format = getCorrectFormat((DXGI_FORMAT)Desc.nativeFormat);
         SRVDesc.Texture2D.MipLevels = Desc.mips;
         SRVDesc.Texture2D.MostDetailedMip = 0;
-        auto status = m_device->CreateShaderResourceView(Resource, &SRVDesc, &data.SRV);
+        auto status = m_device->CreateShaderResourceView(resource, &SRVDesc, &data.SRV);
         if (FAILED(status))
         { 
-            SL_LOG_ERROR("CreateShaderResourceView failed - status %d", status);
-            return eComputeStatusError;
+            SL_LOG_ERROR( "CreateShaderResourceView failed - status %d", status);
+            return ComputeStatus::eError;
         }
         constexpr char SRVFriendlyName[] = "sl.compute.textureCachedSRV";
         data.SRV->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(SRVFriendlyName), SRVFriendlyName); // Narrow character type debug object name
@@ -691,15 +942,16 @@ ComputeStatus D3D11::getTextureDriverData(Resource res, ResourceDriverDataD3D11&
         data = (*it).second[hash];
     }
 
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::getSurfaceDriverData(Resource res, ResourceDriverDataD3D11&data, uint32_t mipOffset)
 {
-    ID3D11Resource *resource = (ID3D11Resource*)res;
-    if (!resource) return eComputeStatusInvalidArgument;
+    if (!res || !res->native) return ComputeStatus::eInvalidArgument;
 
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::scoped_lock lock(m_mutexResource);
+
+    ID3D11Resource* resource = (ID3D11Resource*)(res->native);
 
     uint32_t hash = mipOffset << 16;
 
@@ -709,8 +961,6 @@ ComputeStatus D3D11::getSurfaceDriverData(Resource res, ResourceDriverDataD3D11&
         auto node = 0; // FIX THIS
         ResourceDescription Desc;
         getResourceDescription(res, Desc);
-
-        ID3D11Resource* Resource = (ID3D11Resource*)res;
 
         D3D11_UNORDERED_ACCESS_VIEW_DESC UAVDesc;
         if (Desc.flags & (ResourceFlags::eRawOrStructuredBuffer | ResourceFlags::eConstantBuffer))
@@ -725,7 +975,7 @@ ComputeStatus D3D11::getSurfaceDriverData(Resource res, ResourceDriverDataD3D11&
         {
             if (!isSupportedFormat(getCorrectFormat((DXGI_FORMAT)Desc.nativeFormat), 0, D3D11_FORMAT_SUPPORT2_UAV_TYPED_LOAD | D3D11_FORMAT_SUPPORT2_UAV_TYPED_STORE))
             {
-                return eComputeStatusError;
+                return ComputeStatus::eError;
             }
 
             UAVDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
@@ -733,11 +983,11 @@ ComputeStatus D3D11::getSurfaceDriverData(Resource res, ResourceDriverDataD3D11&
             UAVDesc.Format = getCorrectFormat((DXGI_FORMAT)Desc.nativeFormat);
         }
 
-        auto status = m_device->CreateUnorderedAccessView(Resource, &UAVDesc, &data.UAV);
+        auto status = m_device->CreateUnorderedAccessView(resource, &UAVDesc, &data.UAV);
         if (FAILED(status))
         { 
-            SL_LOG_ERROR("CreateShaderResourceView failed - status %d", status);
-            return eComputeStatusError;
+            SL_LOG_ERROR( "CreateShaderResourceView failed - status %d", status);
+            return ComputeStatus::eError;
         }
 
         constexpr char UAVFriendlyName[] = "sl.compute.surfaceCachedUAV";
@@ -752,7 +1002,7 @@ ComputeStatus D3D11::getSurfaceDriverData(Resource res, ResourceDriverDataD3D11&
         data = (*it).second[hash];
     }
 
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 bool D3D11::isSupportedFormat(DXGI_FORMAT format, int flag1, int flag2)
@@ -774,7 +1024,7 @@ bool D3D11::isSupportedFormat(DXGI_FORMAT format, int flag1, int flag2)
             return true;
         }
     }
-    SL_LOG_ERROR("Format %s is unsupported - hres %lu flags %d %d", getDXGIFormatStr(format), hr, flag1, flag2);
+    SL_LOG_ERROR( "Format %s is unsupported - hres %lu flags %d %d", getDXGIFormatStr(format), hr, flag1, flag2);
     return false;
 }
 
@@ -782,7 +1032,7 @@ ComputeStatus D3D11::createTexture2DResourceSharedImpl(ResourceDescription &InOu
 {
     ID3D11Texture2D* pResource = nullptr;
 
-    D3D11_TEXTURE2D_DESC desc;
+    D3D11_TEXTURE2D_DESC desc{};
     desc.Width = InOutResourceDesc.width;
     desc.Height = InOutResourceDesc.height;
     desc.MipLevels = InOutResourceDesc.mips;
@@ -795,12 +1045,20 @@ ComputeStatus D3D11::createTexture2DResourceSharedImpl(ResourceDescription &InOu
     {
         NativeFormat native;
         getNativeFormat(InOutResourceDesc.format, native);
-        desc.Format = (DXGI_FORMAT)native; 
+        desc.Format = getCorrectFormat((DXGI_FORMAT)native);
     }
     desc.SampleDesc.Count = 1;
     desc.SampleDesc.Quality = 0;
 
-    desc.MiscFlags = 0;
+    if (InOutResourceDesc.flags & ResourceFlags::eSharedResource)
+    {
+        desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED;
+        // Special case, some depth buffers cannot be shared as NT handle so change format
+        if (InOutResourceDesc.format == eFormatD24S8 || InOutResourceDesc.format == eFormatD32S32)
+        {
+            desc.Format = DXGI_FORMAT_R32_FLOAT;
+        }
+    }
 
     switch (InOutResourceDesc.heapType)
     {
@@ -808,8 +1066,7 @@ ComputeStatus D3D11::createTexture2DResourceSharedImpl(ResourceDescription &InOu
         case eHeapTypeDefault:
             desc.Usage = D3D11_USAGE_DEFAULT;
             desc.CPUAccessFlags = 0;
-            desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-            desc.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
+            desc.BindFlags = 0;
             break;
         case eHeapTypeUpload:
             desc.Usage = D3D11_USAGE_STAGING;
@@ -823,10 +1080,39 @@ ComputeStatus D3D11::createTexture2DResourceSharedImpl(ResourceDescription &InOu
             break;
     }
 
+    UINT formatSupport{};
+    m_device->CheckFormatSupport(desc.Format, &formatSupport);
+    if (formatSupport & D3D11_FORMAT_SUPPORT_RENDER_TARGET)
+    {
+        desc.BindFlags |= D3D11_BIND_RENDER_TARGET;
+        InOutResourceDesc.flags |= ResourceFlags::eColorAttachment;
+    }
+    else
+    {
+        InOutResourceDesc.flags &= ~ResourceFlags::eColorAttachment;
+    }
+    if (formatSupport & D3D11_FORMAT_SUPPORT_TYPED_UNORDERED_ACCESS_VIEW)
+    {
+        desc.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
+        InOutResourceDesc.flags |= ResourceFlags::eShaderResourceStorage;
+    }
+    else
+    {
+        InOutResourceDesc.flags &= ~ResourceFlags::eShaderResourceStorage;
+    }
+    if (formatSupport & D3D11_FORMAT_SUPPORT_SHADER_SAMPLE)
+    {
+        desc.BindFlags |= D3D11_BIND_SHADER_RESOURCE;
+    }
+    else
+    {
+        InOutResourceDesc.flags &= ~ResourceFlags::eShaderResource;
+    }
+
     if (m_allocateCallback)
     {
-        ResourceDesc desc = { ResourceType::eResourceTypeTex2d, &desc, 0, nullptr, nullptr };
-        auto result = m_allocateCallback(&desc, m_device);
+        ResourceAllocationDesc rd = { ResourceType::eTex2d, &desc, 0, nullptr };
+        auto result = m_allocateCallback(&rd, m_device);
         pResource = (ID3D11Texture2D*)result.native;
     }
     else
@@ -834,13 +1120,13 @@ ComputeStatus D3D11::createTexture2DResourceSharedImpl(ResourceDescription &InOu
         m_device->CreateTexture2D(&desc, NULL, &pResource);
     }
     
-    OutResource = pResource;
+    OutResource = new sl::Resource(ResourceType::eTex2d, pResource);
     if (!pResource)
     {
-        SL_LOG_ERROR("Failed to create Tex2d");
-        return eComputeStatusError;
+        SL_LOG_ERROR( "Failed to create Tex2d");
+        return ComputeStatus::eError;
     }
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::createBufferResourceImpl(ResourceDescription &InOutResourceDesc, Resource &OutResource, ResourceState InitialState)
@@ -886,7 +1172,7 @@ ComputeStatus D3D11::createBufferResourceImpl(ResourceDescription &InOutResource
 
     if (m_allocateCallback)
     {
-        ResourceDesc desc = { ResourceType::eResourceTypeBuffer, &bufdesc, 0, nullptr };
+        ResourceAllocationDesc desc = { ResourceType::eBuffer, &bufdesc, 0, nullptr };
         auto result = m_allocateCallback(&desc, m_device);
         pResource = (ID3D11Buffer*)result.native;
     }
@@ -895,50 +1181,67 @@ ComputeStatus D3D11::createBufferResourceImpl(ResourceDescription &InOutResource
         m_device->CreateBuffer(&bufdesc, NULL, &pResource);
     }
 
-    OutResource = pResource;
+    OutResource = new sl::Resource(ResourceType::eBuffer, pResource);
     if (!pResource)
     {
-        SL_LOG_ERROR("Failed to create buffer");
-        return eComputeStatusError;
+        SL_LOG_ERROR( "Failed to create buffer");
+        return ComputeStatus::eError;
     }
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::setDebugName(Resource res, const char name[])
 {
-    ID3D11Resource *resource = (ID3D11Resource*)res;
-    resource->SetPrivateData(WKPDID_D3DDebugObjectName, (UINT)strlen(name), name);
-    return eComputeStatusOk;
+#if !(defined SL_PRODUCTION || defined SL_REL_EXT_DEV)
+    auto unknown = (IUnknown*)(res->native);
+    ID3D11DeviceChild* deviceChild{};
+    unknown->QueryInterface(&deviceChild);
+    if (deviceChild)
+    {
+        deviceChild->Release();
+        deviceChild->SetPrivateData(WKPDID_D3DDebugObjectName, (UINT)strlen(name), name);
+    }
+#endif
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::copyHostToDeviceBuffer(CommandList InCmdList, uint64_t InSize, const void *InData, Resource InUploadResource, Resource InTargetResource, unsigned long long InUploadOffset, unsigned long long InDstOffset)
 {
     UINT8* StagingPtr = nullptr;
 
-    ID3D11Resource* Resource = (ID3D11Resource*)InTargetResource;
-    ID3D11Resource* Scratch = (ID3D11Resource*)InUploadResource;
+    ID3D11Resource* Resource = (ID3D11Resource*)(InTargetResource->native);
+    ID3D11Resource* Scratch = (ID3D11Resource*)(InUploadResource->native);
+
+    auto context = ((ID3D11DeviceContext*)InCmdList);
+    if (context->GetType() != D3D11_DEVICE_CONTEXT_IMMEDIATE)
+    {
+        // Deferred Dx11 contexts seem to require dynamic resource for the Map() to work. Changing
+        // the resources to dynamic is an intrusive change that would affect all Dx11 apps - let's
+        // grab the immediate Dx11 context instead.
+        context = m_immediateContext;
+    }
 
     D3D11_MAPPED_SUBRESOURCE sub;
-    HRESULT hr = ((ID3D11DeviceContext*)InCmdList)->Map(Scratch, 0, D3D11_MAP_WRITE, 0, &sub);
+    HRESULT hr = context->Map(Scratch, 0, D3D11_MAP_WRITE, 0, &sub);
     if (hr != S_OK)
     {
-        SL_LOG_ERROR("Failed to map buffer - error %lu", hr);
-        return eComputeStatusError;
+        SL_LOG_ERROR( "Failed to map buffer - error %lu", hr);
+        return ComputeStatus::eError;
     }
 
     char* target = (char*)sub.pData + InUploadOffset;
     memcpy(target, InData, InSize);
-    ((ID3D11DeviceContext*)InCmdList)->Unmap(Scratch, 0);
+    context->Unmap(Scratch, 0);
     D3D11_BOX Box = { (UINT)InUploadOffset, 0, 0, (UINT)InUploadOffset + (UINT)InSize, 1, 1 };
-    ((ID3D11DeviceContext*)InCmdList)->CopySubresourceRegion(Resource, 0, (UINT)InDstOffset, 0, 0, Scratch, 0, &Box);
+    context->CopySubresourceRegion(Resource, 0, (UINT)InDstOffset, 0, 0, Scratch, 0, &Box);
 
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::copyHostToDeviceTexture(CommandList InCmdList, uint64_t InSize, uint64_t RowPitch, const void* InData, Resource InTargetResource, Resource& InUploadResource)
 {
-    ((ID3D11DeviceContext*)InCmdList)->UpdateSubresource((ID3D11Resource*)InTargetResource, 0, nullptr, InData, UINT(RowPitch), UINT(InSize));
-    return eComputeStatusOk;
+    ((ID3D11DeviceContext*)InCmdList)->UpdateSubresource((ID3D11Resource*)(InTargetResource->native), 0, nullptr, InData, UINT(RowPitch), UINT(InSize));
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::clearView(CommandList InCmdList, Resource InResource, const float4 Color, const RECT * pRects, unsigned int NumRects, CLEAR_TYPE &outType)
@@ -951,11 +1254,11 @@ ComputeStatus D3D11::clearView(CommandList InCmdList, Resource InResource, const
     {
         ResourceDriverDataD3D11 data;
         ComputeStatus status = getSurfaceDriverData(InResource, data);
-        if (status == eComputeStatusOk)
+        if (status == ComputeStatus::eOk)
         {
             if (!data.bZBCSupported)
             {
-                return eComputeStatusNotSupported;
+                return ComputeStatus::eNotSupported;
             }
             // dx11 driver may skip the clear (ClearSkip perfstrat) if it decides that this clear is redundant. I didn't yet figure out why
             // it decides that, but calling DiscardView() prior to ClearView() disables this behaviour and works around the bug 200666776
@@ -964,153 +1267,173 @@ ComputeStatus D3D11::clearView(CommandList InCmdList, Resource InResource, const
         }
         return status;
     }
-    return eComputeStatusError;
+    return ComputeStatus::eError;
 }
 
 ComputeStatus D3D11::insertGPUBarrierList(CommandList InCmdList, const Resource* InResources, unsigned int InResourceCount, BarrierType InBarrierType)
 {
     // Nothing to do here in d3d11
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::insertGPUBarrier(CommandList InCmdList, Resource InResource, BarrierType InBarrierType)
 {
     // Nothing to do here in d3d11
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::transitionResourceImpl(CommandList cmdList, const ResourceTransition *transitions, uint32_t count)
 {
     if (!cmdList || !transitions)
     {
-        return eComputeStatusInvalidArgument;
+        return ComputeStatus::eInvalidArgument;
     }
     // Nothing to do here in d3d11
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::copyResource(CommandList cmdList, Resource dstResource, Resource srcResource)
 {
-    if (!cmdList || !dstResource || !srcResource) return eComputeStatusInvalidArgument;
+    if (!cmdList || !dstResource || !srcResource) return ComputeStatus::eInvalidArgument;
     auto context = (ID3D11DeviceContext*)cmdList;
-    context->CopyResource((ID3D11Resource*)dstResource, (ID3D11Resource*)srcResource);
-    return eComputeStatusOk;
+    context->CopyResource((ID3D11Resource*)(dstResource->native), (ID3D11Resource*)(srcResource->native));
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::cloneResource(Resource resource, Resource &clone, const char friendlyName[], ResourceState initialState, unsigned int creationMask, unsigned int visibilityMask)
 {
-    if (!resource) return eComputeStatusInvalidArgument;
+    if (!resource) return ComputeStatus::eInvalidArgument;
 
     ID3D11Resource* res = nullptr;
     HRESULT hr = S_OK;
     ResourceDescription desc;
-    if (getResourceDescription(resource, desc) != eComputeStatusOk)
+    if (getResourceDescription(resource, desc) != ComputeStatus::eOk)
     {
-        return eComputeStatusError;
+        return ComputeStatus::eError;
     }
-    if (desc.flags & (ResourceFlags::eRawOrStructuredBuffer | ResourceFlags::eConstantBuffer))
+    auto type = desc.flags & (ResourceFlags::eRawOrStructuredBuffer | ResourceFlags::eConstantBuffer) ? ResourceType::eBuffer : ResourceType::eTex2d;
+    if (type == ResourceType::eBuffer)
     {
-        auto buffer = (ID3D11Buffer*)resource;
+        auto buffer = (ID3D11Buffer*)resource->native;
         D3D11_BUFFER_DESC desc1;
         buffer->GetDesc(&desc1);
         if (m_allocateCallback)
         {
-            ResourceDesc desc = { ResourceType::eResourceTypeBuffer, &desc1, (uint32_t)initialState, nullptr };
+            ResourceAllocationDesc desc = { ResourceType::eBuffer, &desc1, (uint32_t)initialState, nullptr };
             auto result = m_allocateCallback(&desc, m_device);
             res = (ID3D11Resource*)result.native;
         }
         else
         {
             hr = m_device->CreateBuffer(&desc1, nullptr, &buffer);
+            res = buffer;
         }
-        res = buffer;
     }
     else
     {
-        auto tex2d = (ID3D11Texture2D*)resource;
+        auto tex2d = (ID3D11Texture2D*)resource->native;
         D3D11_TEXTURE2D_DESC desc1;
         tex2d->GetDesc(&desc1);
+
+        UINT formatSupport{};
+        m_device->CheckFormatSupport(desc1.Format, &formatSupport);
+        if (formatSupport & D3D11_FORMAT_SUPPORT_RENDER_TARGET)
+        {
+            desc1.BindFlags |= D3D11_BIND_RENDER_TARGET;
+        }
+        if (formatSupport & D3D11_FORMAT_SUPPORT_TYPED_UNORDERED_ACCESS_VIEW)
+        {
+            desc1.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
+        }
+
         if (m_allocateCallback)
         {
-            ResourceDesc desc = { ResourceType::eResourceTypeTex2d, &desc1, (uint32_t)initialState, nullptr };
+            ResourceAllocationDesc desc = { ResourceType::eTex2d, &desc1, (uint32_t)initialState, nullptr };
             auto result = m_allocateCallback(&desc, m_device);
             res = (ID3D11Resource*)result.native;
         }
         else
         {
             hr = m_device->CreateTexture2D(&desc1, nullptr, &tex2d);
+            res = tex2d;
         }
-        res = tex2d;
     }
     
     if (hr != S_OK || !res)
     {
-        SL_LOG_ERROR("Unable to clone resource");
-        return eComputeStatusError;
+        SL_LOG_ERROR( "Unable to clone resource");
+        return ComputeStatus::eError;
     }
 
-    auto currentSize = getResourceSize(res);
+    clone = new sl::Resource(type, res);
 
-    SL_LOG_VERBOSE("Cloning 0x%llx (%s:%u:%u:%s), m_allocCount=%d, currentSize %.1lf MB, totalSize %.1lf MB", res, friendlyName, desc.width, desc.height, getDXGIFormatStr(desc.format), m_allocCount.load(), (double)currentSize / (1024 * 1024), (double)m_totalAllocatedSize.load() / (1024 * 1024));
+    manageVRAM(clone, VRAMOperation::eAlloc);
 
-    clone = res;
-
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::copyBufferToReadbackBuffer(CommandList InCmdList, Resource InResource, Resource OutResource, unsigned int InBytesToCopy) 
 {
-    ID3D11Resource *InD3dResource = (ID3D11Resource*)InResource;
-    ID3D11Resource *OutD3dResource = (ID3D11Resource*)OutResource;
+    ID3D11Resource *InD3dResource = (ID3D11Resource*)(InResource->native);
+    ID3D11Resource *OutD3dResource = (ID3D11Resource*)(OutResource->native);
     
     ID3D11DeviceContext* DeviceContext = reinterpret_cast<ID3D11DeviceContext*>(InCmdList);
-    ID3D11Resource* ReadbackResource = reinterpret_cast<ID3D11Resource*>(OutResource);
+    ID3D11Resource* ReadbackResource = reinterpret_cast<ID3D11Resource*>(OutResource->native);
 
     D3D11_BOX SrcBox = { 0, 0, 0, InBytesToCopy, 1, 1 };
     DeviceContext->CopySubresourceRegion(ReadbackResource, 0, 0, 0, 0, (ID3D11Resource*)InResource, 0, &SrcBox);
 
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::mapResource(CommandList cmdList, Resource resource, void*& data, uint32_t subResource, uint64_t offset, uint64_t totalBytes)
 {
-    auto src = (ID3D11Resource*)resource;
-    if (!src) return eComputeStatusInvalidPointer;
+    auto src = (ID3D11Resource*)(resource->native);
+    if (!src) return ComputeStatus::eInvalidPointer;
 
     ID3D11DeviceContext* dc = reinterpret_cast<ID3D11DeviceContext*>(cmdList);
 
     D3D11_MAPPED_SUBRESOURCE mapped{};
     if (FAILED(dc->Map(src, subResource, D3D11_MAP_WRITE_DISCARD, 0, &mapped)))
     {
-        SL_LOG_ERROR("Failed to map buffer");
-        return eComputeStatusError;
+        SL_LOG_ERROR( "Failed to map buffer");
+        return ComputeStatus::eError;
     }
     data = ((uint8_t*)mapped.pData) + offset;
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::unmapResource(CommandList cmdList, Resource resource, uint32_t subResource)
 {
-    auto src = (ID3D11Resource*)resource;
-    if (!src) return eComputeStatusInvalidPointer;
+    auto src = (ID3D11Resource*)(resource->native);
+    if (!src) return ComputeStatus::eInvalidPointer;
 
     ID3D11DeviceContext* dc = reinterpret_cast<ID3D11DeviceContext*>(cmdList);
     dc->Unmap(src,subResource);
 
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::getResourceDescription(Resource resource, ResourceDescription &outDesc)
 {
-    if (!resource) return eComputeStatusInvalidArgument;
+    if (!resource || !resource->native) return ComputeStatus::eInvalidArgument;
+
+    outDesc = {};
+
+    if (resource->type == ResourceType::eFence)
+    {
+        // Fences are always shared with d3d12 so report back
+        outDesc.flags |= ResourceFlags::eSharedResource;
+        return ComputeStatus::eOk;
+    }
 
     // First make sure this is not an DXGI or some other resource
-    auto unknown = (IUnknown*)resource;
+    auto unknown = (IUnknown*)(resource->native);
     ID3D11Resource* pageable;
     unknown->QueryInterface(&pageable);
     if (!pageable)
     {
-        return eComputeStatusError;
+        return ComputeStatus::eError;
     }
 
     D3D11_RESOURCE_DIMENSION dim;
@@ -1123,7 +1446,7 @@ ComputeStatus D3D11::getResourceDescription(Resource resource, ResourceDescripti
     ID3D11Buffer* buffer = nullptr;
     if (dim == D3D11_RESOURCE_DIMENSION_TEXTURE2D)
     {
-        tex2d = (ID3D11Texture2D*)resource;
+        tex2d = (ID3D11Texture2D*)(resource->native);
         D3D11_TEXTURE2D_DESC desc;
         tex2d->GetDesc(&desc);
 
@@ -1131,16 +1454,28 @@ ComputeStatus D3D11::getResourceDescription(Resource resource, ResourceDescripti
         {
             outDesc.flags |= ResourceFlags::eShaderResourceStorage;
         }
-
+        if (desc.BindFlags & D3D11_BIND_DEPTH_STENCIL)
+        {
+            outDesc.flags |= ResourceFlags::eDepthStencilAttachment;
+        }
+        if (desc.BindFlags & D3D11_BIND_RENDER_TARGET)
+        {
+            outDesc.flags |= ResourceFlags::eColorAttachment;
+        }
         outDesc.width = (UINT)desc.Width;
         outDesc.height = desc.Height;
         outDesc.nativeFormat = desc.Format;
         outDesc.mips = desc.MipLevels;
+        outDesc.depth = desc.ArraySize;
         outDesc.flags |= ResourceFlags::eShaderResource;
+        if (desc.MiscFlags & D3D11_RESOURCE_MISC_FLAG::D3D11_RESOURCE_MISC_SHARED_NTHANDLE)
+        {
+            outDesc.flags |= ResourceFlags::eSharedResource;
+        }
     }
     else if (dim == D3D11_RESOURCE_DIMENSION_BUFFER)
     {
-        buffer = (ID3D11Buffer*)resource;
+        buffer = (ID3D11Buffer*)(resource->native);
         D3D11_BUFFER_DESC desc;
         buffer->GetDesc(&desc);
 
@@ -1148,7 +1483,7 @@ ComputeStatus D3D11::getResourceDescription(Resource resource, ResourceDescripti
         {
             outDesc.flags |= ResourceFlags::eShaderResourceStorage;
         }
-
+        
         outDesc.width = (UINT)desc.ByteWidth;
         outDesc.height = 1;
         outDesc.nativeFormat = DXGI_FORMAT_UNKNOWN;
@@ -1156,17 +1491,19 @@ ComputeStatus D3D11::getResourceDescription(Resource resource, ResourceDescripti
     }
     else
     {
-        SL_LOG_ERROR("Unknown resource");
+        SL_LOG_ERROR( "Unknown resource");
     }
 
-    pageable->Release();
+    getFormat(outDesc.nativeFormat, outDesc.format);
 
-    return eComputeStatusOk;
+    int rc = pageable->Release();
+
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::getLUIDFromDevice(NVSDK_NGX_LUID *OutId)
 {
-    return eComputeStatusError;
+    return ComputeStatus::eError;
 }
 
 ComputeStatus D3D11::beginPerfSection(CommandList cmdList, const char *key, unsigned int node, bool reset)
@@ -1174,7 +1511,7 @@ ComputeStatus D3D11::beginPerfSection(CommandList cmdList, const char *key, unsi
 #if SL_ENABLE_TIMING
     PerfData* data = {};
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::scoped_lock lock(m_mutexProfiler);
         auto section = m_sectionPerfMap[node].find(key);
         if (section == m_sectionPerfMap[node].end())
         {
@@ -1208,7 +1545,7 @@ ComputeStatus D3D11::beginPerfSection(CommandList cmdList, const char *key, unsi
     context->Begin(data->queryDisjoint);
     context->End(data->queryBegin);
 #endif
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::endPerfSection(CommandList cmdList, const char* key, float &avgTimeMS, unsigned int node)
@@ -1216,11 +1553,11 @@ ComputeStatus D3D11::endPerfSection(CommandList cmdList, const char* key, float 
 #if SL_ENABLE_TIMING
     PerfData* data = {};
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::scoped_lock lock(m_mutexProfiler);
         auto section = m_sectionPerfMap[node].find(key);
         if (section == m_sectionPerfMap[node].end())
         {
-            return eComputeStatusError;
+            return ComputeStatus::eError;
         }
         data = &(*section).second;
     }
@@ -1231,113 +1568,249 @@ ComputeStatus D3D11::endPerfSection(CommandList cmdList, const char* key, float 
     UINT64 beginTimeStamp = 0, endTimeStamp = 0;
     D3D11_QUERY_DATA_TIMESTAMP_DISJOINT timestampData = { 0 };
 
-    while (context->GetData(data->queryDisjoint, &timestampData, sizeof(timestampData), 0))
+    HRESULT hres = S_OK;
+
+    // Prevent deadlocks 
     {
-        Sleep(0);
+        int i = 0;
+        while (i++ < 100 && (hres = context->GetData(data->queryDisjoint, &timestampData, sizeof(timestampData), 0)) == S_FALSE)
+        {
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+        }
     }
 
-    while (context->GetData(data->queryBegin, &beginTimeStamp, sizeof(beginTimeStamp), 0) == S_FALSE)
+    if (hres == S_OK)
     {
-        Sleep(0);
+        int i = 0;
+        while (i++ < 100 && (hres = context->GetData(data->queryBegin, &beginTimeStamp, sizeof(beginTimeStamp), 0)) == S_FALSE)
+        {
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+        }
     }
 
-    while (context->GetData(data->queryEnd, &endTimeStamp, sizeof(endTimeStamp), 0) == S_FALSE)
+    if (hres == S_OK)
     {
-        Sleep(0);
+        int i = 0;
+        while (i++ < 100 && (hres = context->GetData(data->queryEnd, &endTimeStamp, sizeof(endTimeStamp), 0)) == S_FALSE)
+        {
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+        }
     }
 
-    if (!timestampData.Disjoint)
+    if (hres == S_OK)
     {
-        float delta = (float)((endTimeStamp - beginTimeStamp) / (double)timestampData.Frequency * 1000);
-        data->meter.add(delta);
+        if (!timestampData.Disjoint)
+        {
+            double delta = (double)((endTimeStamp - beginTimeStamp) / (double)timestampData.Frequency * 1000);
+            data->meter.add(delta);
+        }
+        avgTimeMS = (float)data->meter.getMean();
     }
-
-    avgTimeMS = data->meter.mean;
+    else
+    {
+        SL_LOG_WARN("D3D11 time-stamp timed out");
+    }
 #else
     avgTimeMS = 0;
 #endif
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::beginProfiling(CommandList cmdList, unsigned int Metadata, const char* marker)
 {
 #if SL_ENABLE_PROFILING
 #endif
-    return eComputeStatusError;
+    return ComputeStatus::eError;
 }
 
 ComputeStatus D3D11::endProfiling(CommandList cmdList)
 {
 #if SL_ENABLE_PROFILING
 #endif
-    return eComputeStatusError;
+    return ComputeStatus::eError;
 }
 
 
-void D3D11::destroyResourceDeferredImpl(const Resource resource)
-{   
-    auto unknown = (IUnknown*)resource;
-    ID3D11Resource* pageable;
-    unknown->QueryInterface(&pageable);
-    uint64_t currentSize = 0;
-    if (pageable)
-    {
-        pageable->Release();
-        if (m_allocCount && m_totalAllocatedSize)
-        {
-            m_allocCount--;
-            currentSize = getResourceSize(resource);
-            if (m_totalAllocatedSize >= currentSize)
-            {
-                m_totalAllocatedSize -= currentSize;
-            }
-        }
-    }
-    auto name = getDebugName((ID3D11Resource*)resource);
-    auto ref = ((IUnknown*)resource)->Release();
-    SL_LOG_VERBOSE("Releasing resource 0x%llx (%S) ref count %u - currentSize %.2f - totalSize %.2f", resource, name.c_str(), ref, currentSize / (1024.0f * 1024.0f), m_totalAllocatedSize / (1024.0f * 1024.0f));
+int D3D11::destroyResourceDeferredImpl(const Resource resource)
+{
+    auto unknown = (IUnknown*)(resource->native);
+    return unknown->Release();
 }
 
 DXGI_FORMAT D3D11::getCorrectFormat(DXGI_FORMAT Format)
 {
     switch (Format)
     {
-    case DXGI_FORMAT_D16_UNORM: // casting from non typeless is supported from RS2+
-        assert(m_dbgSupportRs2RelaxedConversionRules);
-        return DXGI_FORMAT_R16_UNORM;
-    case DXGI_FORMAT_D32_FLOAT: // casting from non typeless is supported from RS2+
-        assert(m_dbgSupportRs2RelaxedConversionRules); // fall through
-    case DXGI_FORMAT_R32_TYPELESS:
-        return DXGI_FORMAT_R32_FLOAT;
-    case DXGI_FORMAT_R16G16B16A16_TYPELESS:
-        return DXGI_FORMAT_R16G16B16A16_FLOAT;
-    case DXGI_FORMAT_R32G32B32A32_TYPELESS:
-        return DXGI_FORMAT_R32G32B32A32_FLOAT;
-    case DXGI_FORMAT_R32G32_TYPELESS:
-        return DXGI_FORMAT_R32G32_FLOAT;
-    case DXGI_FORMAT_R16G16_TYPELESS:
-        return DXGI_FORMAT_R16G16_FLOAT;
-    case DXGI_FORMAT_R16_TYPELESS:
-        return DXGI_FORMAT_R16_FLOAT;
-    case DXGI_FORMAT_R8G8B8A8_TYPELESS:
-        return DXGI_FORMAT_R8G8B8A8_UNORM;
-    case DXGI_FORMAT_B8G8R8X8_TYPELESS:
-        return DXGI_FORMAT_B8G8R8X8_UNORM;
-    case DXGI_FORMAT_B8G8R8A8_TYPELESS:
-        return DXGI_FORMAT_B8G8R8A8_UNORM;
-    case DXGI_FORMAT_R10G10B10A2_TYPELESS:
-        return DXGI_FORMAT_R10G10B10A2_UNORM;
-    case DXGI_FORMAT_D24_UNORM_S8_UINT: // casting from non typeless is supported from RS2+
-        assert(m_dbgSupportRs2RelaxedConversionRules); // fall through
-    case DXGI_FORMAT_R24G8_TYPELESS:
-        return DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
-    case DXGI_FORMAT_D32_FLOAT_S8X24_UINT: // casting from non typeless is supported from RS2+
-        assert(m_dbgSupportRs2RelaxedConversionRules); // fall through
-    case DXGI_FORMAT_R32G8X24_TYPELESS:
-        return DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
-    default:
-        return Format;
+        case DXGI_FORMAT_D16_UNORM: // casting from non typeless is supported from RS2+
+            assert(m_dbgSupportRs2RelaxedConversionRules);
+            return DXGI_FORMAT_R16_UNORM;
+        case DXGI_FORMAT_D32_FLOAT: // casting from non typeless is supported from RS2+
+            assert(m_dbgSupportRs2RelaxedConversionRules); // fall through
+        case DXGI_FORMAT_R32_TYPELESS:
+            return DXGI_FORMAT_R32_FLOAT;
+        case DXGI_FORMAT_R16G16B16A16_TYPELESS:
+            return DXGI_FORMAT_R16G16B16A16_FLOAT;
+        case DXGI_FORMAT_R32G32B32A32_TYPELESS:
+            return DXGI_FORMAT_R32G32B32A32_FLOAT;
+        case DXGI_FORMAT_R32G32_TYPELESS:
+            return DXGI_FORMAT_R32G32_FLOAT;
+        case DXGI_FORMAT_R16G16_TYPELESS:
+            return DXGI_FORMAT_R16G16_FLOAT;
+        case DXGI_FORMAT_R16_TYPELESS:
+            return DXGI_FORMAT_R16_FLOAT;
+        case DXGI_FORMAT_R8G8B8A8_TYPELESS:
+            return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case DXGI_FORMAT_B8G8R8X8_TYPELESS:
+            return DXGI_FORMAT_B8G8R8X8_UNORM;
+        case DXGI_FORMAT_B8G8R8A8_TYPELESS:
+            return DXGI_FORMAT_B8G8R8A8_UNORM;
+        case DXGI_FORMAT_R10G10B10A2_TYPELESS:
+            return DXGI_FORMAT_R10G10B10A2_UNORM;
+        case DXGI_FORMAT_D24_UNORM_S8_UINT: // casting from non typeless is supported from RS2+
+            assert(m_dbgSupportRs2RelaxedConversionRules); // fall through
+        case DXGI_FORMAT_R24G8_TYPELESS:
+            return DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+        case DXGI_FORMAT_D32_FLOAT_S8X24_UINT: // casting from non typeless is supported from RS2+
+            assert(m_dbgSupportRs2RelaxedConversionRules); // fall through
+        case DXGI_FORMAT_R32G8X24_TYPELESS:
+            return DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS;
+        default:
+            return Format;
     };
+}
+ComputeStatus D3D11::notifyOutOfBandCommandQueue(CommandQueue queue, OutOfBandCommandQueueType type)
+{
+    return ComputeStatus::eOk;
+}
+
+ComputeStatus D3D11::setAsyncFrameMarker(CommandQueue queue, ReflexMarker marker, uint64_t frameId)
+{
+    return ComputeStatus::eOk;
+}
+
+ComputeStatus D3D11::createSharedHandle(Resource resource, Handle& outHandle)
+{
+    if (!resource || !resource->native) return ComputeStatus::eInvalidArgument;
+
+    auto unknown = (IUnknown*)(resource->native);
+
+    IDXGIResource1* res1{};
+    unknown->QueryInterface(&res1);
+    if (res1)
+    {
+        res1->Release();
+        HANDLE handle;
+        if (HRESULT hr;FAILED(hr = res1->CreateSharedHandle(NULL, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, NULL, &handle)))
+        {
+            SL_LOG_ERROR( "Failed to create shared handle %s", std::system_category().message(hr).c_str());
+            assert(false);
+            return ComputeStatus::eError;
+        }
+        outHandle = handle;
+    }
+    else
+    {
+        ID3D11Fence* fence{};
+        unknown->QueryInterface(&fence);
+        if (fence)
+        {
+            fence->Release();
+            HANDLE handle;
+            if (FAILED(fence->CreateSharedHandle(NULL, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, NULL, &handle)))
+            {
+                SL_LOG_ERROR( "Failed to create shared handle");
+                assert(false);
+                return ComputeStatus::eError;
+            }
+            outHandle = handle;
+        }
+    }
+    return ComputeStatus::eOk;
+}
+
+ComputeStatus D3D11::destroySharedHandle(Handle& handle)
+{
+    if (!CloseHandle(handle))
+    {
+        SL_LOG_ERROR( "Failed to close shared handle");
+        return ComputeStatus::eError;
+    }
+    return ComputeStatus::eOk;
+}
+
+ComputeStatus D3D11::getResourceFromSharedHandle(ResourceType type, Handle handle, Resource& resource)
+{
+    if (type == ResourceType::eTex2d)
+    {
+        ID3D11Texture2D* tex{};
+        if (FAILED(m_device->OpenSharedResource((HANDLE)handle, __uuidof(ID3D11Texture2D), (void**)&tex)))
+        {
+            SL_LOG_ERROR( "Failed to open shared handle");
+            assert(false);
+            return ComputeStatus::eError;
+        }
+        resource = new sl::Resource(ResourceType::eTex2d, tex);
+        setDebugName(resource, "sl.shared.from.d3d12");
+        // We free these buffers but never allocate them so account for the VRAM
+        manageVRAM(resource, VRAMOperation::eAlloc);
+    }
+    else if (type == ResourceType::eFence)
+    {
+        ID3D11Fence* fence{};
+        if (FAILED(m_device5->OpenSharedFence((HANDLE)handle, __uuidof(ID3D11Fence), (void**)&fence)))
+        {
+            SL_LOG_ERROR( "Failed to open shared handle");
+            assert(false);
+            return ComputeStatus::eError;
+        }
+        resource = new sl::Resource(ResourceType::eFence, fence);
+    }
+    else
+    {
+        SL_LOG_ERROR( "Unsupported resource type");
+        return ComputeStatus::eError;
+    }
+    return ComputeStatus::eOk;
+}
+
+ComputeStatus D3D11::prepareTranslatedResources(CommandList cmdList, const std::vector<std::pair<chi::TranslatedResource, chi::ResourceDescription>>& resourceList)
+{
+    // Running on D3D11 immediate context and using D3D11 resources
+    CHI_CHECK(pushState(cmdList));
+    CHI_CHECK(bindSharedState(cmdList, 0));
+    CHI_CHECK(bindKernel(m_copyKernel));
+    for (auto& [resource, desc] : resourceList)
+    {
+        // If shared directly nothing to do here!
+        if (!resource.clone)
+        {
+            continue;
+        }
+
+        // Why use copy kernel? 
+        // 
+        // Some formats cannot be used in combination with NT shared handle hence
+        // direct copy is not always possible due to format difference. For example,
+        // any depth/stencil format cannot be shared directly, needs to be cloned as R32F
+        // and then we copy R24S8 to R32F using the below code.
+
+        struct CopyCB
+        {
+            sl::float4 texSize;
+        };
+        CopyCB cb;
+        cb.texSize.x = (float)desc.width;
+        cb.texSize.y = (float)desc.height;
+        cb.texSize.z = 1.0f / cb.texSize.x;
+        cb.texSize.w = 1.0f / cb.texSize.y;
+        CHI_CHECK(bindConsts(0, 0, &cb, sizeof(CopyCB), 1)); // unlike vk/d3d12 on d3d11 there is just one buffer, driver takes care of updates
+        CHI_CHECK(bindTexture(1, 0, resource.source));
+        CHI_CHECK(bindRWTexture(2, 0, resource.clone)); // this is shared as d3d12 resource
+        uint32_t grid[] = { ((uint32_t)cb.texSize.x + 16 - 1) / 16, ((uint32_t)cb.texSize.y + 16 - 1) / 16, 1 };
+        CHI_CHECK(dispatch(grid[0], grid[1], grid[2]));
+    }
+    CHI_CHECK(popState(cmdList));
+    return ComputeStatus::eOk;
 }
 
 }

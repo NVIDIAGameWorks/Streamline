@@ -82,9 +82,17 @@ inline T operator~(T a)                                                         
 
 namespace sl
 {
+
 //! For cases when value has to be provided and we don't have good default
 constexpr float INVALID_FLOAT = 3.40282346638528859811704183484516925440e38f;
 constexpr uint32_t INVALID_UINT = 0xffffffff;
+
+struct uint3
+{
+    uint32_t x;
+    uint32_t y;
+    uint32_t z;
+};
 
 struct float2
 {
@@ -114,7 +122,7 @@ struct float4x4
     inline const float4& operator[](uint32_t i) const { return row[i]; }
     inline void setRow(uint32_t i, const float4& v) { row[i] = v; }
     inline const float4& getRow(uint32_t i) { return row[i]; }
-private:
+
     //! Row major matrix
     float4 row[4];
 };
@@ -146,9 +154,11 @@ enum Boolean : char
     eInvalid
 };
 
+
 //! Common constants, all parameters must be provided unless they are marked as optional
-struct Constants
-{
+//! 
+//! {DCD35AD7-4E4A-4BAD-A90C-E0C49EB23AFE}
+SL_STRUCT(Constants, StructType({ 0xdcd35ad7, 0x4e4a, 0x4bad, { 0xa9, 0xc, 0xe0, 0xc4, 0x9e, 0xb2, 0x3a, 0xfe } }), kStructVersion1)
     //! IMPORTANT: All matrices are row major (see float4x4 definition) and
     //! must NOT contain temporal AA jitter offset (if any). Any jitter offset
     //! should be provided as the additional parameter Constants::jitterOffset (see below)
@@ -160,7 +170,8 @@ struct Constants
     //! Optional - Specifies matrix transformation describing lens distortion in clip space.
     float4x4 clipToLensClip;
     //! Specifies matrix transformation from the current clip to the previous clip space.
-    //! clipToPrevClip = clipToView * viewToWorld * worldToViewPrev * viewToClipPrev
+    //! clipToPrevClip = clipToView * viewToViewPrev * viewToClipPrev
+    //! Sample code can be found in sl_matrix_helpers.h
     float4x4 clipToPrevClip;
     //! Specifies matrix transformation from the previous clip to the current clip space.
     //! prevClipToClip = clipToPrevClip.inverse()
@@ -201,17 +212,12 @@ struct Constants
     Boolean motionVectors3D = Boolean::eInvalid;
     //! Specifies if previous frame has no connection to the current one (i.e. motion vectors are invalid)
     Boolean reset = Boolean::eInvalid;
-    //! Specifies if application is not currently rendering game frames (paused in menu, playing video cut-scenes)
-    Boolean notRenderingGameFrames = Boolean::eInvalid;
     //! Specifies if orthographic projection is used or not.
     Boolean orthographicProjection = Boolean::eFalse;
     //! Specifies if motion vectors are already dilated or not.
     Boolean motionVectorsDilated = Boolean::eFalse;
     //! Specifies if motion vectors are jittered or not.
     Boolean motionVectorsJittered = Boolean::eFalse;
-
-    //! Reserved for future expansion, must be set to null
-    void* ext = {};
 };
 
 }

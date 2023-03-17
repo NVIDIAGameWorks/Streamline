@@ -23,18 +23,22 @@
 #include <wrl/client.h>
 #include <d3d11.h>
 
+#include "include/sl_hooks.h"
 #include "source/core/sl.interposer/dxgi/dxgiSwapchain.h"
 #include "source/core/sl.interposer/d3d12/d3d12Device.h"
 #include "source/core/sl.interposer/d3d12/d3d12CommandQueue.h"
 #include "source/core/sl.api/internal.h"
 #include "source/core/sl.log/log.h"
 #include "source/core/sl.plugin-manager/pluginManager.h"
+#include "source/core/sl.exception/exception.h"
 
 namespace sl
 {
 namespace interposer
 {
 extern UINT queryDevice(IUnknown*& device, Microsoft::WRL::ComPtr<IUnknown>& device_proxy);
+
+static_assert(offsetof(DXGISwapChain, m_base) == 16, "This location must be maintained to keep compatibility with Nsight tools");
 
 DXGISwapChain::DXGISwapChain(ID3D11Device* device, IDXGISwapChain* original) :
     m_base(original),
@@ -44,26 +48,18 @@ DXGISwapChain::DXGISwapChain(ID3D11Device* device, IDXGISwapChain* original) :
 {
     assert(m_base != nullptr && m_d3dDevice != nullptr);
     m_d3dDevice->AddRef();
+    m_base->AddRef();    
 }
 
-DXGISwapChain::DXGISwapChain(ID3D11Device* device, IDXGISwapChain1* original) :
+DXGISwapChain::DXGISwapChain(ID3D12Device* device, IDXGISwapChain* original) :
     m_base(original),
-    m_interfaceVersion(1),
-    m_d3dDevice(device),
-    m_d3dVersion(11)
-{
-    assert(m_base != nullptr && m_d3dDevice != nullptr);
-    m_d3dDevice->AddRef();
-}
-
-DXGISwapChain::DXGISwapChain(D3D12Device* device, IDXGISwapChain3* original) :
-    m_base(original),
-    m_interfaceVersion(3),
+    m_interfaceVersion(0),
     m_d3dDevice(device),
     m_d3dVersion(12)
 {
     assert(m_base != nullptr && m_d3dDevice != nullptr);
     m_d3dDevice->AddRef();
+    m_base->AddRef();    
 }
 
 bool DXGISwapChain::checkAndUpgradeInterface(REFIID riid)
@@ -110,7 +106,7 @@ HRESULT STDMETHODCALLTYPE DXGISwapChain::QueryInterface(REFIID riid, void** ppvO
         return E_POINTER;
 
     // SL Special case, we are requesting base interface
-    if (riid == __uuidof(StreamlineRetreiveBaseInterface))
+    if (riid == __uuidof(StreamlineRetrieveBaseInterface))
     {
         *ppvObj = m_base;
         m_base->AddRef();
@@ -130,31 +126,34 @@ HRESULT STDMETHODCALLTYPE DXGISwapChain::QueryInterface(REFIID riid, void** ppvO
 ULONG   STDMETHODCALLTYPE DXGISwapChain::AddRef()
 {
     m_base->AddRef();
-    return InterlockedIncrement(&m_refCount);
+    return ++m_refCount;
 }
 
 ULONG   STDMETHODCALLTYPE DXGISwapChain::Release()
 {
-    const ULONG ref = InterlockedDecrement(&m_refCount);
-    if (ref != 0)
+    if(m_refCount == 1)
     {
-        return m_base->Release(), ref;
+        // Inform our plugins that swap-chain is just about to be destroyed
+        SL_EXCEPTION_HANDLE_START
+        const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eIDXGISwapChain_Destroyed);
+        for (auto [hook, feature] : hooks)
+        {
+            ((PFunSwapchainDestroyedBefore*)hook)(m_base);
+        }
+        SL_EXCEPTION_HANDLE_END_RETURN(-1)
+    }
+
+    auto refOrigSC = m_base->Release();
+    auto ref = --m_refCount;
+    if (ref > 0)
+    {
+        return ref;
     }
 
     // Release the explicit reference to device that was added in the DXGISwapChain constructor above
-    m_d3dDevice->Release();
+    auto refOrig = m_d3dDevice->Release();
 
-    // Inform our plugins that swap-chain has been destroyed
-    using Destroyed_t = void(IDXGISwapChain*);
-    const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eIDXGISwapChain_Destroyed);
-    for (auto hook : hooks) ((Destroyed_t*)hook)(m_base);
-
-    // Only release internal reference after the runtime has been destroyed, so any references it held are cleaned up at this point
-    const ULONG ref_orig = m_base->Release();
-    if (ref_orig != 0)
-    {
-        SL_LOG_WARN("Reference count for IDXGISwapChain v%u %llx is inconsistent.", m_interfaceVersion, this);
-    }
+    SL_LOG_INFO("Destroyed DXGISwapChain proxy 0x%llx - native swap-chain 0x%llx ref count %ld", this, m_base, refOrig);
 
     delete this;
 
@@ -185,55 +184,94 @@ HRESULT STDMETHODCALLTYPE DXGISwapChain::GetDevice(REFIID riid, void** ppDevice)
 
 HRESULT STDMETHODCALLTYPE DXGISwapChain::Present(UINT SyncInterval, UINT Flags)
 {
-    using Present_t = HRESULT(IDXGISwapChain*, UINT SyncInterval, UINT Flags, bool& skip);
-    const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eIDXGISwapChain_Present);
-    bool skip = false;
-    for (auto hook : hooks) ((Present_t*)hook)(m_base, SyncInterval, Flags, skip);
+    auto present = [this](UINT SyncInterval, UINT Flags)->HRESULT
+    {
+        const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eIDXGISwapChain_Present);
+        bool skip = false;
+        HRESULT hr = S_OK;
+        for (auto [hook, feature] : hooks)
+        {
+            hr = ((PFunPresentBefore*)hook)(m_base, SyncInterval, Flags, skip);
+            if (FAILED(hr))
+            {
+                SL_LOG_WARN("PFunPresentBefore failed %s", std::system_category().message(hr).c_str());
+                return hr;
+            }
+        }
 
-    HRESULT hr = S_OK;
-    if (!skip) hr = m_base->Present(SyncInterval, Flags);
-    return hr;
+        if (!skip) hr = m_base->Present(SyncInterval, Flags);
+        return hr;
+    };
+    SL_EXCEPTION_HANDLE_START
+    return present(SyncInterval, Flags);
+    SL_EXCEPTION_HANDLE_END_RETURN(E_ABORT)
 }
 HRESULT STDMETHODCALLTYPE DXGISwapChain::GetBuffer(UINT Buffer, REFIID riid, void** ppSurface)
 {
-    using GetBuffer_t = HRESULT(IDXGISwapChain*, UINT Buffer, REFIID riid, void** ppSurface, bool& skip);
+    SL_EXCEPTION_HANDLE_START
     const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eIDXGISwapChain_GetBuffer);
     bool skip = false;
-    for (auto hook : hooks) ((GetBuffer_t*)hook)(m_base, Buffer, riid, ppSurface, skip);
+    for (auto [hook, feature] : hooks) ((PFunGetBufferBefore*)hook)(m_base, Buffer, riid, ppSurface, skip);
 
     HRESULT hr = S_OK;
     if (!skip) hr = m_base->GetBuffer(Buffer, riid, ppSurface);
     return hr;
+    SL_EXCEPTION_HANDLE_END_RETURN(E_ABORT)
 }
+
 HRESULT STDMETHODCALLTYPE DXGISwapChain::SetFullscreenState(BOOL Fullscreen, IDXGIOutput* pTarget)
 {
-    SL_LOG_VERBOSE("Redirecting IDXGISwapChain::SetFullscreenState Fullscreen = %u", Fullscreen);
-
-    using GetFullscreenState_t = HRESULT(IDXGISwapChain*, BOOL pFullscreen, IDXGIOutput* ppTarget);
+    auto setFullscreenState = [this](BOOL Fullscreen, IDXGIOutput* pTarget)->HRESULT
     {
-        const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eIDXGISwapChain_SetFullscreenState);
-        for (auto hook : hooks)
+        SL_LOG_VERBOSE("Redirecting IDXGISwapChain::SetFullscreenState Fullscreen = %u", Fullscreen);
+
+        bool skip = false;
+        HRESULT hr = S_OK;
+
         {
-            ((GetFullscreenState_t*)hook)(m_base, Fullscreen, pTarget);
+            const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eIDXGISwapChain_SetFullscreenState);
+            for (auto [hook, feature] : hooks)
+            {
+                hr = ((PFunSetFullscreenStateBefore*)hook)(m_base, Fullscreen, pTarget, skip);
+                if (FAILED(hr))
+                {
+                    SL_LOG_WARN("PFunSetFullscreenStateBefore failed %s", std::system_category().message(hr).c_str());
+                    return hr;
+                }
+            }
         }
-    }
 
-    auto hr = m_base->SetFullscreenState(Fullscreen, pTarget);
-    if (FAILED(hr))
-    {
+        if (!skip)
+        {
+            hr = m_base->SetFullscreenState(Fullscreen, pTarget);
+        }
+        if (FAILED(hr))
+        {
+            SL_LOG_WARN("IDXGISwapChain::SetFullscreenState failed with error code %s", std::system_category().message(hr).c_str());
+            return hr;
+        }
+
+        {
+            const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooks(FunctionHookID::eIDXGISwapChain_SetFullscreenState);
+            for (auto [hook, feature] : hooks)
+            {
+                hr = ((PFunSetFullscreenStateAfter*)hook)(m_base, Fullscreen, pTarget);
+                if (FAILED(hr))
+                {
+                    SL_LOG_WARN("PFunGetFullscreenStateAfter failed %s", std::system_category().message(hr).c_str());
+                    return hr;
+                }
+            }
+        }
+
         return hr;
-    }
-
-    {
-        const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooks(FunctionHookID::eIDXGISwapChain_SetFullscreenState);
-        for (auto hook : hooks)
-        {
-            ((GetFullscreenState_t*)hook)(m_base, Fullscreen, pTarget);
-        }
-    }
-
-    return hr;
+    };
+    SL_EXCEPTION_HANDLE_START
+    return setFullscreenState(Fullscreen, pTarget);
+    SL_EXCEPTION_HANDLE_END_RETURN(E_ABORT)
 }
+
+
 
 HRESULT STDMETHODCALLTYPE DXGISwapChain::GetFullscreenState(BOOL* pFullscreen, IDXGIOutput** ppTarget)
 {
@@ -245,31 +283,52 @@ HRESULT STDMETHODCALLTYPE DXGISwapChain::GetDesc(DXGI_SWAP_CHAIN_DESC* pDesc)
 }
 HRESULT STDMETHODCALLTYPE DXGISwapChain::ResizeBuffers(UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags)
 {
-    using ResizeBuffers_t = HRESULT(IDXGISwapChain*, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT& SwapChainFlags);
+    auto resizeBuffers = [this](UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags)->HRESULT
     {
-        const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eIDXGISwapChain_ResizeBuffers);
-        for (auto hook : hooks)
+        bool Skip = false;
+        HRESULT hr = S_OK;
         {
-            ((ResizeBuffers_t*)hook)(m_base, BufferCount, Width, Height, NewFormat, SwapChainFlags);
+            const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eIDXGISwapChain_ResizeBuffers);
+            for (auto [hook, feature] : hooks)
+            {
+                hr = ((PFunResizeBuffersBefore*)hook)(m_base, BufferCount, Width, Height, NewFormat, SwapChainFlags, Skip);
+                if (FAILED(hr))
+                {
+                    SL_LOG_WARN("PFunResizeBuffersBefore failed %s", std::system_category().message(hr).c_str());
+                    return hr;
+                }
+            }
         }
-    }
 
-    HRESULT hr = m_base->ResizeBuffers(BufferCount, Width, Height, NewFormat, SwapChainFlags);
+        if (!Skip)
+        {
+            hr = m_base->ResizeBuffers(BufferCount, Width, Height, NewFormat, SwapChainFlags);
+        }
 
-    if (FAILED(hr))
-    {
+        if (FAILED(hr))
+        {
+            SL_LOG_WARN("IDXGISwapChain::ResizeBuffers failed with error code %s", std::system_category().message(hr).c_str());
+            return hr;
+        }
+
+        {
+            const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooks(FunctionHookID::eIDXGISwapChain_ResizeBuffers);
+            for (auto [hook, feature] : hooks)
+            {
+                hr = ((PFunResizeBuffersAfter*)hook)(m_base, BufferCount, Width, Height, NewFormat, SwapChainFlags);
+                if (FAILED(hr))
+                {
+                    SL_LOG_WARN("PFunResizeBuffersAfter failed %s", std::system_category().message(hr).c_str());
+                    return hr;
+                }
+            }
+        }
+
         return hr;
-    }
-
-    {
-        const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooks(FunctionHookID::eIDXGISwapChain_ResizeBuffers);
-        for (auto hook : hooks)
-        {
-            ((ResizeBuffers_t*)hook)(m_base, BufferCount, Width, Height, NewFormat, SwapChainFlags);
-        }
-    }
-
-    return hr;
+    };
+    SL_EXCEPTION_HANDLE_START
+    return resizeBuffers(BufferCount, Width, Height, NewFormat, SwapChainFlags);
+    SL_EXCEPTION_HANDLE_END_RETURN(E_ABORT)
 }
 HRESULT STDMETHODCALLTYPE DXGISwapChain::ResizeTarget(const DXGI_MODE_DESC* pNewTargetParameters)
 {
@@ -306,14 +365,30 @@ HRESULT STDMETHODCALLTYPE DXGISwapChain::GetCoreWindow(REFIID refiid, void** ppU
 }
 HRESULT STDMETHODCALLTYPE DXGISwapChain::Present1(UINT SyncInterval, UINT PresentFlags, const DXGI_PRESENT_PARAMETERS* pPresentParameters)
 {
-    using Present1_t = HRESULT(IDXGISwapChain*, UINT SyncInterval, UINT PresentFlags, const DXGI_PRESENT_PARAMETERS* pPresentParameters, bool& skip);
-    const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eIDXGISwapChain_Present1);
-    bool skip = false;
-    for (auto hook : hooks) ((Present1_t*)hook)(m_base, SyncInterval, PresentFlags, pPresentParameters, skip);
+    auto present = [this](UINT SyncInterval, UINT PresentFlags, const DXGI_PRESENT_PARAMETERS* pPresentParameters)->HRESULT
+    {
+        const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eIDXGISwapChain_Present1);
+        bool skip = false;
+        HRESULT hr = S_OK;
+        for (auto [hook, feature] : hooks)
+        {
+            hr = ((PFunPresent1Before*)hook)(m_base, SyncInterval, PresentFlags, pPresentParameters, skip);
+            if (FAILED(hr))
+            {
+                SL_LOG_WARN("PFunPresent1Before failed %s", std::system_category().message(hr).c_str());
+                return hr;
+            }
+        }
 
-    HRESULT hr = S_OK;
-    if (!skip) hr = static_cast<IDXGISwapChain1*>(m_base)->Present1(SyncInterval, PresentFlags, pPresentParameters);
-    return hr;
+        if (!skip)
+        {
+            hr = static_cast<IDXGISwapChain1*>(m_base)->Present1(SyncInterval, PresentFlags, pPresentParameters);
+        }
+        return hr;
+    };
+    SL_EXCEPTION_HANDLE_START
+    return present(SyncInterval, PresentFlags, pPresentParameters);
+    SL_EXCEPTION_HANDLE_END_RETURN(E_ABORT)
 }
 BOOL    STDMETHODCALLTYPE DXGISwapChain::IsTemporaryMonoSupported()
 {
@@ -371,14 +446,14 @@ HRESULT STDMETHODCALLTYPE DXGISwapChain::GetMatrixTransform(DXGI_MATRIX_3X2_F* p
 
 UINT STDMETHODCALLTYPE DXGISwapChain::GetCurrentBackBufferIndex()
 {
-
-    using GetCurrentBackBufferIndex_t = UINT(IDXGISwapChain*, bool& skip);
+    SL_EXCEPTION_HANDLE_START
     const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eIDXGISwapChain_GetCurrentBackBufferIndex);
     bool skip = false;
     UINT res = 0;
-    for (auto hook : hooks) res = ((GetCurrentBackBufferIndex_t*)hook)(m_base, skip);
+    for (auto [hook, feature] : hooks) res = ((PFunGetCurrentBackBufferIndexBefore*)hook)(m_base, skip);
     if (!skip) res = static_cast<IDXGISwapChain3*>(m_base)->GetCurrentBackBufferIndex();
     return res;
+    SL_EXCEPTION_HANDLE_END_RETURN(E_ABORT)
 }
 HRESULT STDMETHODCALLTYPE DXGISwapChain::CheckColorSpaceSupport(DXGI_COLOR_SPACE_TYPE ColorSpace, UINT* pColorSpaceSupport)
 {
@@ -390,28 +465,63 @@ HRESULT STDMETHODCALLTYPE DXGISwapChain::SetColorSpace1(DXGI_COLOR_SPACE_TYPE Co
 }
 HRESULT STDMETHODCALLTYPE DXGISwapChain::ResizeBuffers1(UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT Format, UINT SwapChainFlags, const UINT* pCreationNodeMask, IUnknown* const* ppPresentQueue)
 {
-    // Need to extract the original command queue object from the proxies passed in
-    assert(ppPresentQueue != nullptr);
-    std::vector<IUnknown*> present_queues(BufferCount);
-    for (UINT i = 0; i < BufferCount; ++i)
+    auto resizeBuffers1 = [this](UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT Format, UINT SwapChainFlags, const UINT* pCreationNodeMask, IUnknown* const* ppPresentQueue)->HRESULT
     {
-        present_queues[i] = ppPresentQueue[i];
-        Microsoft::WRL::ComPtr<IUnknown> command_queue_proxy;
-        queryDevice(present_queues[i], command_queue_proxy);
-    }
+        // Need to extract the original command queue object from the proxies passed in
+        assert(ppPresentQueue != nullptr);
+        std::vector<IUnknown*> present_queues(BufferCount);
+        for (UINT i = 0; i < BufferCount; ++i)
+        {
+            present_queues[i] = ppPresentQueue[i];
+            Microsoft::WRL::ComPtr<IUnknown> command_queue_proxy;
+            queryDevice(present_queues[i], command_queue_proxy);
+        }
 
-    const HRESULT hr = static_cast<IDXGISwapChain3*>(m_base)->ResizeBuffers1(BufferCount, Width, Height, Format, SwapChainFlags, pCreationNodeMask, present_queues.data());
-    if (hr == DXGI_ERROR_INVALID_CALL)
-    {
-        SL_LOG_WARN("IDXGISwapChain3::ResizeBuffers1 failed with error code %s", std::system_category().message(hr).c_str());
-    }
-    else if (FAILED(hr))
-    {
-        SL_LOG_ERROR("IDXGISwapChain3::ResizeBuffers1 failed with error code %s", std::system_category().message(hr).c_str());
+        HRESULT hr = S_OK;
+        bool Skip = false;
+        {
+            const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(FunctionHookID::eIDXGISwapChain_ResizeBuffers1);
+            for (auto [hook, feature] : hooks)
+            {
+                hr = ((PFunResizeBuffers1Before*)hook)(m_base, BufferCount, Width, Height, Format, SwapChainFlags, pCreationNodeMask, present_queues.data(), Skip);
+                if (FAILED(hr))
+                {
+                    SL_LOG_WARN("PFunResizeBuffers1Before failed %s", std::system_category().message(hr).c_str());
+                    return hr;
+                }
+            }
+        }
+
+        if (!Skip)
+        {
+            hr = static_cast<IDXGISwapChain3*>(m_base)->ResizeBuffers1(BufferCount, Width, Height, Format, SwapChainFlags, pCreationNodeMask, present_queues.data());
+        }
+
+        {
+            const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooks(FunctionHookID::eIDXGISwapChain_ResizeBuffers1);
+            for (auto [hook, feature] : hooks)
+            {
+                hr = ((PFunResizeBuffers1After*)hook)(m_base, BufferCount, Width, Height, Format, SwapChainFlags, pCreationNodeMask, present_queues.data());
+                if (FAILED(hr))
+                {
+                    SL_LOG_WARN("PFunResizeBuffers1After failed %s", std::system_category().message(hr).c_str());
+                    return hr;
+                }
+            }
+        }
+
+        if (FAILED(hr))
+        {
+            SL_LOG_WARN("IDXGISwapChain3::ResizeBuffers1 failed with error code %s", std::system_category().message(hr).c_str());
+            return hr;
+        }
+
         return hr;
-    }
+    };
 
-    return hr;
+    SL_EXCEPTION_HANDLE_START
+    return resizeBuffers1(BufferCount, Width, Height, Format, SwapChainFlags, pCreationNodeMask, ppPresentQueue);
+    SL_EXCEPTION_HANDLE_END_RETURN(E_ABORT)
 }
 
 HRESULT STDMETHODCALLTYPE DXGISwapChain::SetHDRMetaData(DXGI_HDR_METADATA_TYPE Type, UINT Size, void* pMetaData)

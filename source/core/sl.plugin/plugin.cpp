@@ -32,10 +32,25 @@
 #include "external/json/include/nlohmann/json.hpp"
 using json = nlohmann::json;
 
+#if SL_ENABLE_OTA
+#include "source/core/sl.ota/ota.h"
+#endif
+
 namespace sl
 {
 
 #ifndef SL_COMMON_PLUGIN
+#if SL_ENABLE_OTA
+namespace ota
+{
+IOTA * s_ota = {};
+IOTA * getInterface()
+{
+    return s_ota;
+}
+}
+ #endif
+
 namespace extra
 {
 namespace keyboard
@@ -61,20 +76,31 @@ ILog* getInterface()
 namespace plugin
 {
 
-void onGetConfig(api::Context *ctx, const char *pluginJSON)
+void onLoad(api::Context* ctx, const char* loaderJSON, const char* embeddedJSON)
 {
     // Setup logging and callbacks so we can report any issues correctly
     param::getPointerParam(api::getContext()->parameters, param::global::kLogInterface, &log::s_log);
 #ifndef SL_COMMON_PLUGIN
     param::getPointerParam(api::getContext()->parameters, param::common::kKeyboardAPI, &extra::keyboard::s_keyboard);
+#if SL_ENABLE_OTA
+    param::getPointerParam(api::getContext()->parameters, param::global::kOTAInterface, &ota::s_ota);
+#endif
 #endif
 
     // Now let's populate our JSON config with our version and API
+    json& loader = *(json*)ctx->loaderConfig;
     json& config = *(json*)ctx->pluginConfig;
     try
     {
-        std::istringstream stream(pluginJSON);
-        stream >> config;
+        {
+            std::istringstream stream(loaderJSON);
+            stream >> loader;
+        }
+
+        {
+            std::istringstream stream(embeddedJSON);
+            stream >> config;
+        }
 
         auto pluginVersion = api::getContext()->pluginVersion;
         auto apiVersion = api::getContext()->apiVersion;
@@ -110,22 +136,61 @@ void onGetConfig(api::Context *ctx, const char *pluginJSON)
     }
     catch (std::exception &e)
     {
-        SL_LOG_ERROR("JSON exception %s", e.what());
+        SL_LOG_ERROR( "JSON exception %s", e.what());
     };
 }
 
-StartupResult onStartup(api::Context *ctx, const char *loaderJSON)
+StartupResult onStartup(api::Context *ctx, const char* jsonConfig)
 {
     try
     {
         // Get information provided by host (plugin manager or installed plugin)
         json& config = *(json*)ctx->loaderConfig;
-        std::istringstream stream(loaderJSON);
+
+        std::istringstream stream(jsonConfig);
         stream >> config;
+
+#if SL_ENABLE_OTA
+        bool ota = false;
+        if (config.contains("ota"))
+        {
+            config.at("ota").get_to(ota);
+        }
+
+        // Check if we are an OTA module or not
+        if (!ota)
+        {
+            // We are the original plugin loaded by the plugin manager so check if there is an OTA for our module
+            if (!ota::getInterface())
+            {
+                SL_LOG_ERROR("Missing required interface - make sure sl.common.dll is present and loaded");
+                return eStartupResultFail;
+            }
+            ctx->getPluginFunction = ota::getInterface()->getOTAPluginEntryPointIfNewerAndSupported((ctx->pluginName).c_str(), ctx->pluginVersion, ctx->apiVersion);
+            if (ctx->getPluginFunction)
+            {
+                // Redirecting via OTA
+                api::PFuncOnPluginStartup* otaOnPluginStartup = (api::PFuncOnPluginStartup*)api::getContext()->getPluginFunction("slOnPluginStartup");
+                if (otaOnPluginStartup)
+                {
+                    // Inform other plugin that it is an OTA module so we don't recurse indefinitely
+                    config["ota"] = true;
+                    std::string otaConfig = config.dump();
+                    if (otaOnPluginStartup(otaConfig.c_str(), ctx->device))
+                    {
+                        return eStartupResultOTA;
+                    }
+                    SL_LOG_WARN("OTA failed, check the logs");
+                    // OTA failed to start for whatever reason, we continue 
+                    ctx->getPluginFunction = nullptr;
+                }
+            }
+        }
+#endif
     }
     catch (std::exception &e)
     {
-        SL_LOG_ERROR("JSON exception %s", e.what());
+        SL_LOG_ERROR( "JSON exception %s", e.what());
         return eStartupResultFail;
     };
     
@@ -134,12 +199,27 @@ StartupResult onStartup(api::Context *ctx, const char *loaderJSON)
 
 void onShutdown(api::Context *ctx)
 {
+    SL_LOG_INFO("Shutting down plugin %s", ctx->pluginName.c_str());
     delete ctx->pluginConfig;
     delete ctx->loaderConfig;
     delete ctx->extConfig;
     ctx->pluginConfig = {};
     ctx->loaderConfig = {};
     ctx->extConfig = {};
+#if SL_ENABLE_OTA
+    if (ctx->getPluginFunction)
+    {
+        api::PFuncOnPluginShutdown* onShutdown = (api::PFuncOnPluginShutdown*)ctx->getPluginFunction("slOnPluginShutdown");
+        if (onShutdown)
+        {
+            onShutdown();
+        }
+        else
+        {
+            SL_LOG_ERROR("OTA plugin missing shutdown API");
+        }
+    }
+#endif
 }
 
 }

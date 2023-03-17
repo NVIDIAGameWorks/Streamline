@@ -1,4 +1,3 @@
-﻿
 
 Streamline - DLSS
 =======================
@@ -6,8 +5,8 @@ Streamline - DLSS
 >The focus of this guide is on using Streamline to integrate DLSS into an application.  For more information about DLSS itself, please visit the [NVIDIA Developer DLSS Page](https://developer.nvidia.com/rtx/dlss)
 >For information on user interface considerations when using the DLSS plugin, please see the "RTX UI Developer Guidelines.pdf" document included in the DLSS SDK.
 
-Version 1.1.1
-------
+Version 2.0
+=======
 
 ### 1.0 INITIALIZE AND SHUTDOWN
 
@@ -25,9 +24,15 @@ pref.pathsToPlugins = {}; // change this if Streamline plugins are not located n
 pref.numPathsToPlugins = 0; // change this if Streamline plugins are not located next to the executable
 pref.pathToLogsAndData = {}; // change this to enable logging to a file
 pref.logMessageCallback = myLogMessageCallback; // highly recommended to track warning/error messages in your callback
-if(!slInit(pref, myApplicationId))
+pref.applicationId = myId; // Provided by NVDA, required if using NGX components (DLSS 2/3)
+pref.engineType = myEngine; // If using UE or Unity
+pref.engineVersion = myEngineVersion; // Optional version
+pref.projectId = myProjectId; // Optional project id
+if(SL_FAILED(res, slInit(pref)))
 {
     // Handle error, check the logs
+    if(res == sl::Result::eErrorDriverOutOfDate) { /* inform user */}
+    // and so on ...
 }
 ```
 
@@ -36,7 +41,18 @@ For more details please see [preferences](ProgrammingGuide.md#221-preferences)
 Call `slShutdown()` before destroying dxgi/d3d11/d3d12/vk instances, devices and other components in your engine.
 
 ```cpp
-if(!slShutdown())
+if(SL_FAILED(res, slShutdown()))
+{
+    // Handle error, check the logs
+}
+```
+
+#### 1.1 SET THE CORRECT DEVICE
+
+Once the main device is created call `slSetD3DDevice` or `slSetVulkanInfo`:
+
+```cpp
+if(SL_FAILED(res, slSetD3DDevice(nativeD3DDevice)))
 {
     // Handle error, check the logs
 }
@@ -47,15 +63,37 @@ if(!slShutdown())
 As soon as SL is initialized, you can check if DLSS is available for the specific adapter you want to use:
 
 ```cpp
-uint32_t adapterBitMask = 0;
-if(!slIsFeatureSupported(sl::Feature::eFeatureDLSS, &adapterBitMask))
+Microsoft::WRL::ComPtr<IDXGIFactory> factory;
+if (SUCCEEDED(CreateDXGIFactory(__uuidof(IDXGIFactory), (void**)&factory)))
 {
-    // DLSS is not supported on the system, fallback to the default upscaling method
-}
-// Now check your adapter
-if((adapterBitMask & (1 << myAdapterIndex)) != 0)
-{
-    // It is ok to create a device on this adapter since feature we need is supported
+    Microsoft::WRL::ComPtr<IDXGIAdapter> adapter{};
+    uint32_t i = 0;
+    while (factory->EnumAdapters(i, &adapter) != DXGI_ERROR_NOT_FOUND)
+    {
+        DXGI_ADAPTER_DESC desc{};
+        if (SUCCEEDED(adapter->GetDesc(&desc)))
+        {
+            sl::AdapterInfo adapterInfo{};
+            adapterInfo.deviceLUID = (uint8_t*)&desc.AdapterLuid;
+            adapterInfo.deviceLUIDSizeInBytes = sizeof(LUID);
+            if (SL_FAILED(result, slIsFeatureSupported(sl::kFeatureDLSS, adapterInfo)))
+            {
+                // Requested feature is not supported on the system, fallback to the default method
+                switch (result)
+                {
+                    case sl::Result::eErrorOSOutOfDate:         // inform user to update OS
+                    case sl::Result::eErrorDriverOutOfDate:     // inform user to update driver
+                    case sl::Result::eErrorNoSupportedAdapter:  // cannot use this adapter (older or non-NVDA GPU etc)
+                    // and so on ...
+                };
+            }
+            else
+            {
+                // Feature is supported on this adapter!
+            }
+        }
+        i++;
+    }
 }
 ```
 
@@ -64,42 +102,48 @@ if((adapterBitMask & (1 << myAdapterIndex)) != 0)
 Next, we need to find out the rendering resolution and the optimal sharpness level based on DLSS settings:
 
 ```cpp
-sl::DLSSSettings dlssSettings{};
-sl::DLSSSettings1 dlssSettings1{};
-dlssSettings.ext = &dlssSettings1;
 
-sl::DLSSConstants dlssConsts{};
+// Using helpers from sl_dlss.h
+
+sl::DLSSOptimalSettings dlssSettings;
+sl::DLSSOptions dlssOptions;
 // These are populated based on user selection in the UI
-dlssConsts.mode = myUI->getDLSSMode(); // e.g. sl::eDLSSModeBalanced;
-dlssConsts.outputWidth = myUI->getOutputWidth();    // e.g 1920;
-dlssConsts.outputHeight = myUI->getOutputHeight(); // e.g. 1080;
-
+dlssOptions.mode = myUI->getDLSSMode(); // e.g. sl::eDLSSModeBalanced;
+dlssOptions.outputWidth = myUI->getOutputWidth();    // e.g 1920;
+dlssOptions.outputHeight = myUI->getOutputHeight(); // e.g. 1080;
 // Now let's check what should our rendering resolution be
-if(!slGetFeatureSettings(sl::eFeatureDLSS, &dlssConsts, &dlssSettings))
+if(SL_FAILED(result, slDLSSGetOptimalSettings(dlssOptions, dlssSettings))
 {
-    // Handle error here, check the logs
+    // Handle error here
 }
 // Setup rendering based on the provided values in the sl::DLSSSettings structure
-myViewport->setSize(dlssSettings.optimalRenderWidth, dlssSettings.optimalRenderHeight);
+myViewport->setSize(dlssSettings.renderWidth, dlssSettings.renderHeight);
 ```
 
-Note that the structure pointed to by `sl::DLSSSettings::ext`, i.e. `dlssSettings1` above (if ext is non-null) will upon return from `slGetFeatureSettings` contain information pertinent to DLSS dynamic resolution min and max source image sizes (if dynamic resolution is supported).
+Note that the structure `sl::DLSSOptimalSettings` will upon return from `slDLSSGetOptimalSettings` contain information pertinent to DLSS dynamic resolution min and max source image sizes (if dynamic resolution is supported).
 
 ### 4.0 TAG ALL REQUIRED RESOURCES
 
 DLSS requires depth, motion vectors, render-res input color and final-res output color buffers.
 
 ```cpp
+
+// IMPORTANT: Make sure to mark resources which can be deleted or reused for other purposes within a frame as volatile
+
 // Prepare resources (assuming d3d11/d3d12 integration so leaving Vulkan view and device memory as null pointers)
-sl::Resource colorIn = {sl::ResourceType::eResourceTypeTex2d, myTAAUInput, nullptr, nullptr, nullptr};
-sl::Resource colorOut = {sl::ResourceType::eResourceTypeTex2d, myTAAUOutput, nullptr, nullptr, nullptr};
-sl::Resource depth = {sl::ResourceType::eResourceTypeTex2d, myDepthBuffer, nullptr, nullptr, nullptr};
-sl::Resource mvec = {sl::ResourceType::eResourceTypeTex2d, myMotionVectorsBuffer, nullptr, nullptr, nullptr};
-// Note that you can also pass unique id (if using multiple viewports) and the extent of the resource if dynamic resolution is active
-setTag(&colorIn, sl::BufferType::eBufferTypeScalingInputColor);
-setTag(&colorOut, sl::BufferType::eBufferTypeScalingOutputColor);
-setTag(&depth, sl::BufferType::eBufferTypeDepth);
-setTag(&mvec, sl::BufferType::eBufferTypeMVec);
+sl::Resource colorIn = {sl::ResourceType::Tex2d, myTAAUInput, nullptr, nullptr, nullptr};
+sl::Resource colorOut = {sl::ResourceType::Tex2d, myTAAUOutput, nullptr, nullptr, nullptr};
+sl::Resource depth = {sl::ResourceType::Tex2d, myDepthBuffer, nullptr, nullptr, nullptr};
+sl::Resource mvec = {sl::ResourceType::Tex2d, myMotionVectorsBuffer, nullptr, nullptr, nullptr};
+
+sl::ResourceTag colorInTag = sl::ResourceTag {&colorIn, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eOnlyValidNow, &myExtent };
+sl::ResourceTag colorOutTag = sl::ResourceTag {&colorOut, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eOnlyValidNow, &myExtent };
+sl::ResourceTag depthTag = sl::ResourceTag {&depth, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent };
+sl::ResourceTag mvecTag = sl::ResourceTag {&mvec, sl::kBufferTypeMvec, sl::ResourceLifecycle::eOnlyValidNow, &fullExtent };
+
+// Tag in group
+sl::Resource inputs[] = {colorInTag, colorOutTag, depthTag, mvecTag};
+slSetTag(viewport, inputs, _countof(inputs), cmdList);
 ```
 
 > **NOTE:**
@@ -107,36 +151,36 @@ setTag(&mvec, sl::BufferType::eBufferTypeMVec);
 
 DLSS next requires additional buffers so ***please tag all buffers that are available in your engine***
 
-* `eBufferTypeExposure` (1x1 buffer containing exposure of the current frame)
-* `eBufferTypeAlbedo`
-* `eBufferTypeSpecularAlbedo`
-* `eBufferTypeIndirectAlbedo`
-* `eBufferTypeNormals`
-* `eBufferTypeRoughness`
-* `eBufferTypeEmissive`
-* `eBufferTypeDisocclusionMask`
-* `eBufferTypeSpecularMVec`
+* `eExposure` (1x1 buffer containing exposure of the current frame)
+* `eAlbedo`
+* `eSpecularAlbedo`
+* `eIndirectAlbedo`
+* `eNormals`
+* `eRoughness`
+* `eEmissive`
+* `eDisocclusionMask`
+* `eSpecularMotionVectors`
 
-### 5.0 PROVIDE DLSS CONSTANTS
+### 5.0 PROVIDE DLSS OPTIONS
 
-DLSS constants must be set so that the DLSS plugin can track any changes made by the user:
+DLSS options must be set so that the DLSS plugin can track any changes made by the user:
 
 ```cpp
-sl::DLSSConstants dlssConsts = {};
+sl::DLSSOptions dlssOptions = {};
 // These are populated based on user selection in the UI
-dlssConsts.mode = myUI->getDLSSMode(); // e.g. sl::eDLSSModeBalanced;
-dlssConsts.outputWidth = myUI->getOutputWidth();    // e.g 1920;
-dlssConsts.outputHeight = myUI->getOutputHeight(); // e.g. 1080;
-dlssConsts.sharpness = dlssSettings.sharpness; // optimal sharpness
-dlssConsts.colorBuffersHDR = sl::Boolean::eTrue; // assuming HDR pipeline
-if(!slSetFeatureConstants(sl::eFeatureDLSS, &dlssConsts))
+dlssOptions.mode = myUI->getDLSSMode(); // e.g. sl::eDLSSModeBalanced;
+dlssOptions.outputWidth = myUI->getOutputWidth();    // e.g 1920;
+dlssOptions.outputHeight = myUI->getOutputHeight(); // e.g. 1080;
+dlssOptions.sharpness = dlssSettings.sharpness; // optimal sharpness
+dlssOptions.colorBuffersHDR = sl::Boolean::eTrue; // assuming HDR pipeline
+if(SL_FAILED(result, slDLSSSetOptions(viewport, dlssOptions)))
 {
     // Handle error here, check the logs
 }
 ```
 
 > **NOTE:**
-> To disable DLSS set `sl::DLSSConstants.mode` to `sl::DLSSMode::eDLSSModeOff`or simply stop calling `slEvaluateFeature`
+> To turn off DLSS set `sl::DLSSOptions.mode` to `sl::DLSSMode::eOff`, note that this does NOT release any resources, for that please use `slFreeResources`
 
 ### 6.0 PROVIDE COMMON CONSTANTS
 
@@ -149,11 +193,11 @@ Various per frame camera related constants are required by all Streamline featur
 ```cpp
 sl::Constants consts = {};
 // Set motion vector scaling based on your setup
-consts.mvecScale = {1,1}; // Values in eBufferTypeMVec are in [-1,1] range
-consts.mvecScale = {1.0f / renderWidth,1.0f / renderHeight}; // Values in eBufferTypeMVec are in pixel space
+consts.mvecScale = {1,1}; // Values in eMotionVectors are in [-1,1] range
+consts.mvecScale = {1.0f / renderWidth,1.0f / renderHeight}; // Values in eMotionVectors are in pixel space
 consts.mvecScale = myCustomScaling; // Custom scaling to ensure values end up in [-1,1] range
 // Set all other constants here
-if(!setConstants(consts, myFrameIndex)) // constants are changing per frame so frame index is required
+if(SL_FAILED(result, slSetConstants(consts, *frameToken, myViewport))) // constants are changing per frame so frame index is required
 {
     // Handle error, check logs
 }
@@ -162,17 +206,24 @@ For more details please see [common constants](ProgrammingGuide.md#251-common-co
 
 ### 7.0 ADD DLSS TO THE RENDERING PIPELINE
 
-On your rendering thread, call `slEvaluateFeature` at the appropriate location where up-scaling is happening. Please note that `myFrameIndex` used in `slEvaluateFeature` must match the one used when setting constants.
+On your rendering thread, call `slEvaluateFeature` at the appropriate location where up-scaling is happening. Please note that when using `slSetTag`, `slSetConstants` and `slDLSSSetOptions` the `frameToken` and `myViewport` used in `slEvaluateFeature` **must match across all API calls**.
 
 ```cpp
 // Make sure DLSS is available and user selected this option in the UI
-bool useDLSS = slIsFeatureSupported(sl::eFeatureDLSS) && userSelectedDLSSInUI;
 if(useDLSS) 
 {
-    // Inform SL that DLSS should be injected at this point
-    if(!slEvaluateFeature(myCmdList, sl::Feature::eFeatureDLSS, myFrameIndex)) 
+    // NOTE: We can provide all inputs here or separately using slSetTag, slSetConstants or slDLSSSetOptions
+
+    // Inform SL that DLSS should be injected at this point for the specific viewport
+    const sl::BaseStructure* inputs[] = {&myViewport};
+    if(SL_FAILED(result, slEvaluateFeature(sl::kFeatureDLSS, *frameToken, inputs, _countof(inputs), myCmdList)))
     {
         // Handle error
+    }
+    else
+    {
+        // IMPORTANT: Host is responsible for restoring state on the command list used
+        restoreState(myCmdList);
     }
 }
 else
@@ -180,6 +231,10 @@ else
     // Default up-scaling pass like for example TAAU goes here
 }
 ```
+
+> **IMPORTANT:**
+> Plase note that **host is responsible for restoring the command buffer(list) state** after calling `slEvaluate`. For more details on which states are affected please see [restore pipeline section](./ProgrammingGuideManualHooking.md#80-restoring-command-listbuffer-state)
+
 ### 8.0 MULTIPLE VIEWPORTS
 
 Here is a code snippet showing one way of handling two viewports with explicit resource allocation and de-allocation:
@@ -188,65 +243,83 @@ Here is a code snippet showing one way of handling two viewports with explicit r
 // Viewport1
 {
     // We need to setup our constants first so sl.dlss plugin has enough information
-    sl::DLSSConstants dlssConsts = {};
-    dlssConsts.mode = viewport1->getDLSSMode(); // e.g. sl::eDLSSModeBalanced;
-    dlssConsts.outputWidth = viewport1->getOutputWidth();    // e.g 1920;
-    dlssConsts.outputHeight = viewport1->getOutputHeight(); // e.g. 1080;
-    // Note that we are passing viewport id
-    slSetFeatureConstants(sl::eFeatureDLSS, &dlssConsts, 0, viewport1->id);
+    sl::DLSSOptions dlssOptions = {};
+    dlssOptions.mode = viewport1->getDLSSMode(); // e.g. sl::eDLSSModeBalanced;
+    dlssOptions.outputWidth = viewport1->getOutputWidth();    // e.g 1920;
+    dlssOptions.outputHeight = viewport1->getOutputHeight(); // e.g. 1080;
+    // Note that we are passing viewport id 1
+    slDLSSSetOptions(viewport1->id, dlssOptions);
     
     // Set our tags, note that we are passing viewport id
-    sl::Resource colorIn = {sl::ResourceType::eResourceTypeTex2d, viwport1->lowResInput};    
-    setTag(&colorIn, sl::BufferType::eBufferTypeScalingInputColor, viewport1->id);
+    setTag(viewport1->id, &tags2, numTags2);
     // and so on ...
 
     // Now we can allocate our feature explicitly, again passing viewport id
-    slAllocateResources(sl::eFeatureDLSS, viewport1->id);
+    slAllocateResources(sl::kFeatureDLSS, viewport1->id);
 
     // Evaluate DLSS on viewport1, again passing viewport id so we can map tags, constants correctly
     //
     // NOTE: If slAllocateResources is not called DLSS resources would be initialized at this point
-    slEvaluateFeature(myCmdList, sl::Feature::eFeatureDLSS, myFrameIndex, viewport1->id)
+    slEvaluateFeature(sl::kFeatureDLSS, myFrameIndex, viewport1->id, nullptr, 0, myCmdList);
+
+    // Assuming the above evaluate call is still pending on the CL, make sure to flush it before releasing resources
+    flush(myCmdList);
 
     // When we no longer need this viewport
-    slFreeResources(sl::eFeatureDLSS, viewport1->id);
+    slFreeResources(sl::kFeatureDLSS, viewport1->id);
 }
 
 // Viewport2
 {
     // We need to setup our constants first so sl.dlss plugin has enough information
-    sl::DLSSConstants dlssConsts = {};
-    dlssConsts.mode = viewport2->getDLSSMode(); // e.g. sl::eDLSSModeBalanced;
-    dlssConsts.outputWidth = viewport2->getOutputWidth();    // e.g 1920;
-    dlssConsts.outputHeight = viewport2->getOutputHeight(); // e.g. 1080;
-    slSetFeatureConstants(sl::eFeatureDLSS, &dlssConsts, 0, viewport2->id);
+    sl::DLSSOptions dlssOptions = {};
+    dlssOptions.mode = viewport2->getDLSSMode(); // e.g. sl::eDLSSModeBalanced;
+    dlssOptions.outputWidth = viewport2->getOutputWidth();    // e.g 1920;
+    dlssOptions.outputHeight = viewport2->getOutputHeight(); // e.g. 1080;
+    // Note that we are passing viewport id 2
+    slDLSSSetOptions(viewport2->id, dlssOptions);
 
-    // Set our tags
-    sl::Resource colorIn = {sl::ResourceType::eResourceTypeTex2d, viwport2->lowResInput};
-    // Note that we are passing viewport id
-    setTag(&colorIn, sl::BufferType::eBufferTypeScalingInputColor, viewport2->id);
+    // Set our tags, note that we are passing viewport id
+    setTag(viewport2->id, &tags2, numTags2);
     // and so on ...
 
     // Now we can allocate our feature explicitly, again passing viewport id
-    slAllocateResources(sl::eFeatureDLSS, viewport2->id);
+    slAllocateResources(sl::kFeatureDLSS, viewport2->id);
     
     // Evaluate DLSS on viewport2, again passing viewport id so we can map tags, constants correctly
     //
     // NOTE: If slAllocateResources is not called DLSS resources would be initialized at this point
-    slEvaluateFeature(myCmdList, sl::Feature::eFeatureDLSS, myFrameIndex, viewport2->id)
+    slEvaluateFeature(sl::kFeatureDLSS, myFrameIndex, viewport2->id, nullptr, 0, myCmdList);
+
+    // Assuming the above evaluate call is still pending on the CL, make sure to flush it before releasing resources
+    flush(myCmdList);
 
     // When we no longer need this viewport
-    slFreeResources(sl::eFeatureDLSS, viewport2->id);
+    slFreeResources(sl::kFeatureDLSS, viewport2->id);
 }
 
 ```
 
-### 9.0 TROUBLESHOOTING
+### 9.0 CHECK STATE AND VRAM USAGE
+
+To obtain current state for a given viewport the following API can be used:
+
+```cpp
+sl::DLSSState dlssState{};
+if(SL_FAILED(result, slDLSSGetState(viewport, dlssState))
+{
+    // Handle error here
+}
+// Check how much memory DLSS is using for this viewport
+dlssState.estimatedVRAMUsageInBytes
+```
+
+### 10.0 TROUBLESHOOTING
 
 If the DLSS output does not look right please check the following:
 
 * If your motion vectors are in pixel space then scaling factors `sl::Constants::mvecScale` should be {1 / render width, 1 / render height}
 * If your motion vectors are in normalized -1,1 space then scaling factors `sl::Constants::mvecScale` should be {1, 1}
 * Make sure that jitter offset values are in pixel space
-* `NVSDK_NGX_Parameter_FreeMemOnReleaseFeature` is replaced with `slFreeResources`
+* `NVSDK_NGX_Parameter_FreeMemOnRelease` is replaced with `slFreeResources`
 * `NVSDK_NGX_DLSS_Feature_Flags_MVLowRes` is handled automatically based on tagged motion vector buffer's size and extent.

@@ -1,5 +1,9 @@
 {
+	"testServer": "F:/nvgs-server-spoof",
+	"enableOTA": false,
 	"logLevelNGX": 0,
+	"manageVRAMBudget" : true,
+	"emulateLowVRAMScenario" : false,
 	"keys": [
 		{
 			"alt": false,

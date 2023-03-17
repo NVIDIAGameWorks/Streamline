@@ -22,12 +22,15 @@
 
 #pragma once
 
+#include <string.h>
+
 #include "sl.h"
 #include "sl_consts.h"
 #include "sl_reflex.h"
 #include "sl_dlss.h"
 #include "sl_nis.h"
 #include "sl_nrd.h"
+#include "sl_dlss_g.h"
 
 namespace sl
 {
@@ -44,23 +47,70 @@ inline float4x4 transpose(const float4x4& m)
 
 #define SL_CASE_STR(a) case a : return #a;
 
+inline const char* getResultAsStr(Result v)
+{
+    switch (v)
+    {
+        SL_CASE_STR(Result::eOk);
+        SL_CASE_STR(Result::eErrorIO);
+        SL_CASE_STR(Result::eErrorDriverOutOfDate);
+        SL_CASE_STR(Result::eErrorOSOutOfDate);
+        SL_CASE_STR(Result::eErrorOSDisabledHWS);
+        SL_CASE_STR(Result::eErrorDeviceNotCreated);
+        SL_CASE_STR(Result::eErrorNoSupportedAdapterFound);
+        SL_CASE_STR(Result::eErrorAdapterNotSupported);
+        SL_CASE_STR(Result::eErrorNoPlugins);
+        SL_CASE_STR(Result::eErrorVulkanAPI);
+        SL_CASE_STR(Result::eErrorDXGIAPI);
+        SL_CASE_STR(Result::eErrorD3DAPI);
+        SL_CASE_STR(Result::eErrorNRDAPI);
+        SL_CASE_STR(Result::eErrorNVAPI);
+        SL_CASE_STR(Result::eErrorReflexAPI);
+        SL_CASE_STR(Result::eErrorNGXFailed);
+        SL_CASE_STR(Result::eErrorJSONParsing);
+        SL_CASE_STR(Result::eErrorMissingProxy);
+        SL_CASE_STR(Result::eErrorMissingResourceState);
+        SL_CASE_STR(Result::eErrorInvalidIntegration);
+        SL_CASE_STR(Result::eErrorMissingInputParameter);
+        SL_CASE_STR(Result::eErrorNotInitialized);
+        SL_CASE_STR(Result::eErrorComputeFailed);
+        SL_CASE_STR(Result::eErrorInitNotCalled);
+        SL_CASE_STR(Result::eErrorExceptionHandler);
+        SL_CASE_STR(Result::eErrorInvalidParameter);
+        SL_CASE_STR(Result::eErrorMissingConstants);
+        SL_CASE_STR(Result::eErrorDuplicatedConstants);
+        SL_CASE_STR(Result::eErrorMissingOrInvalidAPI);
+        SL_CASE_STR(Result::eErrorCommonConstantsMissing);
+        SL_CASE_STR(Result::eErrorUnsupportedInterface);
+        SL_CASE_STR(Result::eErrorFeatureMissing);
+        SL_CASE_STR(Result::eErrorFeatureNotSupported);
+        SL_CASE_STR(Result::eErrorFeatureMissingHooks);
+        SL_CASE_STR(Result::eErrorFeatureFailedToLoad);
+        SL_CASE_STR(Result::eErrorFeatureWrongPriority);
+        SL_CASE_STR(Result::eErrorFeatureMissingDependency);
+        SL_CASE_STR(Result::eErrorFeatureManagerInvalidState);
+        SL_CASE_STR(Result::eErrorInvalidState);
+    };
+    return "Unknown";
+}
+
 inline const char* getNRDMethodAsStr(NRDMethods v)
 {
     switch (v)
     {
-        SL_CASE_STR(eNRDMethodOff);
-        SL_CASE_STR(eNRDMethodReblurDiffuse);
-        SL_CASE_STR(eNRDMethodReblurDiffuseOcclusion);
-        SL_CASE_STR(eNRDMethodReblurSpecular);
-        SL_CASE_STR(eNRDMethodReblurSpecularOcclusion);
-        SL_CASE_STR(eNRDMethodReblurDiffuseSpecular);
-        SL_CASE_STR(eNRDMethodReblurDiffuseSpecularOcclusion);
-        SL_CASE_STR(eNRDMethodReblurDiffuseDirectionalOcclusion);
-        SL_CASE_STR(eNRDMethodSigmaShadow);
-        SL_CASE_STR(eNRDMethodSigmaShadowTranslucency);
-        SL_CASE_STR(eNRDMethodRelaxDiffuse);
-        SL_CASE_STR(eNRDMethodRelaxSpecular);
-        SL_CASE_STR(eNRDMethodRelaxDiffuseSpecular);
+        SL_CASE_STR(NRDMethods::eOff);
+        SL_CASE_STR(NRDMethods::eReblurDiffuse);
+        SL_CASE_STR(NRDMethods::eReblurDiffuseOcclusion);
+        SL_CASE_STR(NRDMethods::eReblurSpecular);
+        SL_CASE_STR(NRDMethods::eReblurSpecularOcclusion);
+        SL_CASE_STR(NRDMethods::eReblurDiffuseSpecular);
+        SL_CASE_STR(NRDMethods::eReblurDiffuseSpecularOcclusion);
+        SL_CASE_STR(NRDMethods::eReblurDiffuseDirectionalOcclusion);
+        SL_CASE_STR(NRDMethods::eSigmaShadow);
+        SL_CASE_STR(NRDMethods::eSigmaShadowTranslucency);
+        SL_CASE_STR(NRDMethods::eRelaxDiffuse);
+        SL_CASE_STR(NRDMethods::eRelaxSpecular);
+        SL_CASE_STR(NRDMethods::eRelaxDiffuseSpecular);
     };
     return "Unknown";
 }
@@ -69,9 +119,9 @@ inline const char* getNISModeAsStr(NISMode v)
 {
     switch (v)
     {
-        SL_CASE_STR(eNISModeOff);
-        SL_CASE_STR(eNISModeScaler);
-        SL_CASE_STR(eNISModeSharpen);
+        SL_CASE_STR(NISMode::eOff);
+        SL_CASE_STR(NISMode::eScaler);
+        SL_CASE_STR(NISMode::eSharpen);
     };
     return "Unknown";
 }
@@ -80,9 +130,9 @@ inline const char* getNISHDRAsStr(NISHDR v)
 {
     switch (v)
     {
-        SL_CASE_STR(eNISHDRNone);
-        SL_CASE_STR(eNISHDRLinear);
-        SL_CASE_STR(eNISHDRPQ);
+        SL_CASE_STR(NISHDR::eNone);
+        SL_CASE_STR(NISHDR::eLinear);
+        SL_CASE_STR(NISHDR::ePQ);
     };
     return "Unknown";
 }
@@ -91,9 +141,9 @@ inline const char* getReflexModeAsStr(ReflexMode mode)
 {
     switch (mode)
     {
-        SL_CASE_STR(eReflexModeOff);
-        SL_CASE_STR(eReflexModeLowLatency);
-        SL_CASE_STR(eReflexModeLowLatencyWithBoost);
+        SL_CASE_STR(ReflexMode::eOff);
+        SL_CASE_STR(ReflexMode::eLowLatency);
+        SL_CASE_STR(ReflexMode::eLowLatencyWithBoost);
     };
     return "Unknown";
 }
@@ -102,30 +152,33 @@ inline const char* getReflexMarkerAsStr(ReflexMarker marker)
 {
     switch (marker)
     {
-        SL_CASE_STR(eReflexMarkerSimulationStart);
-        SL_CASE_STR(eReflexMarkerSimulationEnd);
-        SL_CASE_STR(eReflexMarkerRenderSubmitStart);
-        SL_CASE_STR(eReflexMarkerRenderSubmitEnd);
-        SL_CASE_STR(eReflexMarkerPresentStart);
-        SL_CASE_STR(eReflexMarkerPresentEnd);
-        SL_CASE_STR(eReflexMarkerInputSample);
-        SL_CASE_STR(eReflexMarkerTriggerFlash);
-        SL_CASE_STR(eReflexMarkerPCLatencyPing);
-        SL_CASE_STR(eReflexMarkerSleep);
+        SL_CASE_STR(ReflexMarker::eSimulationStart);
+        SL_CASE_STR(ReflexMarker::eSimulationEnd);
+        SL_CASE_STR(ReflexMarker::eRenderSubmitStart);
+        SL_CASE_STR(ReflexMarker::eRenderSubmitEnd);
+        SL_CASE_STR(ReflexMarker::ePresentStart);
+        SL_CASE_STR(ReflexMarker::ePresentEnd);
+        SL_CASE_STR(ReflexMarker::eInputSample);
+        SL_CASE_STR(ReflexMarker::eTriggerFlash);
+        SL_CASE_STR(ReflexMarker::ePCLatencyPing);
+        SL_CASE_STR(ReflexMarker::eOutOfBandRenderSubmitStart);
+        SL_CASE_STR(ReflexMarker::eOutOfBandRenderSubmitEnd);
+        SL_CASE_STR(ReflexMarker::eOutOfBandPresentStart);
+        SL_CASE_STR(ReflexMarker::eOutOfBandPresentEnd);
     };
     return "Unknown";
 }
 
 inline const char* getDLSSModeAsStr(DLSSMode mode)
 {
-    switch(mode)
+    switch (mode)
     {
-        SL_CASE_STR(eDLSSModeOff);
-        SL_CASE_STR(eDLSSModeMaxPerformance);
-        SL_CASE_STR(eDLSSModeBalanced);
-        SL_CASE_STR(eDLSSModeMaxQuality);
-        SL_CASE_STR(eDLSSModeUltraPerformance);
-        SL_CASE_STR(eDLSSModeUltraQuality);
+        SL_CASE_STR(DLSSMode::eOff);
+        SL_CASE_STR(DLSSMode::eMaxPerformance);
+        SL_CASE_STR(DLSSMode::eBalanced);
+        SL_CASE_STR(DLSSMode::eMaxQuality);
+        SL_CASE_STR(DLSSMode::eUltraPerformance);
+        SL_CASE_STR(DLSSMode::eUltraQuality);
     };
     return "Unknown";
 }
@@ -134,39 +187,44 @@ inline const char* getBufferTypeAsStr(BufferType buf)
 {
     switch (buf)
     {
-        SL_CASE_STR(eBufferTypeDepth);
-        SL_CASE_STR(eBufferTypeMVec);
-        SL_CASE_STR(eBufferTypeHUDLessColor);
-        SL_CASE_STR(eBufferTypeScalingInputColor);
-        SL_CASE_STR(eBufferTypeScalingOutputColor);
-        SL_CASE_STR(eBufferTypeNormals);
-        SL_CASE_STR(eBufferTypeRoughness);
-        SL_CASE_STR(eBufferTypeAlbedo);
-        SL_CASE_STR(eBufferTypeSpecularAlbedo);
-        SL_CASE_STR(eBufferTypeIndirectAlbedo);
-        SL_CASE_STR(eBufferTypeSpecularMVec);
-        SL_CASE_STR(eBufferTypeDisocclusionMask);
-        SL_CASE_STR(eBufferTypeEmissive);
-        SL_CASE_STR(eBufferTypeExposure);
-        SL_CASE_STR(eBufferTypeNormalRoughness);
-        SL_CASE_STR(eBufferTypeDiffuseHitNoisy);
-        SL_CASE_STR(eBufferTypeDiffuseHitDenoised);
-        SL_CASE_STR(eBufferTypeSpecularHitNoisy);
-        SL_CASE_STR(eBufferTypeSpecularHitDenoised);
-        SL_CASE_STR(eBufferTypeShadowNoisy);
-        SL_CASE_STR(eBufferTypeShadowDenoised);
-        SL_CASE_STR(eBufferTypeAmbientOcclusionNoisy);
-        SL_CASE_STR(eBufferTypeAmbientOcclusionDenoised);
-        SL_CASE_STR(eBufferTypeUIHint);
-        SL_CASE_STR(eBufferTypeShadowHint);
-        SL_CASE_STR(eBufferTypeReflectionHint);
-        SL_CASE_STR(eBufferTypeParticleHint);
-        SL_CASE_STR(eBufferTypeTransparencyHint);
-        SL_CASE_STR(eBufferTypeAnimatedTextureHint);
-        SL_CASE_STR(eBufferTypeBiasCurrentColorHint);
-        SL_CASE_STR(eBufferTypeRaytracingDistance);
-        SL_CASE_STR(eBufferTypeReflectionMotionVectors);
-        SL_CASE_STR(eBufferTypePosition);
+        SL_CASE_STR(kBufferTypeDepth);
+        SL_CASE_STR(kBufferTypeMotionVectors);
+        SL_CASE_STR(kBufferTypeHUDLessColor);
+        SL_CASE_STR(kBufferTypeScalingInputColor);
+        SL_CASE_STR(kBufferTypeScalingOutputColor);
+        SL_CASE_STR(kBufferTypeNormals);
+        SL_CASE_STR(kBufferTypeRoughness);
+        SL_CASE_STR(kBufferTypeAlbedo);
+        SL_CASE_STR(kBufferTypeSpecularAlbedo);
+        SL_CASE_STR(kBufferTypeIndirectAlbedo);
+        SL_CASE_STR(kBufferTypeSpecularMotionVectors);
+        SL_CASE_STR(kBufferTypeDisocclusionMask);
+        SL_CASE_STR(kBufferTypeEmissive);
+        SL_CASE_STR(kBufferTypeExposure);
+        SL_CASE_STR(kBufferTypeNormalRoughness);
+        SL_CASE_STR(kBufferTypeDiffuseHitNoisy);
+        SL_CASE_STR(kBufferTypeDiffuseHitDenoised);
+        SL_CASE_STR(kBufferTypeSpecularHitNoisy);
+        SL_CASE_STR(kBufferTypeSpecularHitDenoised);
+        SL_CASE_STR(kBufferTypeShadowNoisy);
+        SL_CASE_STR(kBufferTypeShadowDenoised);
+        SL_CASE_STR(kBufferTypeAmbientOcclusionNoisy);
+        SL_CASE_STR(kBufferTypeAmbientOcclusionDenoised);
+        SL_CASE_STR(kBufferTypeUIColorAndAlpha);
+        SL_CASE_STR(kBufferTypeShadowHint);
+        SL_CASE_STR(kBufferTypeReflectionHint);
+        SL_CASE_STR(kBufferTypeParticleHint);
+        SL_CASE_STR(kBufferTypeTransparencyHint);
+        SL_CASE_STR(kBufferTypeAnimatedTextureHint);
+        SL_CASE_STR(kBufferTypeBiasCurrentColorHint);
+        SL_CASE_STR(kBufferTypeRaytracingDistance);
+        SL_CASE_STR(kBufferTypeReflectionMotionVectors);
+        SL_CASE_STR(kBufferTypePosition);
+        SL_CASE_STR(kBufferTypeInvalidDepthMotionHint);
+        SL_CASE_STR(kBufferTypeAlpha);
+        SL_CASE_STR(kBufferTypeOpaqueColor);
+        SL_CASE_STR(kBufferTypeReactiveMaskHint);
+        SL_CASE_STR(kBufferTypeTransparencyAndCompositionMaskHint);
     };
     return "Unknown";
 }
@@ -175,11 +233,12 @@ inline const char* getFeatureAsStr(Feature f)
 {
     switch (f)
     {
-        SL_CASE_STR(eFeatureDLSS);
-        SL_CASE_STR(eFeatureNRD);
-        SL_CASE_STR(eFeatureNIS);
-        SL_CASE_STR(eFeatureReflex);
-        SL_CASE_STR(eFeatureCommon);
+        SL_CASE_STR(kFeatureDLSS);
+        SL_CASE_STR(kFeatureNRD);
+        SL_CASE_STR(kFeatureNIS);
+        SL_CASE_STR(kFeatureReflex);
+        SL_CASE_STR(kFeatureDLSS_G);
+        SL_CASE_STR(kFeatureCommon);
     }
     return "Unknown";
 }
@@ -188,9 +247,9 @@ inline const char* getLogLevelAsStr(LogLevel v)
 {
     switch (v)
     {
-        SL_CASE_STR(eLogLevelOff);
-        SL_CASE_STR(eLogLevelDefault);
-        SL_CASE_STR(eLogLevelVerbose);
+        SL_CASE_STR(LogLevel::eOff);
+        SL_CASE_STR(LogLevel::eDefault);
+        SL_CASE_STR(LogLevel::eVerbose);
     };
     return "Unknown";
 }
@@ -199,10 +258,26 @@ inline const char* getResourceTypeAsStr(ResourceType v)
 {
     switch (v)
     {
-        SL_CASE_STR(eResourceTypeTex2d);
-        SL_CASE_STR(eResourceTypeBuffer);
+        SL_CASE_STR(ResourceType::eTex2d);
+        SL_CASE_STR(ResourceType::eBuffer);
+        SL_CASE_STR(ResourceType::eCommandQueue);
+        SL_CASE_STR(ResourceType::eCommandBuffer);
+        SL_CASE_STR(ResourceType::eCommandPool);
+        SL_CASE_STR(ResourceType::eFence);
+        SL_CASE_STR(ResourceType::eSwapchain);
     };
     return "Unknown";
 }
 
+inline const char* getResourceLifecycleAsStr(ResourceLifecycle v)
+{
+    switch (v)
+    {
+        SL_CASE_STR(ResourceLifecycle::eOnlyValidNow);
+        SL_CASE_STR(ResourceLifecycle::eValidUntilPresent);
+        SL_CASE_STR(ResourceLifecycle::eValidUntilEvaluate);
+    };
+    return "Unknown";
 }
+
+} // namespace sl

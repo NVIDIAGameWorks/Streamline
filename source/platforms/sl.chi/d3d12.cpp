@@ -27,9 +27,12 @@
 #include <future>
 
 #include "source/core/sl.log/log.h"
+#include "source/core/sl.interposer/d3d12/d3d12.h"
 #include "source/platforms/sl.chi/d3d12.h"
 #include "shaders/copy_to_buffer_cs.h"
 #include "external/nvapi/nvapi.h"
+
+#include <d3d11_4.h>
 
 #if SL_ENABLE_PROFILING
 #pragma comment( lib, "WinPixEventRuntime.lib")
@@ -41,6 +44,8 @@ namespace sl
 {
 namespace chi
 {
+
+constexpr uint64_t kMaxSemaphoreWaitMs = 500; // 500ms max wait on any semaphore;
 
 // helper function for texture subresource calculations
 // https://msdn.microsoft.com/en-us/library/windows/desktop/dn705766(v=vs.85).aspx
@@ -57,7 +62,7 @@ ICompute *getD3D12()
 
 std::wstring D3D12::getDebugName(Resource res)
 {
-    auto unknown = (IUnknown*)res;
+    auto unknown = (IUnknown*)(res->native);
     ID3D12Pageable* pageable;
     IDXGIObject* dxgi;
     unknown->QueryInterface(&pageable);
@@ -236,267 +241,415 @@ const char * getDXGIFormatStr(uint32_t format)
     return "DXGI_INVALID_FORMAT";
 }
 
-struct CommandListContext : public ICommandListContext
+class CommandListContext : public ICommandListContext
 {
-    ID3D12CommandQueue* cmdQueue;
-    ID3D12GraphicsCommandList* cmdList;
-    std::vector<ID3D12CommandAllocator*> allocator;
-    std::vector <ID3D12Fence*> fence;
-    HANDLE fenceEvent;
-    std::vector<UINT64> fenceValue = {};
-    bool cmdListIsRecording = false;
-    std::atomic<uint32_t> index = 0;
-    std::atomic<uint32_t> lastIndex = UINT_MAX;
-    uint32_t bufferCount = 0;
-    std::wstring name;
-    std::mutex mtx;
+    struct WaitingContext
+    {
+        ID3D12Fence* fence{};
+        uint64_t syncValue{};
+    };
+    std::vector<WaitingContext> m_waitingQueue;
+
+    ID3D12CommandQueue* m_cmdQueue{};
+    ID3D12GraphicsCommandList* m_cmdList{};
+    std::vector<ID3D12CommandAllocator*> m_allocator{};
+    std::vector <ID3D12Fence*> m_fence{};
+    HANDLE m_fenceEvent{};
+    HANDLE m_fenceEventExternal{};
+    std::vector<UINT64> m_fenceValue{};
+    std::atomic<bool> m_cmdListIsRecording = false;
+    uint32_t m_index = 0;
+    uint32_t m_lastIndex = UINT_MAX;
+    uint32_t m_bufferCount = 0;
+    std::wstring m_name;
+    std::mutex m_mtxQueueList;
+
+public:
 
     void init(const char* debugName, ID3D12Device* device, ID3D12CommandQueue* queue, uint32_t count)
     {
-        std::string tmp = debugName;
-        name = std::wstring(tmp.begin(), tmp.end());
-        cmdQueue = queue;
-        auto cmdQueueDesc = cmdQueue->GetDesc();
-        bufferCount = count;
-        allocator.resize(count);
-        fence.resize(count);
-        fenceValue.resize(count);
+        m_name = extra::utf8ToUtf16(debugName);
+        m_cmdQueue = queue;
+        auto cmdQueueDesc = m_cmdQueue->GetDesc();
+        m_bufferCount = count;
+        m_allocator.resize(count);
+        m_fence.resize(count);
+        m_fenceValue.resize(count);
         for (uint32_t i = 0; i < count; i++)
         {
-            device->CreateCommandAllocator(cmdQueueDesc.Type, IID_PPV_ARGS(&allocator[i]));
-            fenceValue[i] = 0;
-            device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence[i]));
+            device->CreateCommandAllocator(cmdQueueDesc.Type, IID_PPV_ARGS(&m_allocator[i]));
+            m_fenceValue[i] = 0;
+            // To support DX11 fences have to be shared
+            device->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&m_fence[i]));
         }
 
         
-        device->CreateCommandList(0, cmdQueueDesc.Type, allocator[0], nullptr, IID_PPV_ARGS(&cmdList));
+        device->CreateCommandList(0, cmdQueueDesc.Type, m_allocator[0], nullptr, IID_PPV_ARGS(&m_cmdList));
 
-        cmdList->Close(); // Immediately close since it will be reset on first use
-        cmdList->SetName((name + L" command list").c_str());
+        m_cmdList->Close(); // Immediately close since it will be reset on first use
+        m_cmdList->SetName((m_name + L" command list").c_str());
 
-        fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+        m_fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr); 
+        m_fenceEventExternal = CreateEvent(nullptr, FALSE, FALSE, nullptr);
     }
 
     void shutdown()
     {
-        SL_SAFE_RELEASE(cmdList);
-        for (uint32_t i = 0; i < bufferCount; i++)
+        SL_SAFE_RELEASE(m_cmdList);
+        for (uint32_t i = 0; i < m_bufferCount; i++)
         {
-            SL_SAFE_RELEASE(allocator[i]);
-            SL_SAFE_RELEASE(fence[i]);
+            SL_SAFE_RELEASE(m_allocator[i]);
+            SL_SAFE_RELEASE(m_fence[i]);
         }
-        CloseHandle(fenceEvent);
-        allocator.clear();
-        fence.clear();
+        CloseHandle(m_fenceEvent);
+        CloseHandle(m_fenceEventExternal);
+        m_allocator.clear();
+        m_fence.clear();
     }
+
+    RenderAPI getType() { return RenderAPI::eD3D12; }
 
     CommandList getCmdList()
     {
-        return cmdList;
+        return m_cmdList;
     }
 
     CommandQueue getCmdQueue()
     {
-        return cmdQueue;
+        return m_cmdQueue;
     }
 
     CommandAllocator getCmdAllocator()
     {
-        return allocator[index];
+        return m_allocator[m_index];
     }
 
     Handle getFenceEvent()
     {
-        return fenceEvent;
+        return m_fenceEvent;
+    }
+
+    Fence getFence(uint32_t index)
+    {
+        return m_fence[index];
     }
 
     bool beginCommandList()
     {
-        if (cmdListIsRecording)
+        if (m_cmdListIsRecording)
         {
-            return true;
+            SL_LOG_ERROR( "Command list not closed");
+            return false;
         }
 
         // Only rest allocator if we are done with the work
-        if (fence[index]->GetCompletedValue() >= fenceValue[index])
+        if (m_fence[m_index]->GetCompletedValue() >= m_fenceValue[m_index])
         {
-            allocator[index]->Reset();
+            m_allocator[m_index]->Reset();
         }
 
-        cmdListIsRecording = SUCCEEDED(cmdList->Reset(allocator[index], nullptr));
-        if (!cmdListIsRecording)
+        m_cmdListIsRecording = SUCCEEDED(m_cmdList->Reset(m_allocator[m_index], nullptr));
+        if (!m_cmdListIsRecording)
         {
-            SL_LOG_ERROR("%S command buffer - cannot reset command list", name.c_str());
+            SL_LOG_ERROR( "%S command buffer - cannot reset command list", m_name.c_str());
         }
-        return cmdListIsRecording;
+        return m_cmdListIsRecording;
     }
 
-    bool executeCommandList()
+    bool executeCommandList(const GPUSyncInfo* info)
     {
-        std::lock_guard<std::mutex> lock(mtx);
-        assert(cmdListIsRecording);
-        cmdListIsRecording = false;
-
-        if (FAILED(cmdList->Close()))
-            return false;
-
-        ID3D12CommandList* const cmd_lists[] = { cmdList };
-        cmdQueue->ExecuteCommandLists(ARRAYSIZE(cmd_lists), cmd_lists);
-        return true;
-    }
-
-    bool flushAll()
-    {
-        std::lock_guard<std::mutex> lock(mtx);
-        for (uint32_t i = 0; i < bufferCount; i++)
+        if (!m_cmdListIsRecording)
         {
-            const UINT64 syncValue = fenceValue[i] + 1;
-            if (FAILED(cmdQueue->Signal(fence[i], syncValue)))
-            {
-                return false;
-            }
-            if (SUCCEEDED(fence[i]->SetEventOnCompletion(syncValue, fenceEvent)))
-            {
-                WaitForSingleObject(fenceEvent, INFINITE);
-            }
-            else
-            {
-                return false;
-            }
-        }
-        return true;
-    }
-    
-    uint32_t getBufferCount()
-    {
-        return bufferCount;
-    }
-
-    uint32_t getCurrentCommandListIndex()
-    {
-        return index;
-    }
-
-    uint32_t acquireNextBufferIndex(SwapChain chain)
-    {
-        return ((IDXGISwapChain4*)chain)->GetCurrentBackBufferIndex();
-    }
-
-    bool waitForCommandListToFinish(uint32_t index)
-    {
-        if (fence[index]->GetCompletedValue() < fenceValue[index])
-        {
-            if (SUCCEEDED(fence[index]->SetEventOnCompletion(fenceValue[index], fenceEvent)))
-            {
-                WaitForSingleObject(fenceEvent, INFINITE);
-            }
-            else
-            {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    bool didCommandListFinish(uint32_t index)
-    {
-        std::lock_guard<std::mutex> lock(mtx);
-        if (index >= bufferCount)
-        {
-            SL_LOG_ERROR("Invalid index");
+            SL_LOG_ERROR( "Command list not opened");
             return false;
         }
-        return fence[index]->GetCompletedValue() >= fenceValue[index];
-    }
 
-    void waitOnGPUForTheOtherQueue(const ICommandListContext* other)
-    {
-        std::lock_guard<std::mutex> lock(mtx);
-        auto tmp = (const CommandListContext*)other;
-        auto index = tmp->lastIndex.load();
-        if (tmp->cmdQueue != cmdQueue && index != UINT_MAX)
+        if (FAILED(m_cmdList->Close()))
         {
-            if (FAILED(cmdQueue->Wait(tmp->fence[index], tmp->fenceValue[index])))
-            {
-                SL_LOG_ERROR("Failed to wait on the command queue");
-            }
+            SL_LOG_ERROR( "%S command buffer - cannot close command list", m_name.c_str());
+            return false;
         }
-    }
 
-    bool waitForCommandList(FlushType ft)
-    {
-        // Flush command list, to avoid it still referencing resources that may be destroyed after this call
-        if (cmdListIsRecording)
+        if (info)
         {
-            if (!executeCommandList())
+            if ((info->waitSemaphores.size() != info->waitValues.size()) ||
+                (info->signalSemaphores.size() != info->signalValues.size()))
             {
+                SL_LOG_ERROR("Mismatching semaphore array size");
                 return false;
             }
+
+            for (size_t i = 0; i < info->waitSemaphores.size(); i++)
+            {
+                waitGPUFence(info->waitSemaphores[i], info->waitValues[i]);
+            }
         }
-        std::lock_guard<std::mutex> lock(mtx);
-        // Increment fence value to ensure it has not been signaled before
-        const UINT64 syncValue = fenceValue[index] + 1;
-        if (FAILED(cmdQueue->Signal(fence[index], syncValue)))
+
+        ID3D12CommandList* const cmd_lists[] = { m_cmdList };
+        m_cmdQueue->ExecuteCommandLists(ARRAYSIZE(cmd_lists), cmd_lists);
+
+        if (info)
         {
+            for (size_t i = 0; i < info->signalSemaphores.size(); i++)
+            {
+                signalGPUFence(info->signalSemaphores[i], info->signalValues[i]);
+            }
+        }
+
+        auto idx = m_index;
+        const UINT64 syncValue = m_fenceValue[m_index] + 1;
+        m_fenceValue[m_index] = syncValue;
+        m_lastIndex = m_index;
+        m_index = (m_index + 1) % m_bufferCount;
+
+        if (FAILED(m_cmdQueue->Signal(m_fence[idx], syncValue)))
+        {
+            SL_LOG_ERROR( "%S command buffer - cannot signal command queue", m_name.c_str());
             return false; // Cannot wait on fence if signaling was not successful
         }
-        if (ft == eCurrent)
+        
+        m_cmdListIsRecording = false;
+
+        return true;
+    }
+
+    bool isCommandListRecording()
+    {
+        return m_cmdListIsRecording;
+    }
+
+    WaitStatus waitWithoutDeadlock(uint32_t index, uint64_t value)
+    {
+        if (SUCCEEDED(m_fence[index]->SetEventOnCompletion(value, m_fenceEvent)))
         {
-            // Flushing so wait for current sync value
-            if (SUCCEEDED(fence[index]->SetEventOnCompletion(syncValue, fenceEvent)))
+            DWORD res{};
+            uint32_t waitTime = 0;
+            if (WaitForSingleObject(m_fenceEvent, kMaxSemaphoreWaitMs) == WAIT_TIMEOUT)
             {
-                WaitForSingleObject(fenceEvent, INFINITE);
-            }
-            else
-            {
-                return false;
-            }
-        }
-        else if (ft == ePrevious && lastIndex != UINT_MAX)
-        {
-            // If previous frame did not finish let's wait for it
-            if (fence[lastIndex]->GetCompletedValue() < fenceValue[lastIndex])
-            {
-                if (SUCCEEDED(fence[lastIndex]->SetEventOnCompletion(fenceValue[lastIndex], fenceEvent)))
-                {
-                    WaitForSingleObject(fenceEvent, INFINITE);
-                }
-                else
-                {
-                    return false;
-                }
+                SL_LOG_WARN("Wait on gpu fence in '%S' timed out after %llums - index %u value %llu", m_name.c_str(), kMaxSemaphoreWaitMs, index, value);
+                signalAllWaitingOnQueues();
+                return WaitStatus::eTimeout;
             }
         }
         else
         {
-            // If old frame (bufferCount ago) at this index did not finish let's wait for it
-            if (fence[index]->GetCompletedValue() < fenceValue[index])
-            {
-                if (SUCCEEDED(fence[index]->SetEventOnCompletion(fenceValue[index], fenceEvent)))
-                {
-                    WaitForSingleObject(fenceEvent, INFINITE);
-                }
-                else
-                {
-                    return false;
-                }
-            }
+            SL_LOG_ERROR("Failed to SetEventOnCompletion");
+            return WaitStatus::eError;
         }
-        // Update CPU side fence value now that it is guaranteed to have come through
-        fenceValue[index] = syncValue;
+        return WaitStatus::eNoTimeout;
+    }
 
-        lastIndex.store(index.load());
+    WaitStatus flushAll()
+    {
+        for (uint32_t i = 0; i < m_bufferCount; i++)
+        {
+            auto syncValue = ++m_fenceValue[i];
+            if (m_fence[i]->GetCompletedValue() >= syncValue)
+            {
+                SL_LOG_ERROR( "Flushing GPU encountered an invalid fence sync value");
+                return WaitStatus::eError;
+            }
+            if (FAILED(m_cmdQueue->Signal(m_fence[i], syncValue)))
+            {
+                return WaitStatus::eError;
+            }
+            return waitWithoutDeadlock(i, m_fenceValue[i]);
+        }
+        return WaitStatus::eNoTimeout;
+    }
+    
+    uint32_t getBufferCount()
+    {
+        return m_bufferCount;
+    }
 
-        index = (index + 1) % bufferCount;
+    uint32_t getCurrentCommandListIndex()
+    {
+        return m_index;
+    }
+
+    uint64_t getSyncValueAtIndex(uint32_t idx)
+    {
+        assert(idx < m_bufferCount);
+        return m_fenceValue[idx];
+    }
+    
+    SyncPoint getNextSyncPoint()
+    {
+        return { m_fence[m_index], m_fenceValue[m_index] + 1 };
+    }
+
+    int acquireNextBufferIndex(SwapChain chain, uint32_t& index, Fence* waitSemaphore)
+    {
+        index = ((IDXGISwapChain4*)chain)->GetCurrentBackBufferIndex();
+        return S_OK;
+    }
+
+    WaitStatus waitForCommandListToFinish(uint32_t index)
+    {
+        return waitWithoutDeadlock(index, m_fenceValue[index]);
+    }
+
+    bool didCommandListFinish(uint32_t index)
+    {
+        if (index >= m_bufferCount)
+        {
+            SL_LOG_ERROR( "Invalid index");
+            return true;
+        }
+        return m_fence[index]->GetCompletedValue() >= m_fenceValue[index];
+    }
+
+    bool signalAllWaitingOnQueues()
+    {
+        std::lock_guard<std::mutex> lock(m_mtxQueueList);
+        for (auto& other : m_waitingQueue)
+        {
+            // We are waiting on GPU for these queues, signal them to get out of the deadlock
+            auto syncValue = other.syncValue;
+            auto completedValue = other.fence->GetCompletedValue();
+
+            // Desperate times - desperate measures, make sure to signal new value
+            while (completedValue >= syncValue)
+            {
+                syncValue++;
+            }
+            if (FAILED(other.fence->Signal(syncValue)))
+            {
+                SL_LOG_ERROR( "Failed to signal fence value %llu", other.syncValue);
+                return false;
+            }
+            //SL_LOG_INFO("Signaled %S index %u value %llu", other.ctx->name.c_str(), other.clIndex, other.syncValue);
+        }
+        m_waitingQueue.clear();
         return true;
     }
 
-    bool present(SwapChain chain, uint32_t sync, uint32_t flags, void* params)
+    void signalGPUFenceAt(uint32_t index)
     {
-        std::lock_guard<std::mutex> lock(mtx);
+        signalGPUFence(m_fence[index], ++m_fenceValue[index]);
+    }
+
+    void signalGPUFence(Fence fence, uint64_t syncValue)
+    {
+        if (FAILED(m_cmdQueue->Signal((ID3D12Fence*)fence, syncValue)))
+        {
+            SL_LOG_ERROR( "Failed to signal on the command queue");
+        }
+    }
+
+    WaitStatus waitCPUFence(Fence fence, uint64_t syncValue)
+    {
+        // This can be called from any thread so make sure not to touch any internals
+        auto d3d12Fence = ((ID3D12Fence*)fence);
+        auto completedValue = d3d12Fence->GetCompletedValue();
+        if (completedValue < syncValue)
+        {
+            if (SUCCEEDED(d3d12Fence->SetEventOnCompletion(syncValue, m_fenceEventExternal)))
+            {
+                if (WaitForSingleObject(m_fenceEventExternal, kMaxSemaphoreWaitMs) == WAIT_TIMEOUT)
+                {
+                    SL_LOG_WARN("Wait on gpu fence in '%S' timed out after 500ms value %llu", m_name.c_str(), syncValue);
+                    return WaitStatus::eTimeout;
+                }
+            }
+            else
+            {
+                return WaitStatus::eError;
+            }
+        }
+        return WaitStatus::eNoTimeout;
+    }
+
+    void waitGPUFence(Fence fence, uint64_t syncValue)
+    {
+        if (FAILED(m_cmdQueue->Wait((ID3D12Fence*)fence, syncValue)))
+        {
+            SL_LOG_ERROR( "Failed to wait on the command queue");
+        }
+        std::lock_guard<std::mutex> lock(m_mtxQueueList);
+        bool found = false;
+        for (auto& other : m_waitingQueue)
+        {
+            if (other.fence == fence)
+            {
+                found = true;
+                other.fence = (ID3D12Fence*)fence;
+                other.syncValue = syncValue;
+                break;
+            }
+        }
+        if (!found)
+        {
+            m_waitingQueue.push_back({ (ID3D12Fence*)fence, syncValue });
+        }
+        //SL_LOG_INFO("%S waiting for %S at i%u:%llu", name.c_str(), tmp->name.c_str(), clIndex, tmp->fenceValue[clIndex] + syncValueOffset);
+    }
+
+    void syncGPU(const GPUSyncInfo* info)
+    {
+        if (info)
+        {
+            assert(info->waitSemaphores.size() == info->waitValues.size());
+            assert(info->signalSemaphores.size() == info->signalValues.size());
+
+            if ((info->waitSemaphores.size() != info->waitValues.size()) ||
+                (info->signalSemaphores.size() != info->signalValues.size()))
+            {
+                SL_LOG_ERROR("Mismatching semaphore array size");
+                return;
+            }
+            for(size_t i = 0; i < info->waitSemaphores.size(); i++)
+            {
+                waitGPUFence(info->waitSemaphores[i], info->waitValues[i]);
+            }
+            for (size_t i = 0; i < info->signalSemaphores.size(); i++)
+            {
+                signalGPUFence(info->signalSemaphores[i], info->signalValues[i]);
+            }
+        }
+    }
+
+    void waitOnGPUForTheOtherQueue(const ICommandListContext* other, uint32_t clIndex, uint64_t syncValue)
+    {
+        auto tmp = (const CommandListContext*)other;
+        if (tmp->m_cmdQueue == m_cmdQueue)
+        {
+            // Can't wait on ourselves
+            return;
+        }
+
+        waitGPUFence(tmp->m_fence[clIndex], syncValue);
+    }
+
+    WaitStatus waitForCommandList(FlushType ft)
+    {
+        // Flush command list, to avoid it still referencing resources that may be destroyed after this call
+        if (m_cmdListIsRecording)
+        {
+            if (!executeCommandList(nullptr))
+            {
+                return WaitStatus::eError;
+            }
+        }
+
+        if (ft == eCurrent)
+        {
+            return waitWithoutDeadlock(m_lastIndex, m_fenceValue[m_lastIndex]);
+        }
+        else if (ft == eDefault)
+        {
+            return waitWithoutDeadlock(m_lastIndex, m_fenceValue[m_lastIndex] - 1);
+        }
+
+        return WaitStatus::eNoTimeout;
+    }
+
+    int present(SwapChain chain, uint32_t sync, uint32_t flags, void* params)
+    {
         BOOL fullscreen = FALSE;
         ((IDXGISwapChain*)chain)->GetFullscreenState(&fullscreen, nullptr);
-        if (fullscreen)
+        if (fullscreen || sync)
         {
             flags &= ~DXGI_PRESENT_ALLOW_TEARING;
         }
@@ -504,37 +657,68 @@ struct CommandListContext : public ICommandListContext
         {
             flags |= DXGI_PRESENT_ALLOW_TEARING; // needed for vsync off in windowed mode
         }
+        
+        HRESULT res{};
         if (params)
         {
-            if (FAILED(((IDXGISwapChain1*)chain)->Present1(sync, flags, (DXGI_PRESENT_PARAMETERS*)params)))
-            {
-                SL_LOG_ERROR("Present failed");
-                return false;
-            }
+            res = ((IDXGISwapChain1*)chain)->Present1(sync, flags, (DXGI_PRESENT_PARAMETERS*)params);
         }
-        else if (FAILED(((IDXGISwapChain*)chain)->Present(sync, flags)))
+        else
         {
-            SL_LOG_ERROR("Present failed");
-            return false;
+            res = ((IDXGISwapChain*)chain)->Present(sync, flags);
         }
-        return true;
+        return res;
     }
-
 };
 
-ComputeStatus D3D12::init(Device InDevice, param::IParameters* params)
+ComputeStatus D3D12::init(Device device, param::IParameters* params)
 {
-    Generic::init(InDevice, params);
+    // First check if this is dx11 on dx12
+    ID3D11Device* deviceD3D11{};
+    ((IUnknown*)device)->QueryInterface(&deviceD3D11);
+    if (deviceD3D11)
+    {
+        SL_LOG_INFO("Detected DX11 on DX12 scenario");
+        deviceD3D11->Release();
+        IDXGIDevice* dxgiDevice;
+        deviceD3D11->QueryInterface(&dxgiDevice);
+        if (!dxgiDevice)
+        {
+            SL_LOG_ERROR( "Cannot obtain IDXGIDevice");
+            return ComputeStatus::eError;
+        }
+        dxgiDevice->Release();
+        IDXGIAdapter* adapter{};
+        dxgiDevice->GetAdapter(&adapter);
+        if (!adapter)
+        {
+            SL_LOG_ERROR( "Cannot obtain IDXGIAdapter");
+            return ComputeStatus::eError;
+        }
+        if (FAILED(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_12_1, IID_PPV_ARGS(&m_device))))
+        {
+            SL_LOG_ERROR( "D3D12CreateDevice failed");
+            return ComputeStatus::eError;
+        }
+        adapter->Release();
 
-    m_device = (ID3D12Device*)InDevice;
+        dx11On12 = true;
+
+        // From this point use new D3D12 device
+        device = m_device;
+    }
+
+    Generic::init(device, params);
+
+    m_device = (ID3D12Device*)device;
 
     UINT NodeCount = m_device->GetNodeCount();
     m_visibleNodeMask = (1 << NodeCount) - 1;
 
     if (NodeCount > MAX_NUM_NODES)
     {
-        SL_LOG_ERROR(" too many GPU nodes");
-        return eComputeStatusError;
+        SL_LOG_ERROR( " too many GPU nodes");
+        return ComputeStatus::eError;
     }
 
     HRESULT hr = S_OK;
@@ -548,7 +732,7 @@ ComputeStatus D3D12::init(Device InDevice, param::IParameters* params)
     hr = m_device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS3, &FeatureOptions3, sizeof(FeatureOptions3));
     if (FAILED(hr) || !FeatureOptions3.CastingFullyTypedFormatSupported)
     {
-        SL_LOG_ERROR(" CheckFeatureSupport() call did not succeed or the driver did not report CastingFullyTypedFormatSupported. Windows 10 RS2 or higher was expected. hr=%d", hr);
+        SL_LOG_ERROR( " CheckFeatureSupport() call did not succeed or the driver did not report CastingFullyTypedFormatSupported. Windows 10 RS2 or higher was expected. %s", std::system_category().message(hr).c_str());
         m_dbgSupportRs2RelaxedConversionRules = false;
     }
     else
@@ -569,11 +753,11 @@ ComputeStatus D3D12::init(Device InDevice, param::IParameters* params)
             heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
             heapDesc.NodeMask = (1 << Node);
             hr = m_device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&m_heap->descriptorHeap[Node]));
-            if (FAILED(hr)) { SL_LOG_ERROR(" failed to create descriptor heap, hr=%d", hr); return eComputeStatusError; }
+            if (FAILED(hr)) { SL_LOG_ERROR( " failed to create descriptor heap, hr=%d", hr); return ComputeStatus::eError; }
             m_heap->descriptorHeap[Node]->SetName(L"sl.chi.heapGPU");
             heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
             hr = m_device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&m_heap->descriptorHeapCPU[Node]));
-            if (FAILED(hr)) { SL_LOG_ERROR(" failed to create descriptor heap, hr=%d", hr); return eComputeStatusError; }
+            if (FAILED(hr)) { SL_LOG_ERROR( " failed to create descriptor heap, hr=%d", hr); return ComputeStatus::eError; }
             m_heap->descriptorHeapCPU[Node]->SetName(L"sl.chi.heapCPU");
         }
         
@@ -586,7 +770,7 @@ ComputeStatus D3D12::init(Device InDevice, param::IParameters* params)
 
     CHI_CHECK(createKernel((void*)copy_to_buffer_cs, copy_to_buffer_cs_len, "copy_to_buffer.cs", "main", m_copyKernel));
 
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::shutdown()
@@ -625,7 +809,7 @@ ComputeStatus D3D12::shutdown()
     m_rootSignatureMap.clear();
     m_psoMap.clear();
 
-    ComputeStatus Res = eComputeStatusOk;
+    ComputeStatus Res = ComputeStatus::eOk;
     for (auto& k : m_kernels)
     {
         auto kernel = (KernelDataBase*)k.second;
@@ -634,7 +818,17 @@ ComputeStatus D3D12::shutdown()
     }
     m_kernels.clear();
 
-    return Generic::shutdown();
+    m_dispatchContext.clear();
+
+    auto res = Generic::shutdown();
+
+    if (dx11On12)
+    {
+        // We created this device so release it
+        SL_SAFE_RELEASE(m_device);
+    }
+
+    return res;
 }
 
 ComputeStatus D3D12::clearCache()
@@ -645,18 +839,18 @@ ComputeStatus D3D12::clearCache()
     }
     m_resourceData.clear();
 
-    return eComputeStatusOk;
+    return Generic::clearCache();
 }
 
-ComputeStatus D3D12::getPlatformType(PlatformType &OutType)
+ComputeStatus D3D12::getRenderAPI(RenderAPI &OutType)
 {
-    OutType = ePlatformTypeD3D12;
-    return eComputeStatusOk;
+    OutType = RenderAPI::eD3D12;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::restorePipeline(CommandList cmdBuffer)
 {
-    if (!cmdBuffer) return eComputeStatusOk;
+    if (!cmdBuffer) return ComputeStatus::eOk;
 
     D3D12ThreadContext* thread = (D3D12ThreadContext*)m_getThreadContext();
     auto cmdList = ((ID3D12GraphicsCommandList*)cmdBuffer);
@@ -699,7 +893,33 @@ ComputeStatus D3D12::restorePipeline(CommandList cmdBuffer)
     {
         static_cast<ID3D12GraphicsCommandList4*>(cmdList)->SetPipelineState1(thread->cmdList->m_so);
     }
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
+}
+
+ComputeStatus D3D12::getBarrierResourceState(uint32_t barrierType, ResourceState& resourceStates)
+{
+    resourceStates = ResourceState::ePresent;
+
+    if (barrierType & (D3D12_BARRIER_LAYOUT_SHADER_RESOURCE | D3D12_BARRIER_LAYOUT_COMPUTE_QUEUE_SHADER_RESOURCE | D3D12_BARRIER_LAYOUT_DIRECT_QUEUE_SHADER_RESOURCE))
+        resourceStates = resourceStates | (ResourceState::eTextureRead);
+    if (barrierType & (D3D12_BARRIER_LAYOUT_UNORDERED_ACCESS | D3D12_BARRIER_LAYOUT_DIRECT_QUEUE_UNORDERED_ACCESS | D3D12_BARRIER_LAYOUT_COMPUTE_QUEUE_UNORDERED_ACCESS))
+        resourceStates = resourceStates | ResourceState::eStorageRW;
+    if (barrierType & D3D12_BARRIER_LAYOUT_RENDER_TARGET)
+        resourceStates = resourceStates | ResourceState::eColorAttachmentWrite;
+    if (barrierType & D3D12_BARRIER_LAYOUT_DEPTH_STENCIL_READ)
+        resourceStates = resourceStates | ResourceState::eDepthStencilAttachmentRead;
+    if (barrierType & D3D12_BARRIER_LAYOUT_DEPTH_STENCIL_WRITE)
+        resourceStates = resourceStates | ResourceState::eDepthStencilAttachmentWrite;
+    if (barrierType & (D3D12_BARRIER_LAYOUT_COPY_SOURCE | D3D12_BARRIER_LAYOUT_DIRECT_QUEUE_COPY_SOURCE | D3D12_BARRIER_LAYOUT_COMPUTE_QUEUE_COPY_SOURCE))
+        resourceStates = resourceStates | ResourceState::eCopySource;
+    if (barrierType & (D3D12_BARRIER_LAYOUT_COPY_DEST | D3D12_BARRIER_LAYOUT_DIRECT_QUEUE_COPY_DEST | D3D12_BARRIER_LAYOUT_COMPUTE_QUEUE_COPY_DEST))
+        resourceStates = resourceStates | ResourceState::eCopyDestination;
+    if (barrierType & D3D12_BARRIER_LAYOUT_RESOLVE_DEST)
+        resourceStates = resourceStates | ResourceState::eResolveDestination;
+    if (barrierType & D3D12_BARRIER_LAYOUT_RESOLVE_SOURCE)
+        resourceStates = resourceStates | ResourceState::eResolveSource;
+
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::getResourceState(uint32_t states, ResourceState& resourceStates)
@@ -735,7 +955,7 @@ ComputeStatus D3D12::getResourceState(uint32_t states, ResourceState& resourceSt
     if (states & D3D12_RESOURCE_STATES::D3D12_RESOURCE_STATE_RESOLVE_SOURCE)
         resourceStates = resourceStates | ResourceState::eResolveSource;
 
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::getNativeResourceState(ResourceState states, uint32_t& resourceStates)
@@ -778,14 +998,22 @@ ComputeStatus D3D12::getNativeResourceState(ResourceState states, uint32_t& reso
     if (states & ResourceState::eResolveSource)
         resourceStates |= D3D12_RESOURCE_STATES::D3D12_RESOURCE_STATE_RESOLVE_SOURCE;
 
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
-ComputeStatus D3D12::createKernel(void *blobData, unsigned int blobSize, const char* fileName, const char *entryPoint, Kernel &kernel)
+ComputeStatus D3D12::createKernel(void *blobData, uint32_t blobSize, const char* fileName, const char *entryPoint, Kernel &kernel)
 {
     if (!blobData || !fileName || !entryPoint)
     {
-        return eComputeStatusInvalidArgument;
+        if (fileName && entryPoint)
+        {
+            SL_LOG_ERROR( "Missing blobData for %s, (Entry: %s)", fileName, entryPoint);
+        }
+        else
+        {
+            SL_LOG_ERROR( "Unable to create kernel (bad fileName and/or entryPoint)");
+        }
+        return ComputeStatus::eInvalidArgument;
     }
 
     size_t hash = 0;
@@ -805,11 +1033,11 @@ ComputeStatus D3D12::createKernel(void *blobData, unsigned int blobSize, const c
         hash_combine(hash, ((char*)blobData)[i]);
     }
 
-    ComputeStatus Res = eComputeStatusOk;
+    ComputeStatus Res = ComputeStatus::eOk;
     KernelDataBase*data = {};
     bool missing = false;
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::scoped_lock lock(m_mutexKernel);
         auto it = m_kernels.find(hash);
         missing = it == m_kernels.end();
         if (missing)
@@ -836,16 +1064,16 @@ ComputeStatus D3D12::createKernel(void *blobData, unsigned int blobSize, const c
         }
         else
         {
-            SL_LOG_ERROR("Unsupported kernel blob");
-            return eComputeStatusInvalidArgument;
+            SL_LOG_ERROR( "Unsupported kernel blob");
+            return ComputeStatus::eInvalidArgument;
         }
     }
     else
     {
         if (data->entryPoint != entryPoint || data->name != fileName)
         {
-            SL_LOG_ERROR("Shader %s:%s has overlapping hash with shader %s:%s", data->name.c_str(), data->entryPoint.c_str(), fileName, entryPoint);
-            return eComputeStatusError;
+            SL_LOG_ERROR( "Shader %s:%s has overlapping hash with shader %s:%s", data->name.c_str(), data->entryPoint.c_str(), fileName, entryPoint);
+            return ComputeStatus::eError;
         }
         SL_LOG_WARN("Kernel %s:%s with hash 0x%llx already created!", fileName, entryPoint, hash);
     }
@@ -855,19 +1083,22 @@ ComputeStatus D3D12::createKernel(void *blobData, unsigned int blobSize, const c
 
 ComputeStatus D3D12::destroyKernel(Kernel& InKernel)
 {
-    if (!InKernel) return eComputeStatusOk; // fine to destroy null kernels
-    std::lock_guard<std::mutex> lock(m_mutex);
+    if (!InKernel) return ComputeStatus::eOk; // fine to destroy null kernels
+    std::scoped_lock lock(m_mutexKernel);
     auto it = m_kernels.find(InKernel);
     if (it == m_kernels.end())
     {
-        return eComputeStatusInvalidCall;
+        SL_LOG_WARN("Kernel %llu missing in cache, most likely destroyed already", InKernel);
     }
-    auto data = (KernelDataBase*)(it->second);
-    SL_LOG_VERBOSE("Destroying kernel %s", data->name.c_str());
-    delete it->second;
-    m_kernels.erase(it);
-    InKernel = {};
-    return eComputeStatusOk;
+    else
+    {
+        auto data = (KernelDataBase*)(it->second);
+        SL_LOG_VERBOSE("Destroying kernel %s", data->name.c_str());
+        delete it->second;
+        m_kernels.erase(it);
+        InKernel = {};
+    }
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::createCommandListContext(CommandQueue queue, uint32_t count, ICommandListContext*& ctx, const char friendlyName[])
@@ -875,7 +1106,7 @@ ComputeStatus D3D12::createCommandListContext(CommandQueue queue, uint32_t count
     auto tmp = new CommandListContext();
     tmp->init(friendlyName, m_device, (ID3D12CommandQueue*)queue, count);
     ctx = tmp;
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::destroyCommandListContext(ICommandListContext* ctx)
@@ -886,7 +1117,7 @@ ComputeStatus D3D12::destroyCommandListContext(ICommandListContext* ctx)
         tmp->shutdown();
         delete tmp;
     }
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::createCommandQueue(CommandQueueType type, CommandQueue& queue, const char friendlyName[], uint32_t index)
@@ -897,12 +1128,13 @@ ComputeStatus D3D12::createCommandQueue(CommandQueueType type, CommandQueue& que
     ID3D12CommandQueue* tmp;
     if (FAILED(m_device->CreateCommandQueue(&desc, __uuidof(ID3D12CommandQueue), (void**)&tmp)))
     {
-        SL_LOG_ERROR("Failed to create command queue %s", friendlyName);
-        return eComputeStatusError;
+        SL_LOG_ERROR( "Failed to create command queue %s", friendlyName);
+        return ComputeStatus::eError;
     }
     queue = tmp;
-    setDebugName(queue, friendlyName);
-    return eComputeStatusOk;
+    sl::Resource r(ResourceType::eCommandQueue, queue);
+    setDebugName(&r, friendlyName);
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::destroyCommandQueue(CommandQueue& queue)
@@ -912,23 +1144,44 @@ ComputeStatus D3D12::destroyCommandQueue(CommandQueue& queue)
         auto tmp = (ID3D12CommandQueue*)queue;
         SL_SAFE_RELEASE(tmp);
     }    
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
+}
+
+ComputeStatus D3D12::createFence(FenceFlags flags, uint64_t initialValue, Fence& outFence, const char friendlyName[])
+{
+    ID3D12Fence* fence{};
+    D3D12_FENCE_FLAGS d3d12Flags = D3D12_FENCE_FLAG_NONE;
+    if (flags & eFenceFlagsShared)
+    {
+        d3d12Flags |= D3D12_FENCE_FLAG_SHARED;
+    }
+    if (FAILED(m_device->CreateFence(initialValue, d3d12Flags, IID_PPV_ARGS(&fence))))
+    {
+        SL_LOG_ERROR( "Failed to create ID3D12Fence");
+    }
+    else
+    {
+        outFence = fence;
+        sl::Resource r(ResourceType::eFence, fence);
+        setDebugName(&r, friendlyName);
+    }
+    return fence ? ComputeStatus::eOk : ComputeStatus::eError;
 }
 
 ComputeStatus D3D12::setFullscreenState(SwapChain chain, bool fullscreen, Output out)
 {
-    if (!chain) return eComputeStatusInvalidArgument;
+    if (!chain) return ComputeStatus::eInvalidArgument;
     IDXGISwapChain* swapChain = (IDXGISwapChain*)chain;
     if (FAILED(swapChain->SetFullscreenState(fullscreen, (IDXGIOutput*)out)))
     {
-        SL_LOG_ERROR("Failed to set fullscreen state");
+        SL_LOG_ERROR( "Failed to set fullscreen state");
     }
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::getRefreshRate(SwapChain chain, float& refreshRate)
 {
-    if (!chain) return eComputeStatusInvalidArgument;
+    if (!chain) return ComputeStatus::eInvalidArgument;
     IDXGISwapChain* swapChain = (IDXGISwapChain*)chain;
     IDXGIOutput* dxgiOutput;
     HRESULT hr = swapChain->GetContainingOutput(&dxgiOutput);
@@ -975,7 +1228,7 @@ ComputeStatus D3D12::getRefreshRate(SwapChain chain, float& refreshRate)
                                     UINT denominator = p.targetInfo.refreshRate.Denominator;
                                     double refrate = (double)numerator / (double)denominator;
                                     refreshRate = (float)refrate;
-                                    return eComputeStatusOk;
+                                    return ComputeStatus::eOk;
                                 }
                             }
                         }
@@ -984,8 +1237,8 @@ ComputeStatus D3D12::getRefreshRate(SwapChain chain, float& refreshRate)
             }
         }
     }
-    SL_LOG_ERROR("Failed to retrieve refresh rate from swapchain 0x%llx", chain);
-    return eComputeStatusError;
+    SL_LOG_ERROR( "Failed to retrieve refresh rate from swapchain 0x%llx", chain);
+    return ComputeStatus::eError;
 }
 
 ComputeStatus D3D12::getSwapChainBuffer(SwapChain chain, uint32_t index, Resource& buffer)
@@ -993,11 +1246,13 @@ ComputeStatus D3D12::getSwapChainBuffer(SwapChain chain, uint32_t index, Resourc
     ID3D12Resource* tmp;
     if (FAILED(((IDXGISwapChain*)chain)->GetBuffer(index, IID_PPV_ARGS(&tmp))))
     {
-        SL_LOG_ERROR("Failed to get buffer from swapchain");
-        return eComputeStatusError;
+        SL_LOG_ERROR( "Failed to get buffer from swapchain");
+        return ComputeStatus::eError;
     }
-    buffer = tmp;
-    return eComputeStatusOk;
+    buffer = new sl::Resource(ResourceType::eTex2d, tmp);
+    // We free these buffers but never allocate them so account for the VRAM
+    manageVRAM(buffer, VRAMOperation::eAlloc);
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::bindSharedState(CommandList InCmdList, UINT node)
@@ -1009,7 +1264,7 @@ ComputeStatus D3D12::bindSharedState(CommandList InCmdList, UINT node)
     ID3D12DescriptorHeap *Heaps[] = { m_heap->descriptorHeap[ctx.node] };
     ctx.cmdList->SetDescriptorHeaps(1, Heaps);
 
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::bindKernel(const Kernel kernelToBind)
@@ -1017,12 +1272,12 @@ ComputeStatus D3D12::bindKernel(const Kernel kernelToBind)
     auto& ctx = m_dispatchContext.getContext();
     
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::scoped_lock lock(m_mutexKernel);
         auto it = m_kernels.find(kernelToBind);
         if (it == m_kernels.end())
         {
-            SL_LOG_ERROR("Trying to bind kernel which has not been created");
-            return eComputeStatusInvalidCall;
+            SL_LOG_ERROR( "Trying to bind kernel which has not been created");
+            return ComputeStatus::eInvalidCall;
         }
         ctx.kernel = (KernelDataBase*)(*it).second;
     }
@@ -1043,13 +1298,13 @@ ComputeStatus D3D12::bindKernel(const Kernel kernelToBind)
     }
     //SL_LOG_INFO("Binding kernel %s:%s", ctx.kernel->name.c_str(), ctx.kernel->entryPoint.c_str());
     
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::bindSampler(uint32_t pos, uint32_t base, Sampler sampler)
 {
     auto& ctx = m_dispatchContext.getContext();
-    if (!ctx.kernel || base >= 8) return eComputeStatusInvalidArgument;
+    if (!ctx.kernel || base >= 8) return ComputeStatus::eInvalidArgument;
 
     auto &kdd = (*ctx.kddMap)[ctx.kernel->hash];
     if (sampler == Sampler::eSamplerPointClamp)
@@ -1074,19 +1329,28 @@ ComputeStatus D3D12::bindSampler(uint32_t pos, uint32_t base, Sampler sampler)
     }
     kdd.numSamplers = std::max(base + 1, kdd.numSamplers);
 
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::bindConsts(uint32_t pos, uint32_t base, void *data, size_t dataSize, uint32_t instances)
 {
     auto& ctx = m_dispatchContext.getContext();
-    if (!ctx.kernel) return eComputeStatusInvalidArgument;
+    if (!ctx.kernel) return ComputeStatus::eInvalidArgument;
+
+    if (instances < 3)
+    {
+        SL_LOG_WARN("Detected too low instance count for circular constant buffer - please use num_viewports * 3 formula");
+    }
 
     auto &kdd = (*ctx.kddMap)[ctx.kernel->hash];
+    kdd.slot = pos;
     if (kdd.addSlot(kdd.slot))
     {
         kdd.rootRanges[kdd.slot].Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, base);
         kdd.rootParameters[kdd.slot].InitAsConstantBufferView(base);
+    }
+    if (!kdd.cb[kdd.slot])
+    {
         kdd.cb[kdd.slot] = new ConstantBuffer();
         kdd.cb[kdd.slot]->create(m_device, (uint32_t)dataSize, instances);
     }
@@ -1103,16 +1367,16 @@ ComputeStatus D3D12::bindConsts(uint32_t pos, uint32_t base, void *data, size_t 
     kdd.validate(kdd.slot, D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, base);
     //SL_LOG_INFO("binding CBV 0x%llx", kdd.handles[slot]);
 #endif
-    kdd.slot++;
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::bindTexture(uint32_t pos, uint32_t base, Resource resource, uint32_t mipOffset, uint32_t mipLevels)
 {
     auto& ctx = m_dispatchContext.getContext();
-    if (!ctx.kernel) return eComputeStatusInvalidArgument;
+    if (!ctx.kernel) return ComputeStatus::eInvalidArgument;
 
     auto &kdd = (*ctx.kddMap)[ctx.kernel->hash];
+    kdd.slot = pos;
     if (kdd.addSlot(kdd.slot))
     {
         kdd.rootRanges[kdd.slot].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, base);
@@ -1120,7 +1384,7 @@ ComputeStatus D3D12::bindTexture(uint32_t pos, uint32_t base, Resource resource,
     }
 
     // Resource can be null if shader is not using this slot
-    if (resource)
+    if (resource && resource->native)
     {
         ResourceDriverData data = {};
         CHI_CHECK(getTextureDriverData(resource, data, mipOffset, mipLevels));
@@ -1139,16 +1403,16 @@ ComputeStatus D3D12::bindTexture(uint32_t pos, uint32_t base, Resource resource,
     {
         kdd.handles[kdd.slot] = 0;
     }
-    kdd.slot++;
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::bindRWTexture(uint32_t pos, uint32_t base, Resource resource, uint32_t mipOffset)
 {
     auto& ctx = m_dispatchContext.getContext();
-    if (!ctx.kernel) return eComputeStatusInvalidArgument;
+    if (!ctx.kernel) return ComputeStatus::eInvalidArgument;
 
     auto &kdd = (*ctx.kddMap)[ctx.kernel->hash];
+    kdd.slot = pos;
     if (kdd.addSlot(kdd.slot))
     {
         kdd.rootRanges[kdd.slot].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, base);
@@ -1156,10 +1420,10 @@ ComputeStatus D3D12::bindRWTexture(uint32_t pos, uint32_t base, Resource resourc
     }
 
     // Resource can be null if shader is not using this slot
-    if (resource)
+    if (resource && resource->native)
     {
         ResourceDriverData data = {};
-        CHI_CHECK(getSurfaceDriverData((ID3D12Resource*)resource, data, mipOffset));
+        CHI_CHECK(getSurfaceDriverData(resource, data, mipOffset));
         auto handle = CD3DX12_GPU_DESCRIPTOR_HANDLE(m_heap->descriptorHeap[ctx.node]->GetGPUDescriptorHandleForHeapStart(), data.descIndex, m_descriptorSize);
         kdd.handles[kdd.slot] = handle.ptr;
 #ifndef SL_PRODUCTION
@@ -1174,8 +1438,7 @@ ComputeStatus D3D12::bindRWTexture(uint32_t pos, uint32_t base, Resource resourc
     {
         kdd.handles[kdd.slot] = 0;
     }
-    kdd.slot++;
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::bindRawBuffer(uint32_t pos, uint32_t base, Resource resource)
@@ -1185,24 +1448,40 @@ ComputeStatus D3D12::bindRawBuffer(uint32_t pos, uint32_t base, Resource resourc
     return bindRWTexture(pos, base, resource);
 }
 
-ComputeStatus D3D12::dispatch(unsigned int blocksX, unsigned int blocksY, unsigned int blocksZ)
+ComputeStatus D3D12::dispatch(uint32_t blocksX, uint32_t blocksY, uint32_t blocksZ)
 {
     auto& ctx = m_dispatchContext.getContext();
-    if (!ctx.kernel) return eComputeStatusInvalidArgument;
+    if (!ctx.kernel) return ComputeStatus::eInvalidArgument;
 
     auto &kdd = (*ctx.kddMap)[ctx.kernel->hash];
-    ComputeStatus Res = eComputeStatusOk;
+    ComputeStatus Res = ComputeStatus::eOk;
     
     {
         if (!kdd.rootSignature)
         {
+            //! Debug driver complains if we leave empty slot for the sampler so find and remove any.
+            //! 
+            //! We use static samplers always.
+            auto rootParameters = kdd.rootParameters;
+            auto it = rootParameters.begin();
+            while (it != rootParameters.end())
+            {
+                auto& param = *it;
+                if (param.ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE && param.DescriptorTable.NumDescriptorRanges == 0)
+                {
+                    it = rootParameters.erase(it);
+                    continue;
+                }
+                it++;
+            }
+
             CD3DX12_ROOT_SIGNATURE_DESC rootSignatureDesc;
-            rootSignatureDesc.Init((UINT)kdd.rootParameters.size(), kdd.rootParameters.data(), kdd.numSamplers, kdd.samplers, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+            rootSignatureDesc.Init((UINT)rootParameters.size(), rootParameters.data(), kdd.numSamplers, kdd.samplers, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
             auto hash = hashRootSignature(rootSignatureDesc);
             auto node = ctx.node << 1;
 
             {
-                std::lock_guard<std::mutex> lock(m_mutex);
+                std::scoped_lock lock(m_mutexKernel);
                 auto it = m_rootSignatureMap.find(hash);
                 if (it == m_rootSignatureMap.end())
                 {
@@ -1211,14 +1490,14 @@ ComputeStatus D3D12::dispatch(unsigned int blocksX, unsigned int blocksY, unsign
                     D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1, &signature, &error);
                     if (error)
                     {
-                        SL_LOG_ERROR("D3D12SerializeRootSignature failed %s", (const char*)error->GetBufferPointer());
+                        SL_LOG_ERROR( "D3D12SerializeRootSignature failed %s", (const char*)error->GetBufferPointer());
                         error->Release();
-                        return eComputeStatusError;
+                        return ComputeStatus::eError;
                     }
                     if (FAILED(m_device->CreateRootSignature(node, signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&kdd.rootSignature))))
                     {
-                        SL_LOG_ERROR("Failed to create root signature");
-                        return eComputeStatusError;
+                        SL_LOG_ERROR( "Failed to create root signature");
+                        return ComputeStatus::eError;
                     }
                     SL_LOG_VERBOSE("Created root signature 0x%llx with hash %llu", kdd.rootSignature, hash);
                     m_rootSignatureMap[hash] = kdd.rootSignature;
@@ -1231,7 +1510,7 @@ ComputeStatus D3D12::dispatch(unsigned int blocksX, unsigned int blocksY, unsign
 
             {
                 hash_combine(hash, ctx.kernel->hash);
-                std::lock_guard<std::mutex> lock(m_mutex);
+                std::scoped_lock lock(m_mutexKernel);
                 auto it = m_psoMap.find(hash);
                 if (it == m_psoMap.end())
                 {
@@ -1241,8 +1520,8 @@ ComputeStatus D3D12::dispatch(unsigned int blocksX, unsigned int blocksY, unsign
                     psoDesc.NodeMask = node;
                     if (FAILED(m_device->CreateComputePipelineState(&psoDesc, IID_PPV_ARGS(&kdd.pso))))
                     {
-                        SL_LOG_ERROR("Failed to create CS pipeline state");
-                        return eComputeStatusError;
+                        SL_LOG_ERROR( "Failed to create CS pipeline state");
+                        return ComputeStatus::eError;
                     }
                     SL_LOG_VERBOSE("Created pipeline state 0x%llx with hash %llu", kdd.pso, hash);
                     m_psoMap[hash] = kdd.pso;
@@ -1256,27 +1535,44 @@ ComputeStatus D3D12::dispatch(unsigned int blocksX, unsigned int blocksY, unsign
 
         if (!kdd.rootSignature || !kdd.pso)
         {
-            SL_LOG_ERROR("Failed to create root signature or pso for kernel %s:%s", ctx.kernel->name.c_str(), ctx.kernel->entryPoint.c_str());
-            return eComputeStatusError;
+            SL_LOG_ERROR( "Failed to create root signature or pso for kernel %s:%s", ctx.kernel->name.c_str(), ctx.kernel->entryPoint.c_str());
+            return ComputeStatus::eError;
         }
 
         ctx.cmdList->SetComputeRootSignature(kdd.rootSignature);
         ctx.cmdList->SetPipelineState(kdd.pso);
-        auto numSlots = kdd.rootParameters.size();
-        for (auto i = 0; i < numSlots; i++)
+
+        //! Set root parameters by accounting for the empty sampler slot(s) (if any)
+        //! 
+        uint32_t slot = 0;
+        auto itp = kdd.rootParameters.begin();
+        auto ith = kdd.handles.begin();
+        while (itp != kdd.rootParameters.end() && ith != kdd.handles.end())
         {
-            if (kdd.rootParameters[i].ParameterType == D3D12_ROOT_PARAMETER_TYPE_CBV)
+            const auto& param = *itp;
+            const auto& handle = *ith;
+            if (param.ParameterType == D3D12_ROOT_PARAMETER_TYPE_CBV)
             {
-                ctx.cmdList->SetComputeRootConstantBufferView(i, { kdd.handles[i] });
+                ctx.cmdList->SetComputeRootConstantBufferView(slot, { handle });
             }
-            else if (kdd.rootParameters[i].ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE)
+            else if (param.ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE)
             {
-                // To avoid triggering debug layer error, nullptr is not allowed
-                if (kdd.handles[i])
+                if (param.DescriptorTable.NumDescriptorRanges == 0)
                 {
-                    ctx.cmdList->SetComputeRootDescriptorTable(i, { kdd.handles[i] });
+                    // Empty slot, just skip
+                    itp++;
+                    ith++;
+                    continue;
+                }
+                // To avoid triggering debug layer error, nullptr is not allowed
+                if (handle)
+                {
+                    ctx.cmdList->SetComputeRootDescriptorTable(slot, { handle });
                 }
             }
+            itp++;
+            ith++;
+            slot++;
         }
         ctx.cmdList->Dispatch(blocksX, blocksY, blocksZ);
     }
@@ -1318,7 +1614,7 @@ size_t D3D12::hashRootSignature(const CD3DX12_ROOT_SIGNATURE_DESC& desc)
         }
         else
         {
-            SL_LOG_ERROR("Unsupported parameter type in root signature");
+            SL_LOG_ERROR( "Unsupported parameter type in root signature");
         }
     }
     return h;
@@ -1349,10 +1645,11 @@ UINT D3D12::getNewAndIncreaseDescIndex()
 
 ComputeStatus D3D12::getTextureDriverData(Resource res, ResourceDriverData &data, uint32_t mipOffset, uint32_t mipLevels, Sampler sampler)
 {
-    ID3D12Resource *resource = (ID3D12Resource*)res;
-    if (!resource) return eComputeStatusInvalidArgument;
+    if (!res || !res->native) return ComputeStatus::eInvalidArgument;
 
-    std::lock_guard<std::mutex> lock(m_mutex);
+    ID3D12Resource* resource = (ID3D12Resource*)(res->native);
+
+    std::scoped_lock lock(m_mutexResource);
 
     uint32_t hash = (mipOffset << 16) | mipLevels;
 
@@ -1372,7 +1669,7 @@ ComputeStatus D3D12::getTextureDriverData(Resource res, ResourceDriverData &data
         SRVDesc.Texture2D.MipLevels = mipLevels ? mipLevels : desc.MipLevels;
         SRVDesc.Texture2D.MostDetailedMip = mipOffset;
 
-        auto name = getDebugName(resource);
+        auto name = getDebugName(res);
         SL_LOG_VERBOSE("Caching texture 0x%llx(%S) node %u fmt %s size (%u,%u) mip %u mips %u sampler[%d]", resource, name.c_str(), node, getDXGIFormatStr(desc.Format), (UINT)desc.Width, (UINT)desc.Height, SRVDesc.Texture2D.MostDetailedMip, SRVDesc.Texture2D.MipLevels, sampler);
 
         m_device->CreateShaderResourceView(resource, &SRVDesc, currentCPUHandle);
@@ -1386,15 +1683,16 @@ ComputeStatus D3D12::getTextureDriverData(Resource res, ResourceDriverData &data
         data = (*it).second[hash];
     }
     assert(data.heap == m_heap);
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::getSurfaceDriverData(Resource res, ResourceDriverData &data, uint32_t mipOffset)
 {
-    ID3D12Resource *resource = (ID3D12Resource*)res;
-    if (!resource) return eComputeStatusInvalidArgument;
+    if (!res || !res->native) return ComputeStatus::eInvalidArgument;
 
-    std::lock_guard<std::mutex> lock(m_mutex);
+    ID3D12Resource* resource = (ID3D12Resource*)(res->native);
+
+    std::scoped_lock lock(m_mutexResource);
 
     uint32_t hash = mipOffset << 16;
 
@@ -1403,11 +1701,10 @@ ComputeStatus D3D12::getSurfaceDriverData(Resource res, ResourceDriverData &data
     {
         auto node = 0; // FIX THIS
         data.descIndex = getNewAndIncreaseDescIndex();
-        
 
         D3D12_RESOURCE_DESC desc = resource->GetDesc();
 
-        auto name = getDebugName(resource);
+        auto name = getDebugName(res);
         D3D12_UNORDERED_ACCESS_VIEW_DESC UAVDesc = {};
         if (desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
         {
@@ -1429,8 +1726,8 @@ ComputeStatus D3D12::getSurfaceDriverData(Resource res, ResourceDriverData &data
 
             if (!isSupportedFormat(UAVDesc.Format, 0, D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD | D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE))
             {
-                SL_LOG_ERROR("Format %s cannot be used as UAV", getDXGIFormatStr(UAVDesc.Format));
-                return eComputeStatusError;
+                SL_LOG_ERROR( "Format %s cannot be used as UAV", getDXGIFormatStr(UAVDesc.Format));
+                return ComputeStatus::eError;
             }
 
             SL_LOG_VERBOSE("Caching rwtexture 0x%llx(%S) node %u fmt %s size (%u,%u) mip %u", resource, name.c_str(), node, getDXGIFormatStr(desc.Format), (UINT)desc.Width, (UINT)desc.Height, UAVDesc.Texture2D.MipSlice);
@@ -1451,7 +1748,7 @@ ComputeStatus D3D12::getSurfaceDriverData(Resource res, ResourceDriverData &data
     }
     assert(data.heap == m_heap);
 
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 bool D3D12::isSupportedFormat(DXGI_FORMAT format, int flag1, int flag2)
@@ -1463,7 +1760,7 @@ bool D3D12::isSupportedFormat(DXGI_FORMAT format, int flag1, int flag2)
     {
         return (FormatSupport.Support1 & flag1) != 0 || (FormatSupport.Support2 & flag2) != 0;
     }
-    SL_LOG_ERROR("Format %s is unsupported - hres %lu flags %d %d", getDXGIFormatStr(format), hr, flag1, flag2);
+    SL_LOG_ERROR( "Format %s is unsupported - hres %lu flags %d %d", getDXGIFormatStr(format), hr, flag1, flag2);
     return false;
 }
 
@@ -1489,20 +1786,16 @@ ComputeStatus D3D12::createTexture2DResourceSharedImpl(ResourceDescription &reso
     }
     texDesc.Width = resourceDesc.width;
     texDesc.Height = resourceDesc.height;
+    texDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
     switch(resourceDesc.heapType)
     {
         case eHeapTypeReadback:
-            texDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
             NativeHeapType = D3D12_HEAP_TYPE_READBACK;
             break;
         case eHeapTypeUpload:
-            texDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
             NativeHeapType = D3D12_HEAP_TYPE_UPLOAD;
             break;
-        default:
-            assert(0);// fall through
         case eHeapTypeDefault:
-            texDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
             NativeHeapType = D3D12_HEAP_TYPE_DEFAULT;
             break;
     }
@@ -1537,39 +1830,39 @@ ComputeStatus D3D12::createTexture2DResourceSharedImpl(ResourceDescription &reso
         initialState &= ~(ResourceState::eDepthStencilAttachmentRead | ResourceState::eDepthStencilAttachmentWrite);
     }
 
+    if (resourceDesc.flags & ResourceFlags::eSharedResource)
+    {
+        texDesc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS;
+    }
+
     D3D12_RESOURCE_STATES nativeInitialState = toD3D12States(initialState);
 
     CD3DX12_HEAP_PROPERTIES heapProp(NativeHeapType, resourceDesc.creationMask, resourceDesc.visibilityMask ? resourceDesc.visibilityMask : m_visibleNodeMask);
 
     if (m_allocateCallback)
     {
-        ResourceDesc desc = { ResourceType::eResourceTypeTex2d, &texDesc, (uint32_t)nativeInitialState, &heapProp, nullptr };
+        ResourceAllocationDesc desc = { ResourceType::eTex2d, &texDesc, (uint32_t)nativeInitialState, &heapProp };
         auto result = m_allocateCallback(&desc, m_device);
         res = (ID3D12Resource*)result.native;
-
-        // We provide native device so in this case we 
-        // need to call onHostResourceCreated manually
-        chi::ResourceInfo info = {};
-        info.desc.width = (uint32_t)texDesc.Width;
-        info.desc.height = (uint32_t)texDesc.Height;
-        info.desc.nativeFormat = (uint32_t)texDesc.Format;
-        info.desc.mips = (uint32_t)texDesc.MipLevels;
-        info.desc.flags = chi::ResourceFlags::eShaderResource;
-        info.desc.state = initialState;
-        onHostResourceCreated(res, info);
     }
     else
     {
-        m_device->CreateCommittedResource(&heapProp, D3D12_HEAP_FLAG_NONE, &texDesc, nativeInitialState, nullptr, IID_PPV_ARGS(&res));
+        auto hr = m_device->CreateCommittedResource(&heapProp, D3D12_HEAP_FLAG_NONE, &texDesc, nativeInitialState, nullptr, IID_PPV_ARGS(&res));
+        if (FAILED(hr))
+        {
+            SL_LOG_ERROR( "CreateCommittedResource failed %s", std::system_category().message(hr).c_str());
+        }
     }
 
-    outResource = res;
-    if (!outResource)
+    if (!res)
     {
-        SL_LOG_ERROR(" CreateCommittedResource failed");
-        return eComputeStatusError;
+        SL_LOG_ERROR( " CreateCommittedResource failed");
+        return ComputeStatus::eError;
     }
-    return eComputeStatusOk;
+    
+    outResource = new sl::Resource(ResourceType::eTex2d, res);
+
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::createBufferResourceImpl(ResourceDescription &resourceDesc, Resource &outResource, ResourceState initialState)
@@ -1595,6 +1888,7 @@ ComputeStatus D3D12::createBufferResourceImpl(ResourceDescription &resourceDesc,
             break;
         case eHeapTypeUpload:
             bufferDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+            initialState |= ResourceState::eGenericRead; // Keep validation layer happy when creating NGX resources
             break;
         case eHeapTypeReadback:
             bufferDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
@@ -1609,56 +1903,47 @@ ComputeStatus D3D12::createBufferResourceImpl(ResourceDescription &resourceDesc,
 
     if (m_allocateCallback)
     {
-        ResourceDesc desc = { ResourceType::eResourceTypeBuffer, &bufferDesc, (uint32_t)NativeInitialState, &heapProp };
+        ResourceAllocationDesc desc = { ResourceType::eBuffer, &bufferDesc, (uint32_t)NativeInitialState, &heapProp };
         auto result = m_allocateCallback(&desc, m_device);
         res = (ID3D12Resource*)result.native;
-
-        // We provide native device so in this case we 
-        // need to call onHostResourceCreated manually
-        chi::ResourceInfo info = {};
-        info.desc.width = (uint32_t)bufferDesc.Width;
-        info.desc.height = (uint32_t)bufferDesc.Height;
-        info.desc.nativeFormat = (uint32_t)bufferDesc.Format;
-        info.desc.mips = (uint32_t)bufferDesc.MipLevels;
-        info.desc.flags = chi::ResourceFlags::eRawOrStructuredBuffer;
-        info.desc.state = initialState;
-        onHostResourceCreated(res, info);
     }
     else
     {
         m_device->CreateCommittedResource(&heapProp, D3D12_HEAP_FLAG_NONE, &bufferDesc, NativeInitialState, nullptr, IID_PPV_ARGS(&res));
     }
 
-    outResource = res;
+    outResource = new sl::Resource(ResourceType::eBuffer, res);
     if (!outResource)
     {
-        SL_LOG_ERROR(" CreateCommittedResource failed");
-        return eComputeStatusError;
+        SL_LOG_ERROR( " CreateCommittedResource failed");
+        return ComputeStatus::eError;
     }
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::setDebugName(Resource res, const char name[])
 {
-    ID3D12Pageable *resource = (ID3D12Pageable*)res;
+#if !(defined SL_PRODUCTION || defined SL_REL_EXT_DEV)
+    ID3D12Pageable *resource = (ID3D12Pageable*)(res->native);
     resource->SetPrivateData(WKPDID_D3DDebugObjectName, (UINT)strlen(name), name);
-    return eComputeStatusOk;
+#endif
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::copyHostToDeviceBuffer(CommandList InCmdList, uint64_t InSize, const void *InData, Resource InUploadResource, Resource InTargetResource, unsigned long long InUploadOffset, unsigned long long InDstOffset)
 {
     UINT8 *StagingPtr = nullptr;
 
-    ID3D12Resource *Resource = (ID3D12Resource*)InTargetResource;
-    ID3D12Resource *Scratch = (ID3D12Resource*)InUploadResource;
+    ID3D12Resource *Resource = (ID3D12Resource*)(InTargetResource->native);
+    ID3D12Resource *Scratch = (ID3D12Resource*)(InUploadResource->native);
 
     //SL_LOG_INFO("Scratch size %llu", Scratch->GetDesc().Width * Scratch->GetDesc().Height);
 
     HRESULT hr = Scratch->Map(0, NULL, reinterpret_cast<void**>(&StagingPtr));
     if (hr != S_OK)
     {
-        SL_LOG_ERROR(" failed to map buffer - error 0x%lx", hr);
-        return eComputeStatusError;
+        SL_LOG_ERROR( " failed to map buffer - error %s", std::system_category().message(hr).c_str());
+        return ComputeStatus::eError;
     }
 
     memcpy(StagingPtr + InUploadOffset, InData, InSize);
@@ -1667,20 +1952,20 @@ ComputeStatus D3D12::copyHostToDeviceBuffer(CommandList InCmdList, uint64_t InSi
 
     ((ID3D12GraphicsCommandList*)InCmdList)->CopyBufferRegion(Resource, InDstOffset, Scratch, InUploadOffset, InSize);
 
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::copyHostToDeviceTexture(CommandList cmdList, uint64_t InSize, uint64_t RowPitch, const void* InData, Resource InTargetResource, Resource& InUploadResource)
 {
     if (!cmdList || !InData || !InTargetResource)
     {
-        return eComputeStatusInvalidArgument;
+        return ComputeStatus::eInvalidArgument;
     }
 
     uint64_t depthPitch = 1;
     uint64_t mipLevel = 0;
     uint64_t arraySlice = 0;
-    ID3D12Resource* dest = (ID3D12Resource*)InTargetResource;
+    ID3D12Resource* dest = (ID3D12Resource*)(InTargetResource->native);
     D3D12_RESOURCE_DESC resourceDesc = dest->GetDesc();
 
     uint32_t subresource = calcSubresource((uint32_t)mipLevel, (uint32_t)arraySlice, 0, (uint32_t)resourceDesc.MipLevels, resourceDesc.DepthOrArraySize);
@@ -1693,7 +1978,7 @@ ComputeStatus D3D12::copyHostToDeviceTexture(CommandList cmdList, uint64_t InSiz
     m_device->GetCopyableFootprints(&resourceDesc, subresource, 1, 0, &footprint, &numRows, &rowSizeInBytes, &totalBytes);
     assert(numRows <= footprint.Footprint.Height);
 
-    ID3D12Resource* uploadBuffer = (ID3D12Resource*)InUploadResource;
+    ID3D12Resource* uploadBuffer = (ID3D12Resource*)(InUploadResource->native);
     void* cpuVA = nullptr;
     uploadBuffer->Map(0, nullptr, &cpuVA);
     memcpy(cpuVA, InData, InSize);
@@ -1710,16 +1995,16 @@ ComputeStatus D3D12::copyHostToDeviceTexture(CommandList cmdList, uint64_t InSiz
     srcCopyLocation.pResource = uploadBuffer;
 
     ((ID3D12GraphicsCommandList*)cmdList)->CopyTextureRegion(&destCopyLocation, 0, 0, 0, &srcCopyLocation, nullptr);
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::copyDeviceTextureToDeviceBuffer(CommandList cmdList, Resource srcTexture, Resource dstBuffer)
 {
     if (!cmdList || !srcTexture || !dstBuffer)
     {
-        return eComputeStatusInvalidArgument;
+        return ComputeStatus::eInvalidArgument;
     }
-    ID3D12Resource* tex = (ID3D12Resource*)srcTexture;
+    ID3D12Resource* tex = (ID3D12Resource*)(srcTexture->native);
     D3D12_RESOURCE_DESC resourceDesc = tex->GetDesc();
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
     m_device->GetCopyableFootprints(&resourceDesc, 0, 1, 0, &footprint, nullptr, nullptr, nullptr);
@@ -1727,105 +2012,105 @@ ComputeStatus D3D12::copyDeviceTextureToDeviceBuffer(CommandList cmdList, Resour
     D3D12_TEXTURE_COPY_LOCATION srcCopyLocation = {};
     srcCopyLocation.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
     srcCopyLocation.SubresourceIndex = 0;
-    srcCopyLocation.pResource = (ID3D12Resource*)srcTexture;
+    srcCopyLocation.pResource = (ID3D12Resource*)(srcTexture->native);
 
     D3D12_TEXTURE_COPY_LOCATION destCopyLocation = {};
     destCopyLocation.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
     destCopyLocation.PlacedFootprint = footprint;
-    destCopyLocation.pResource = (ID3D12Resource*)dstBuffer;
+    destCopyLocation.pResource = (ID3D12Resource*)(dstBuffer->native);
 
     ((ID3D12GraphicsCommandList*)cmdList)->CopyTextureRegion(&destCopyLocation, 0, 0, 0, &srcCopyLocation, nullptr);
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
-ComputeStatus D3D12::clearView(CommandList InCmdList, Resource InResource, const float4 Color, const RECT * pRects, unsigned int NumRects, CLEAR_TYPE &outType)
+ComputeStatus D3D12::clearView(CommandList InCmdList, Resource resource, const float4 Color, const RECT * pRects, uint32_t NumRects, CLEAR_TYPE &outType)
 {
     outType = CLEAR_UNDEFINED;
     
-    ID3D12Resource *Resource = (ID3D12Resource*) InResource;
     ResourceDriverData Data = {};
-    if (getSurfaceDriverData(Resource, Data) == eComputeStatusOk)
+    if (getSurfaceDriverData(resource, Data) == ComputeStatus::eOk)
     {
         auto node = 0; // FIX THIS
         CD3DX12_CPU_DESCRIPTOR_HANDLE CPUVisibleCPUHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(m_heap->descriptorHeapCPU[node]->GetCPUDescriptorHandleForHeapStart(), Data.descIndex, m_descriptorSize);
         CD3DX12_GPU_DESCRIPTOR_HANDLE GPUHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(m_heap->descriptorHeap[node]->GetGPUDescriptorHandleForHeapStart(), Data.descIndex, m_descriptorSize);
 
-        ((ID3D12GraphicsCommandList*)InCmdList)->ClearUnorderedAccessViewFloat(GPUHandle, CPUVisibleCPUHandle, (ID3D12Resource*)InResource, (const FLOAT*)&Color, NumRects, pRects);
+        ((ID3D12GraphicsCommandList*)InCmdList)->ClearUnorderedAccessViewFloat(GPUHandle, CPUVisibleCPUHandle, (ID3D12Resource*)(resource->native), (const FLOAT*)&Color, NumRects, pRects);
 
         outType = Data.bZBCSupported ? CLEAR_ZBC_WITH_PADDING : CLEAR_NON_ZBC;
-        return eComputeStatusOk;
+        return ComputeStatus::eOk;
     }
-    return eComputeStatusError;
+    return ComputeStatus::eError;
 }
 
-ComputeStatus D3D12::insertGPUBarrierList(CommandList InCmdList, const Resource* InResources, unsigned int InResourceCount, BarrierType InBarrierType)
+ComputeStatus D3D12::insertGPUBarrierList(CommandList InCmdList, const Resource* resources, uint32_t resourceCount, BarrierType barrierType)
 {
-    if (InBarrierType == BarrierType::eBarrierTypeUAV)
+    if (barrierType == BarrierType::eBarrierTypeUAV)
     {
         std::vector< D3D12_RESOURCE_BARRIER> Barriers;
-        for (unsigned int i = 0; i < InResourceCount; i++)
+        for (uint32_t i = 0; i < resourceCount; i++)
         {
-            const Resource& Res = InResources[i];
-            Barriers.push_back(CD3DX12_RESOURCE_BARRIER::UAV((ID3D12Resource*)Res));
+            const Resource& res = resources[i];
+            Barriers.push_back(CD3DX12_RESOURCE_BARRIER::UAV((ID3D12Resource*)(res->native)));
         }
         ((ID3D12GraphicsCommandList*)InCmdList)->ResourceBarrier((UINT)Barriers.size(), Barriers.data());
     }
     else
     {
         assert(false);
-        return eComputeStatusNotSupported;
+        return ComputeStatus::eNotSupported;
     }
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::insertGPUBarrier(CommandList InCmdList, Resource InResource, BarrierType InBarrierType)
 {
     if (InBarrierType == BarrierType::eBarrierTypeUAV)
     {
-        D3D12_RESOURCE_BARRIER UAV = CD3DX12_RESOURCE_BARRIER::UAV((ID3D12Resource*)InResource);
+        D3D12_RESOURCE_BARRIER UAV = CD3DX12_RESOURCE_BARRIER::UAV((ID3D12Resource*)(InResource->native));
         ((ID3D12GraphicsCommandList*)InCmdList)->ResourceBarrier(1, &UAV);
     }
     else
     {
         assert(false);
-        return eComputeStatusNotSupported;
+        return ComputeStatus::eNotSupported;
     }
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::transitionResourceImpl(CommandList cmdList, const ResourceTransition *transitions, uint32_t count)
 {
     if (!cmdList || !transitions)
     {
-        return eComputeStatusInvalidArgument;
+        return ComputeStatus::eInvalidArgument;
     }
     std::vector<D3D12_RESOURCE_BARRIER> barriers;
-    while (count--)
+    for (uint32_t i = 0; i < count; i++)
     {
-        if (transitions[count].from != transitions[count].to)
+        if (transitions[i].from != transitions[i].to)
         {
-            auto from = toD3D12States(transitions[count].from);
-            auto to = toD3D12States(transitions[count].to);
-            //SL_LOG_HINT("%S %s->%s  %s->%s", getDebugName(transitions[count].resource).c_str(),d3d12state2str(from).c_str(), d3d12state2str(to).c_str(), state2str(transitions[count].from).c_str(), state2str(transitions[count].to).c_str());
-            barriers.push_back({ CD3DX12_RESOURCE_BARRIER::Transition((ID3D12Resource*)transitions[count].resource, from, to, transitions[count].subresource) });
+            auto from = toD3D12States(transitions[i].from);
+            auto to = toD3D12States(transitions[i].to);
+            //SL_LOG_HINT("transitioning %S %u->%u", getDebugName(transitions[i].resource).c_str(), from, to);
+            transitions[i].resource->state = to;
+            barriers.push_back({ CD3DX12_RESOURCE_BARRIER::Transition((ID3D12Resource*)(transitions[i].resource->native), from, to, transitions[i].subresource) });
         }
     }
     ((ID3D12GraphicsCommandList*)cmdList)->ResourceBarrier((uint32_t)barriers.size(), barriers.data());
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::copyResource(CommandList InCmdList, Resource InDstResource, Resource InSrcResource)
 {
-    if (!InCmdList || !InDstResource || !InSrcResource) return eComputeStatusInvalidArgument;
-    ((ID3D12GraphicsCommandList*)InCmdList)->CopyResource((ID3D12Resource*)InDstResource, (ID3D12Resource*)InSrcResource);
-    return eComputeStatusOk;
+    if (!InCmdList || !InDstResource || !InSrcResource) return ComputeStatus::eInvalidArgument;
+    ((ID3D12GraphicsCommandList*)InCmdList)->CopyResource((ID3D12Resource*)(InDstResource->native), (ID3D12Resource*)(InSrcResource->native));
+    return ComputeStatus::eOk;
 }
 
-ComputeStatus D3D12::cloneResource(Resource resource, Resource &clone, const char friendlyName[], ResourceState initialState, unsigned int creationMask, unsigned int visibilityMask)
+ComputeStatus D3D12::cloneResource(Resource resource, Resource &clone, const char friendlyName[], ResourceState initialState, uint32_t creationMask, uint32_t visibilityMask)
 {
-    if (!resource) return eComputeStatusInvalidArgument;
+    if (!resource || !resource->native) return ComputeStatus::eInvalidArgument;
 
-    D3D12_RESOURCE_DESC desc1 = ((ID3D12Resource*)resource)->GetDesc();
+    D3D12_RESOURCE_DESC desc1 = ((ID3D12Resource*)(resource->native))->GetDesc();
     ID3D12Resource *res = nullptr;
         
     CD3DX12_HEAP_PROPERTIES heapProp(D3D12_HEAP_TYPE_DEFAULT, creationMask, visibilityMask ? visibilityMask : m_visibleNodeMask);
@@ -1836,47 +2121,42 @@ ComputeStatus D3D12::cloneResource(Resource resource, Resource &clone, const cha
     }
     else
     {
+        desc1.Flags &= ~D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
         initialState &= ~ResourceState::eStorageRW;
     }
     if (isSupportedFormat(desc1.Format, D3D12_FORMAT_SUPPORT1_RENDER_TARGET, 0))
     {
-        desc1.Flags |= D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;        
+        desc1.Flags |= D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
     }
     else
     {
+        desc1.Flags &= ~D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
         initialState &= ~(ResourceState::eColorAttachmentRead | ResourceState::eColorAttachmentWrite);
     }
-    if (isSupportedFormat(desc1.Format, D3D12_FORMAT_SUPPORT1_DEPTH_STENCIL, 0))
+
+    // Depth-stencil is only allowed if resource is not already UAV or RTV
+    bool depthStencilAllowed = (desc1.Flags & (D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS | D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET)) == 0;
+
+    if (depthStencilAllowed && isSupportedFormat(desc1.Format, D3D12_FORMAT_SUPPORT1_DEPTH_STENCIL, 0))
     {
         desc1.Flags |= D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
     }
     else
     {
+        desc1.Flags &= ~D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
         initialState &= ~(ResourceState::eDepthStencilAttachmentRead | ResourceState::eDepthStencilAttachmentWrite);
     }
+
+    auto type = desc1.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER ? ResourceType::eBuffer : ResourceType::eTex2d;
+
+    uint32_t nativeState;
+    getNativeResourceState(initialState, nativeState);
+
     if (m_allocateCallback)
     {
-        uint32_t state;
-        getNativeResourceState(initialState, state);
-        ResourceDesc desc = { desc1.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER ? ResourceType::eResourceTypeBuffer : ResourceType::eResourceTypeTex2d, &desc1, (uint32_t)state, &heapProp, nullptr };
+        ResourceAllocationDesc desc = { type, &desc1, (uint32_t)nativeState, &heapProp };
         auto result = m_allocateCallback(&desc, m_device);
         res = (ID3D12Resource*)result.native;
-        
-        if (res)
-        {
-            // We provide native device so in this case we 
-            // need to call onHostResourceCreated manually
-            chi::ResourceInfo info = {};
-            info.desc.width = (uint32_t)desc1.Width;
-            info.desc.height = (uint32_t)desc1.Height;
-            info.desc.nativeFormat = (uint32_t)desc1.Format;
-            info.desc.mips = (uint32_t)desc1.MipLevels;
-            info.desc.flags = desc.type == ResourceType::eResourceTypeBuffer ? chi::ResourceFlags::eShaderResource : chi::ResourceFlags::eRawOrStructuredBuffer;
-            info.desc.state = initialState;
-            onHostResourceCreated(res, info);
-
-            setDebugName(res, friendlyName);
-        }
     }
     else
     {        
@@ -1884,33 +2164,42 @@ ComputeStatus D3D12::cloneResource(Resource resource, Resource &clone, const cha
             &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT, creationMask, visibilityMask),
             D3D12_HEAP_FLAG_NONE,
             &desc1,
-            toD3D12States(initialState),
+            (D3D12_RESOURCE_STATES)nativeState,
             nullptr,
             IID_PPV_ARGS(&res));
 
-        if (hr != S_OK)
+        if (FAILED(hr))
         {
-            SL_LOG_ERROR(" unable to clone resource");
-            return eComputeStatusError;
+            SL_LOG_ERROR( "Unable to clone resource (%s:%u:%u:%s) - %s", friendlyName, desc1.Width, desc1.Height, getDXGIFormatStr(desc1.Format), std::system_category().message(hr).c_str());
+            return ComputeStatus::eError;
         }
-        // Internal resource, set state
-        setResourceState(res, initialState);
-        setDebugName(res, friendlyName);
-        
-        ++m_allocCount;
-        auto currentSize = getResourceSize(res);
-        m_totalAllocatedSize += currentSize;
-        SL_LOG_VERBOSE("Cloning 0x%llx (%s:%u:%u:%s), m_allocCount=%d, currentSize %.1lf MB, totalSize %.1lf MB", res, friendlyName, desc1.Width, desc1.Height, getDXGIFormatStr(desc1.Format), m_allocCount.load(), (double)currentSize / (1024 * 1024), (double)m_totalAllocatedSize.load() / (1024 * 1024));
     }
 
-    clone = res;
-    return eComputeStatusOk;
+    if (!res)
+    {
+        SL_LOG_ERROR("Unable to clone resource (%s:%u:%u:%s)", friendlyName, desc1.Width, desc1.Height, getDXGIFormatStr(desc1.Format));
+        return ComputeStatus::eError;
+    }
+
+    clone = new sl::Resource(type, res, nativeState);
+    clone->flags = desc1.Flags;
+    clone->mipLevels = desc1.MipLevels;
+    clone->arrayLayers = desc1.DepthOrArraySize;
+    clone->nativeFormat = desc1.Format;
+    clone->width = (uint32_t)desc1.Width;
+    clone->height = desc1.Height;
+
+    setDebugName(clone, friendlyName);
+
+    manageVRAM(clone, VRAMOperation::eAlloc);
+    
+    return ComputeStatus::eOk;
 }
 
-ComputeStatus D3D12::copyBufferToReadbackBuffer(CommandList InCmdList, Resource InResource, Resource OutResource, unsigned int InBytesToCopy) 
+ComputeStatus D3D12::copyBufferToReadbackBuffer(CommandList InCmdList, Resource InResource, Resource OutResource, uint32_t InBytesToCopy) 
 {
-    ID3D12Resource *InD3dResource = (ID3D12Resource*)InResource;
-    ID3D12Resource *OutD3dResource = (ID3D12Resource*)OutResource;
+    ID3D12Resource *InD3dResource = (ID3D12Resource*)(InResource->native);
+    ID3D12Resource *OutD3dResource = (ID3D12Resource*)(OutResource->native);
     ID3D12GraphicsCommandList* CmdList = (ID3D12GraphicsCommandList*)InCmdList;
 
 #if 0
@@ -1930,46 +2219,46 @@ ComputeStatus D3D12::copyBufferToReadbackBuffer(CommandList InCmdList, Resource 
 
     CmdList->CopyBufferRegion(OutD3dResource, 0, InD3dResource, 0, InBytesToCopy);
 
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::mapResource(CommandList cmdList, Resource resource, void*& data, uint32_t subResource, uint64_t offset, uint64_t totalBytes)
 {
-    auto src = (ID3D12Resource*)resource;
-    if (!src) return eComputeStatusInvalidPointer;
+    auto src = (ID3D12Resource*)(resource->native);
+    if (!src) return ComputeStatus::eInvalidPointer;
 
     void* mapped{};
     D3D12_RANGE range = { offset, offset + totalBytes };
     if (FAILED(src->Map(subResource, &range, &mapped)))
     {
-        SL_LOG_ERROR("Failed to map buffer");
-        return eComputeStatusError;
+        SL_LOG_ERROR( "Failed to map buffer");
+        return ComputeStatus::eError;
     }
     data = mapped;
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::unmapResource(CommandList cmdList, Resource resource, uint32_t subResource)
 {
-    auto src = (ID3D12Resource*)resource;
-    if (!src) return eComputeStatusInvalidPointer;
+    auto src = (ID3D12Resource*)(resource->native);
+    if (!src) return ComputeStatus::eInvalidPointer;
 
     src->Unmap(0, nullptr);
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::getLUIDFromDevice(NVSDK_NGX_LUID *OutId)
 {
     memcpy(OutId, &(m_device->GetAdapterLuid()), sizeof(LUID));
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
-ComputeStatus D3D12::beginPerfSection(CommandList cmdList, const char *key, unsigned int node, bool reset)
+ComputeStatus D3D12::beginPerfSection(CommandList cmdList, const char *key, uint32_t node, bool reset)
 {
 #if SL_ENABLE_TIMING
     PerfData* data = {};
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::scoped_lock lock(m_mutexProfiler);
         auto section = m_sectionPerfMap[node].find(key);
         if (section == m_sectionPerfMap[node].end())
         {
@@ -2009,20 +2298,19 @@ ComputeStatus D3D12::beginPerfSection(CommandList cmdList, const char *key, unsi
         bufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
         D3D12_RESOURCE_STATES initialState = D3D12_RESOURCE_STATE_COPY_DEST;
         m_device->CreateCommittedResource(&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK, queryHeapDesc.NodeMask, queryHeapDesc.NodeMask), D3D12_HEAP_FLAG_NONE, &bufferDesc, initialState, nullptr, IID_PPV_ARGS(&data->queryBufferReadback[data->queryIdx]));
+        D3D12_RANGE mapRange = { 0, sizeof(uint64_t) * 2 };
+        //! Map in advance to increase performance, no need to map/unmap every frame
+        data->queryBufferReadback[data->queryIdx]->Map(0, &mapRange, reinterpret_cast<void**>(&data->pStagingPtr));
     }
     else
     {
         ((ID3D12GraphicsCommandList*)cmdList)->ResolveQueryData(data->queryHeap[data->queryIdx], D3D12_QUERY_TYPE_TIMESTAMP, 0, 2, data->queryBufferReadback[data->queryIdx], 0);
-        UINT8* pStagingPtr = nullptr;
         uint64_t dxNanoSecondTS[2];
-        D3D12_RANGE mapRange = { 0, sizeof(uint64_t) * 2 };
-        data->queryBufferReadback[data->queryIdx]->Map(0, &mapRange, reinterpret_cast<void**>(&pStagingPtr));
-        if (pStagingPtr)
+        if (data->pStagingPtr)
         {
-            dxNanoSecondTS[0] = ((uint64_t*)pStagingPtr)[0];
-            dxNanoSecondTS[1] = ((uint64_t*)pStagingPtr)[1];
-            data->queryBufferReadback[data->queryIdx]->Unmap(0, NULL);
-            float delta = (dxNanoSecondTS[1] - dxNanoSecondTS[0]) / 1e06f;
+            dxNanoSecondTS[0] = ((uint64_t*)data->pStagingPtr)[0];
+            dxNanoSecondTS[1] = ((uint64_t*)data->pStagingPtr)[1];
+            double delta = (dxNanoSecondTS[1] - dxNanoSecondTS[0]) / 1e06;
             if (!data->reset[data->queryIdx])
             {
                 if (delta > 0)
@@ -2043,30 +2331,30 @@ ComputeStatus D3D12::beginPerfSection(CommandList cmdList, const char *key, unsi
 
     ((ID3D12GraphicsCommandList*)cmdList)->EndQuery(data->queryHeap[data->queryIdx], D3D12_QUERY_TYPE_TIMESTAMP, 0);
 #endif
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
-ComputeStatus D3D12::endPerfSection(CommandList cmdList, const char* key, float &avgTimeMS, unsigned int node)
+ComputeStatus D3D12::endPerfSection(CommandList cmdList, const char* key, float &avgTimeMS, uint32_t node)
 {
 #if SL_ENABLE_TIMING
     PerfData* data = {};
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::scoped_lock lock(m_mutexProfiler);
         auto section = m_sectionPerfMap[node].find(key);
         if (section == m_sectionPerfMap[node].end())
         {
-            return eComputeStatusError;
+            return ComputeStatus::eError;
         }
         data = &(*section).second;
     }
     ((ID3D12GraphicsCommandList*)cmdList)->EndQuery(data->queryHeap[data->queryIdx], D3D12_QUERY_TYPE_TIMESTAMP, 1);
     data->queryIdx = (data->queryIdx + 1) % SL_READBACK_QUEUE_SIZE;
 
-    avgTimeMS = data->meter.mean;
+    avgTimeMS = (float)data->meter.getMean();
 #else
     avgTimeMS = 0;
 #endif
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::beginProfiling(CommandList cmdList, uint32_t metadata, const char* marker)
@@ -2074,7 +2362,7 @@ ComputeStatus D3D12::beginProfiling(CommandList cmdList, uint32_t metadata, cons
 #if SL_ENABLE_PROFILING
     PIXBeginEvent(((ID3D12GraphicsCommandList*)cmdList), metadata, marker);
 #endif    
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::endProfiling(CommandList cmdList)
@@ -2082,7 +2370,7 @@ ComputeStatus D3D12::endProfiling(CommandList cmdList)
 #if SL_ENABLE_PROFILING
     PIXEndEvent(((ID3D12GraphicsCommandList*)cmdList));
 #endif
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::beginProfilingQueue(CommandQueue cmdQueue, uint32_t metadata, const char* marker)
@@ -2090,7 +2378,7 @@ ComputeStatus D3D12::beginProfilingQueue(CommandQueue cmdQueue, uint32_t metadat
 #if SL_ENABLE_PROFILING
     PIXBeginEvent(((ID3D12CommandQueue*)cmdQueue), metadata, marker);
 #endif    
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::endProfilingQueue(CommandQueue cmdQueue)
@@ -2098,31 +2386,18 @@ ComputeStatus D3D12::endProfilingQueue(CommandQueue cmdQueue)
 #if SL_ENABLE_PROFILING
     PIXEndEvent(((ID3D12CommandQueue*)cmdQueue));
 #endif
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
-void D3D12::destroyResourceDeferredImpl(const Resource resource)
+int D3D12::destroyResourceDeferredImpl(const Resource resource)
 {   
-    auto unknown = (IUnknown*)resource;
-    ID3D12Pageable* pageable;
-    unknown->QueryInterface(&pageable);
-    uint64_t currentSize = 0;
-    if (pageable)
+    auto it = m_resourceData.find(resource->native);
+    if (it != m_resourceData.end())
     {
-        pageable->Release();
-        if (m_allocCount && m_totalAllocatedSize)
-        {
-            m_allocCount--;
-            currentSize = getResourceSize(resource);
-            if (m_totalAllocatedSize >= currentSize)
-            {
-                m_totalAllocatedSize -= currentSize;
-            }
-        }
+        m_resourceData.erase(it);
     }
-    auto name = getDebugName((ID3D12Resource*)resource);
-    auto ref = ((IUnknown*)resource)->Release();
-    SL_LOG_VERBOSE("Releasing resource 0x%llx (%S) ref count %u - currentSize %.2f - totalSize %.2f", resource, name.c_str(), ref, currentSize / (1024.0f * 1024.0f), m_totalAllocatedSize / (1024.0f * 1024.0f));
+    auto unknown = (IUnknown*)(resource->native);
+    return unknown->Release();
 }
 
 DXGI_FORMAT D3D12::getCorrectFormat(DXGI_FORMAT Format)
@@ -2170,78 +2445,18 @@ DXGI_FORMAT D3D12::getCorrectFormat(DXGI_FORMAT Format)
 // {694B3E1C-0E33-416F-BA83-FE248DA1E85D}
 static const GUID sResourceStateGUID = { 0x694b3e1c, 0xe33, 0x416f, { 0xba, 0x83, 0xfe, 0x24, 0x8d, 0xa1, 0xe8, 0x5d } };
 
-ComputeStatus D3D12::onHostResourceCreated(Resource resource, const ResourceInfo& info)
-{
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        // If we have this resource in cache then it is stale since MS just created a new one with recycled pointer
-        auto it = m_resourceData.find(resource);
-        if (it != m_resourceData.end())
-        {
-            auto name = getDebugName((ID3D12Resource*)resource);
-            SL_LOG_VERBOSE("Detected stale resource 0x%llx(%S) - removing from cache", resource, name.c_str());
-            m_resourceData.erase(it);
-        }
-    }
-
-    setResourceState(resource, info.desc.state);
-    
-    // Not calling generic method since we already locked on mutex
-    //m_resourceStateMap[resource] = info;
-
-    return eComputeStatusOk;
-}
-
-ComputeStatus D3D12::setResourceState(Resource resource, ResourceState state, uint32_t subresource)
-{
-    if (!resource)
-    {
-        return eComputeStatusOk;
-    }
-
-    ID3D12Pageable* pageable = {};
-    ((IUnknown*)resource)->QueryInterface(&pageable);
-    if (pageable)
-    {
-        if (FAILED(pageable->SetPrivateData(sResourceStateGUID, sizeof(state), &state)))
-        {
-            SL_LOG_ERROR("Failed to set state for resource 0x%llx", resource);
-        }
-        pageable->Release();
-    }
-    return eComputeStatusOk;
-}
-
 ComputeStatus D3D12::getResourceState(Resource resource, ResourceState& state)
 {
     state = ResourceState::eUnknown;
-    if (!resource)
-    {
-        return eComputeStatusOk;
-    }
-
-    HRESULT res{};
-    ID3D12Pageable* pageable = {};
-    ((IUnknown*)resource)->QueryInterface(&pageable);
-    if (pageable)
-    {
-        uint32_t size = sizeof(state);
-        res = pageable->GetPrivateData(sResourceStateGUID, &size, &state);
-        if (FAILED(res))
-        {
-            SL_LOG_ERROR("resource 0x%llx does not have a state", resource);
-        }
-        pageable->Release();
-    }
-
-    return FAILED(res) ? eComputeStatusError : eComputeStatusOk;
+    if(!resource) return ComputeStatus::eOk;
+    return getResourceState(resource->state, state);
 }
 
 ComputeStatus D3D12::getResourceFootprint(Resource resource, ResourceFootprint& footprint)
 {
-    if (!resource) return eComputeStatusInvalidArgument;
+    if (!resource || !resource->native) return ComputeStatus::eInvalidArgument;
 
-    ID3D12Resource* res = (ID3D12Resource*)resource;
+    ID3D12Resource* res = (ID3D12Resource*)(resource->native);
     D3D12_RESOURCE_DESC resourceDesc = res->GetDesc();
 
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT fpnt = {};
@@ -2261,33 +2476,36 @@ ComputeStatus D3D12::getResourceFootprint(Resource resource, ResourceFootprint& 
     footprint.totalBytes = totalBytes;
     getFormat(fpnt.Footprint.Format, footprint.format);
 
-    return eComputeStatusOk;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::getResourceDescription(Resource resource, ResourceDescription& outDesc)
 {
-    if (!resource)
+    if (!resource || !resource->native) return ComputeStatus::eInvalidArgument;
+
+    if (resource->type == ResourceType::eFence)
     {
-        return eComputeStatusInvalidArgument;
+        // Fences are always shared with d3d12 so report back
+        outDesc.flags |= ResourceFlags::eSharedResource;
+        return ComputeStatus::eOk;
     }
 
     // First make sure this is not an DXGI or some other resource
-    auto unknown = (IUnknown*)resource;
+    auto unknown = (IUnknown*)(resource->native);
     ID3D12Resource* pageable;
     unknown->QueryInterface(&pageable);
     if (!pageable)
     {
-        return eComputeStatusError;
+        return ComputeStatus::eError;
     }
 
-    D3D12_RESOURCE_DESC desc = ((ID3D12Resource*)resource)->GetDesc();
-    outDesc = {};
-    outDesc.format = eFormatINVALID;
+    D3D12_RESOURCE_DESC desc = pageable->GetDesc();
+    getFormat(desc.Format, outDesc.format);
     outDesc.width = (UINT)desc.Width;
     outDesc.height = desc.Height;
     outDesc.nativeFormat = desc.Format;
     outDesc.mips = desc.MipLevels;
-    outDesc.state = ResourceState::eUnknown;
+    outDesc.depth = desc.DepthOrArraySize;
 
     if (desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
     {
@@ -2302,17 +2520,98 @@ ComputeStatus D3D12::getResourceDescription(Resource resource, ResourceDescripti
     {
         outDesc.flags |= ResourceFlags::eShaderResourceStorage;
     }
-
-    uint32_t size = sizeof(outDesc.state);
-    auto res = pageable->GetPrivateData(sResourceStateGUID, &size, &outDesc.state);
-    if (FAILED(res))
+    if (desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS)
     {
-        std::wstring name = getDebugName(resource);
-        SL_LOG_ERROR("resource 0x%llx(%S) does not have a state", resource, name.c_str());
+        outDesc.flags |= ResourceFlags::eSharedResource;
     }
+    if (desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL)
+    {
+        outDesc.flags |= ResourceFlags::eDepthStencilAttachment;
+    }
+    if (desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET)
+    {
+        outDesc.flags |= ResourceFlags::eColorAttachment;
+    }
+
     pageable->Release();
 
-    return FAILED(res) ? eComputeStatusError : eComputeStatusOk;
+    return ComputeStatus::eOk;
+}
+
+ComputeStatus D3D12::notifyOutOfBandCommandQueue(CommandQueue queue, OutOfBandCommandQueueType type)
+{
+    NVAPI_CHECK(NvAPI_D3D12_NotifyOutOfBandCommandQueue((ID3D12CommandQueue*)queue, (NV_OUT_OF_BAND_CQ_TYPE) type));
+    return ComputeStatus::eOk;
+}
+
+ComputeStatus D3D12::setAsyncFrameMarker(CommandQueue queue, ReflexMarker marker, uint64_t frameId)
+{
+    NV_LATENCY_MARKER_PARAMS_V1 params = { 0 };
+    params.version = NV_LATENCY_MARKER_PARAMS_VER1;
+    params.frameID = frameId;
+    params.markerType = (NV_LATENCY_MARKER_TYPE)marker;
+
+    NVAPI_CHECK(NvAPI_D3D12_SetAsyncFrameMarker((ID3D12CommandQueue*)queue, &params));
+    return ComputeStatus::eOk;
+}
+
+ComputeStatus D3D12::createSharedHandle(Resource res, Handle& outHandle)
+{
+    auto resource = (ID3D12Resource*)(res->native);
+    HANDLE handle;
+    if (FAILED(m_device->CreateSharedHandle(resource, NULL, GENERIC_ALL,nullptr, &handle)))
+    {
+        SL_LOG_ERROR( "Failed to create shared handle");
+        assert(false);
+        return ComputeStatus::eError;
+    }
+    outHandle = handle;
+    return ComputeStatus::eOk;
+}
+
+ComputeStatus D3D12::destroySharedHandle(Handle& handle)
+{
+    if (!CloseHandle(handle))
+    {
+        SL_LOG_ERROR( "Failed to close shared handle");
+        return ComputeStatus::eError;
+    }
+    return ComputeStatus::eOk;
+}
+
+ComputeStatus D3D12::getResourceFromSharedHandle(ResourceType type, Handle handle, Resource& resource)
+{
+    if (type == ResourceType::eTex2d)
+    {
+        ID3D12Resource* tex{};
+        if (FAILED(m_device->OpenSharedHandle((HANDLE)handle, __uuidof(ID3D12Resource), (void**)&tex)))
+        {
+            SL_LOG_ERROR( "Failed to open shared handle");
+            assert(false);
+            return ComputeStatus::eError;
+        }
+        resource = new sl::Resource(ResourceType::eTex2d, tex);
+        setDebugName(resource, "sl.shared.from.d3d11");
+        // We free these buffers but never allocate them so account for the VRAM
+        manageVRAM(resource, VRAMOperation::eAlloc);
+    }
+    else if (type == ResourceType::eFence)
+    {
+        ID3D12Fence* fence{};
+        if (FAILED(m_device->OpenSharedHandle((HANDLE)handle, __uuidof(ID3D12Fence), (void**)&fence)))
+        {
+            SL_LOG_ERROR( "Failed to open shared handle");
+            assert(false);
+            return ComputeStatus::eError;
+        }
+        resource = new sl::Resource(ResourceType::eFence, fence);
+    }
+    else
+    {
+        SL_LOG_ERROR( "Unsupported resource type");
+        return ComputeStatus::eError;
+    }
+    return ComputeStatus::eOk;
 }
 
 }

@@ -25,6 +25,7 @@
 #include <d3d11.h>
 
 #include "source/core/sl.interposer/hook.h"
+#include "source/core/sl.interposer/dxgi/dxgiFactory.h"
 #include "source/core/sl.log/log.h"
 #include "source/core/sl.api/internal.h"
 #include "source/core/sl.plugin-manager/pluginManager.h"
@@ -47,7 +48,7 @@ extern "C" HRESULT WINAPI D3D11CreateDeviceAndSwapChain(IDXGIAdapter * pAdapter,
         sl::interposer::ExportedFunctionList dxgiFunctions;
         if (!sl::interposer::getInterface()->enumerateModuleExports(L"d3d11.dll", dxgiFunctions))
         {
-            SL_LOG_ERROR("Failed to import d3d11.dll");
+            SL_LOG_ERROR( "Failed to import d3d11.dll");
             return S_FALSE;
         }
         for (auto& f : dxgiFunctions)
@@ -60,7 +61,7 @@ extern "C" HRESULT WINAPI D3D11CreateDeviceAndSwapChain(IDXGIAdapter * pAdapter,
         }
         if (!d3d11CreateDeviceAndSwapChain.target)
         {
-            SL_LOG_ERROR("Failed to find d3d11.dll::D3D11CreateDeviceAndSwapChain");
+            SL_LOG_ERROR( "Failed to find d3d11.dll::D3D11CreateDeviceAndSwapChain");
             return S_FALSE;
         }
     }
@@ -80,7 +81,14 @@ extern "C" HRESULT WINAPI D3D11CreateDeviceAndSwapChain(IDXGIAdapter * pAdapter,
     }
 
     auto device = *ppDevice;
-    
+
+    SL_LOG_WARN("Automatically assigning d3d11 device, if this is not desired please use `D3D11CreateDevice` followed by `slSetD3DDevice`");
+
+    //! IMPORTANT: Set device as soon as it is available since code below can trigger swap-chain related hooks
+    //! which then indirectly want to initialize plugins and we need device for that. This is required in order
+    //! to support plugins that hook the swap-chain.
+    sl::plugin_manager::getInterface()->setD3D11Device(device);
+
     // Now it is safe to create a swap chain
     if (pSwapChainDesc != nullptr)
     {
@@ -97,11 +105,22 @@ extern "C" HRESULT WINAPI D3D11CreateDeviceAndSwapChain(IDXGIAdapter * pAdapter,
             assert(SUCCEEDED(hr));
         }
 
+        // This will always return native interface and not our proxy
         Microsoft::WRL::ComPtr<IDXGIFactory> factory;
         hr = adapter->GetParent(IID_PPV_ARGS(&factory));
         assert(SUCCEEDED(hr));
 
-        hr = factory->CreateSwapChain(device, const_cast<DXGI_SWAP_CHAIN_DESC*>(pSwapChainDesc), ppSwapChain);
+        if (sl::interposer::getInterface()->getConfig().useDXGIProxy && sl::interposer::getInterface()->getConfig().enableInterposer)
+        {
+            // Create temporary proxy so we can create correct swap-chain
+            auto proxyFactory = new sl::interposer::DXGIFactory(factory.Get());
+            hr = proxyFactory->CreateSwapChain(device, const_cast<DXGI_SWAP_CHAIN_DESC*>(pSwapChainDesc), ppSwapChain);
+            proxyFactory->Release();
+        }
+        else
+        {
+            hr = factory->CreateSwapChain(device, const_cast<DXGI_SWAP_CHAIN_DESC*>(pSwapChainDesc), ppSwapChain);
+        }
         assert(SUCCEEDED(hr));
     }
 
@@ -111,11 +130,10 @@ extern "C" HRESULT WINAPI D3D11CreateDeviceAndSwapChain(IDXGIAdapter * pAdapter,
         {
             device->GetImmediateContext(ppImmediateContext);
         }
-
-        sl::plugin_manager::getInterface()->setD3D11Device(device);
     }
     else
     {
+        sl::plugin_manager::getInterface()->setD3D11Device(nullptr);
         *ppDevice = nullptr;
         device->Release();
     }
