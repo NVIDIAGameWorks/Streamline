@@ -86,8 +86,8 @@ Please read [ProgrammingGuideManualHooking.md](docs/ProgrammingGuideManualHookin
 
 ## Programming Guides Per Feature:
 
-- [DLSS](docs/ProgrammingGuideDLSS.md)
-- [DLSS-G](docs/ProgrammingGuideDLSS_G.md)
+- [DLSS Super Resolution](docs/ProgrammingGuideDLSS.md)
+- [DLSS Frame Generation](docs/ProgrammingGuideDLSS_G.md)
 - [NRD](docs/ProgrammingGuideNRD.md)
 - [Reflex](docs/ProgrammingGuideReflex.md)
 - [NIS](docs/ProgrammingGuideNIS.md)
