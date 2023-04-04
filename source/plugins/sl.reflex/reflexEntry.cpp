@@ -314,11 +314,11 @@ Result slSetData(const BaseStructure* inputs, CommandBuffer* cmdBuffer)
             {
                 ctx.constants.useMarkersToOptimize = ctx.useMarkersToOptimizeOverrideValue;
             }
+#endif
             if (ctx.lowLatencyAvailable)
             {
                 CHI_VALIDATE(ctx.compute->setSleepMode(ctx.constants));
             }
-#endif
             updateStats(0);
         }
     }
