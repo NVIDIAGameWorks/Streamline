@@ -1,3 +1,14 @@
+Streamline SDK Public 2.0.0a Release Notes
+
+Hotfix Notes:
+-- Fixed a bug in the SL Reflex plugin that prevented Reflex from getting engaged in Production mode
+
+Changed Behavior and New Features:
+-- None
+
+Transitioning from SL 2.0.0 to SL 2.0.0a (High Level):
+-- Replace the SL Reflex DLLs
+
 Streamline SDK Public 2.0.0 Release Notes
 
 Development Notes:
