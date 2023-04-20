@@ -135,12 +135,6 @@ protected:
     using ResourceTrackingMap = std::map<uint32_t, IUnknown*>;
     ResourceTrackingMap m_resourceTrackMap{};
 
-    Resource m_font[MAX_NUM_NODES] = {};
-    Resource m_dynamicText[MAX_NUM_NODES] = {};
-    Resource m_dynamicTextUpload[MAX_NUM_NODES] = {};
-    Kernel m_kernelFont = {};
-    uint32_t m_textIndex[MAX_NUM_NODES] = {};
-
     PFun_ResourceAllocateCallback* m_allocateCallback = {};
     PFun_ResourceReleaseCallback* m_releaseCallback = {};
     PFun_GetThreadContext* m_getThreadContext = {};
@@ -187,8 +181,11 @@ public:
     virtual ComputeStatus shutdown();
 
     virtual ComputeStatus getDevice(Device& device) override { device = m_typelessDevice; return ComputeStatus::eOk; }
+
+    //! The following methods are VK specific so by default no implementation
     virtual ComputeStatus getInstance(Instance& instance)  override { return ComputeStatus::eNoImplementation; };
     virtual ComputeStatus getPhysicalDevice(PhysicalDevice& device)  override { return ComputeStatus::eNoImplementation; };
+    virtual ComputeStatus waitForIdle(Device device)   override { return ComputeStatus::eNoImplementation; };
 
     virtual ComputeStatus getVendorId(VendorId& id) override;
     virtual ComputeStatus clearCache() override;
@@ -234,8 +231,6 @@ public:
 
     virtual ComputeStatus collectGarbage(uint32_t frame);
 
-    ComputeStatus renderText(CommandList cmdList, int x, int y, const char *text, const ResourceArea &area, const float4& color = { 1.0f, 1.0f, 1.0f, 0.0f }, int reverseX = 0, int reverseY = 0) override;
-
     ComputeStatus createBuffer(const ResourceDescription &CreateResourceDesc, Resource &OutResource, const char InFriendlyName[]) override final;
     ComputeStatus createTexture2D(const ResourceDescription &CreateResourceDesc, Resource &OutResource, const char InFriendlyName[]) override final;
         
@@ -261,6 +256,7 @@ public:
 
     ComputeStatus getResourceDescription(Resource InResource, ResourceDescription &OutDesc) override { return ComputeStatus::eNoImplementation; }
     
+    ComputeStatus getFullscreenState(SwapChain chain, bool& fullscreen) override { return ComputeStatus::eNoImplementation; };
     ComputeStatus setFullscreenState(SwapChain chain, bool fullscreen, Output out = nullptr) override { return ComputeStatus::eNoImplementation; }
 
     ComputeStatus beginProfiling(CommandList cmdList, unsigned int Metadata, const char* marker) override { return ComputeStatus::eOk;  }
@@ -284,6 +280,8 @@ public:
     // Resource pool
     virtual ComputeStatus createResourcePool(IResourcePool** pool, const char* vramSegment) override final;
     virtual ComputeStatus destroyResourcePool(IResourcePool* pool) override final;
+
+    virtual ComputeStatus isNativeOpticalFlowSupported() override { return ComputeStatus::eNoImplementation; }
 };
 
 }

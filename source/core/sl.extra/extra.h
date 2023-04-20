@@ -192,51 +192,62 @@ struct IKeyboard
 IKeyboard* getInterface();
 }
 
+constexpr size_t kAverageMeterWindowSize = 120;
+
+//! IMPORTANT: Mainly not thread safe for performance reasons
+//! 
+//! Only selected "get" methods use atomics.
 struct AverageValueMeter
 {
-    AverageValueMeter() 
+    AverageValueMeter()
     {
+#ifdef SL_WINDOWS
         QueryPerformanceFrequency(&frequency);
+#endif
     };
-    
+
     AverageValueMeter(const AverageValueMeter& rhs) { operator=(rhs); }
-    
+
     inline AverageValueMeter& operator=(const AverageValueMeter& rhs)
     {
-        windowSize = rhs.windowSize;
-        n = rhs.n;
+        n = rhs.n.load();
         val = rhs.val.load();
         sum = rhs.sum;
-        mean = rhs.mean.load();
-        std = rhs.std;
-        mean_old = rhs.mean_old;
-        m_s = rhs.m_s;
-        window = rhs.window;
+        memcpy(window, rhs.window, sizeof(double) * kAverageMeterWindowSize);
+#ifdef SL_WINDOWS
         frequency = rhs.frequency;
         startTime = rhs.startTime;
+        elapsedUs = rhs.elapsedUs;
+#endif
         return *this;
     }
 
+    //! NOT thread safe
     void reset()
     {
         n = 0;
         val = 0;
         sum = 0;
         mean = 0;
-        std = 0;
-        mean_old = 0;
-        m_s = 0;
-        window.clear();
+        memset(window, 0, sizeof(double) * kAverageMeterWindowSize);
+#ifdef SL_WINDOWS
         startTime = {};
+        elapsedUs = {};
+#endif
     }
 
+    //! NOT thread safe
     void begin()
     {
+#ifdef SL_WINDOWS
         QueryPerformanceCounter(&startTime);
+#endif
     }
 
+    //! NOT thread safe
     void end()
     {
+#ifdef SL_WINDOWS
         if (startTime.QuadPart > 0)
         {
             LARGE_INTEGER endTime{};
@@ -247,72 +258,95 @@ struct AverageValueMeter
             auto elapsedMs = elapsedUs.QuadPart / 1000.0;
             add(elapsedMs);
         }
+#endif
     }
 
+    //! NOT thread safe
     void timestamp()
     {
         end();
         begin();
     }
 
+    //! NOT thread safe
+    int64_t timeFromLastTimestampUs()
+    {
+#ifdef SL_WINDOWS
+        if (startTime.QuadPart > 0)
+        {
+            LARGE_INTEGER endTime{};
+            QueryPerformanceCounter(&endTime);
+            elapsedUs.QuadPart = endTime.QuadPart - startTime.QuadPart;
+            elapsedUs.QuadPart *= 1000000;
+            elapsedUs.QuadPart /= frequency.QuadPart;
+        }
+        return elapsedUs.QuadPart;
+#else
+        return 0;
+#endif
+    }
+
+    //! Performance sensitive code, can be called
+    //! thousands of times in CPU taxing loops hence
+    //! avoiding using std vectors as much as possible.
+    //! 
+    //! NOT thread safe
     void add(double value)
     {
         val = value;
         sum = sum + value;
-        if (windowSize > 0)
+        auto i = n.load() % kAverageMeterWindowSize;
+        if (n >= kAverageMeterWindowSize)
         {
-            if (window.size() == windowSize)
-            {
-                sum = sum - window.front();
-                window.erase(window.begin());
-            }
-            window.push_back(value);
-            //auto tmp = window;
-            //std::sort(tmp.begin(), tmp.end());
-            //median = tmp[tmp.size() / 2];
-            mean = sum / (double)window.size();
+            sum = sum - window[i];
         }
-        else
-        {
-            if (n == 0)
-            {
-                mean = 0.0f + value;
-                std = -1.0f;
-                mean_old = mean;
-                m_s = 0.0;
-            }
-            else
-            {
-                mean = mean_old + (value - mean_old) / (n + 1.0);
-                m_s = m_s + (value - mean_old) * (value - mean);
-                mean_old = mean;
-                std = sqrt(m_s / n);
-            }
-            n = n + 1.0;
-        }
+        window[i] = value;
+        n++;
+        mean = sum / double(std::min(n.load(), kAverageMeterWindowSize));
     }
 
+    //! NOT thread safe
+    double getMedian()
+    {
+        double median = 0;
+        if (n > 0)
+        {
+            std::vector<double> tmp(window, window + std::min(n.load(),kAverageMeterWindowSize));
+            std::sort(tmp.begin(), tmp.end());
+            median = tmp[tmp.size() / 2];
+        }
+        return median;
+    }
+
+    //! NOT thread safe
+    inline int64_t getElapsedTimeUs() const
+    {
+#ifdef SL_WINDOWS
+        return elapsedUs.QuadPart;
+#else
+        return 0;
+#endif
+    }
+
+    //! Thread safe
+    //! 
     inline double getMean() const { return mean.load(); }
     inline double getValue() const { return val.load(); }
-    inline int64_t elapsedTimeUs() const { return elapsedUs.QuadPart; }
+    inline uint64_t getNumSamples() const { return n.load(); }
 
 private:
     std::atomic<double> val = 0;
     std::atomic<double> mean = 0;
+    std::atomic<uint64_t> n = 0;
 
-    double n{};
     double sum{};
-    double std{};
-    double mean_old{};
-    double m_s{};
-    double val_oldest{};
+    double window[kAverageMeterWindowSize];
 
-    size_t windowSize = 120;
-    std::vector<double> window;
-    
+#ifdef SL_WINDOWS
     LARGE_INTEGER frequency{};
     LARGE_INTEGER startTime{};
     LARGE_INTEGER elapsedUs{};
+#endif
 };
 
 struct ScopedCPUTimer

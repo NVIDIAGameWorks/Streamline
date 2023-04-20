@@ -153,7 +153,7 @@ ULONG   STDMETHODCALLTYPE DXGISwapChain::Release()
     // Release the explicit reference to device that was added in the DXGISwapChain constructor above
     auto refOrig = m_d3dDevice->Release();
 
-    SL_LOG_INFO("Destroyed DXGISwapChain proxy 0x%llx - native swap-chain 0x%llx ref count %ld", this, m_base, refOrig);
+    SL_LOG_INFO("Destroyed DXGISwapChain proxy 0x%llx - native swap-chain 0x%llx ref count %ld", this, m_base, refOrigSC);
 
     delete this;
 

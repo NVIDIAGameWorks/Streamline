@@ -43,10 +43,6 @@
 #include "source/plugins/sl.common/commonInterface.h"
 #include "_artifacts/gitVersion.h"
 
-#if SL_ENABLE_OTA
-#include "source/core/sl.ota/ota.h"
-#endif
-
 #ifdef SL_WINDOWS
 #define NV_WINDOWS
 // Needed for SHGetKnownFolderPath
@@ -136,10 +132,6 @@ struct CommonEntryContext
     chi::ICompute* compute{};
     chi::ICompute* computeD3D12{}; // Only valid when running D3D11 and some features require "d3d11 on 12"
     RenderAPI platform = RenderAPI::eD3D12;
-
-#if SL_ENABLE_OTA
-    std::future<bool> otaLambda{};
-#endif
 
     std::mutex resourceTagMutex{};
     std::map<uint64_t, CommonResource> idToResourceMap;
@@ -648,7 +640,27 @@ bool getNGXFeatureRequirements(NVSDK_NGX_Feature feature, common::PluginInfo& pl
                 chi::Instance instance;
                 chi::PhysicalDevice physicalDevice;
                 CHI_CHECK_RF(chi::Vulkan::createInstanceAndFindPhysicalDevice(ctx.caps->adapters[i].deviceId, instance, physicalDevice));
-                
+
+                pluginInfo.opticalFlowInfo.nativeHWSupport = (chi::Vulkan::getOpticalFlowQueueInfo(physicalDevice, pluginInfo.opticalFlowInfo.queueFamily, pluginInfo.opticalFlowInfo.queueIndex) == sl::chi::ComputeStatus::eOk);
+                if (pluginInfo.opticalFlowInfo.nativeHWSupport)
+                {
+                    // Native OFA always runs on the very first queue of the very first optical flow-capable queue family.
+                    assert(pluginInfo.opticalFlowInfo.queueIndex == 0);
+                    SL_LOG_INFO("Native VK OFA feature supported on this device!");
+
+                    pluginInfo.minDriver =
+#ifdef SL_WINDOWS
+                        Version(527, 64, 0);
+#elif defined(SL_LINUX)
+                        Version(525, 72, 0);
+#endif
+                    pluginInfo.minVkAPIVersion = VK_API_VERSION_1_1;
+                }
+                else
+                {
+                    SL_LOG_WARN("Native VK OFA feature not supported on this device! Falling back to OFA VK-CUDA interop feature.");
+                }
+
                 // If NGX fails and we have an early return clean up properly
                 extra::ScopedTasks cleanup([&instance]()->void {CHI_VALIDATE(chi::Vulkan::destroyInstance(instance)); });
 
@@ -1108,17 +1120,6 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
         // NGX initialization
         SL_LOG_INFO("At least one plugin requires NGX, trying to initialize ...");
 
-#if SL_ENABLE_OTA
-        // Async initialization for NGX and OTA since this can be a slow process
-        ctx.otaLambda = std::async(std::launch::async, []()->bool
-        {
-            //! Non blocking check for OTA
-            //! 
-            //! IMPORTANT: must be called before NGX init because we use NGX updater
-            return ota::getInterface()->checkForOTA();
-        });
-#endif
-
         // Reset our flag until we see if NGX can be initialized correctly
         ctx.needNGX = false;
 
@@ -1337,9 +1338,6 @@ void slOnPluginShutdown()
 
     if (ctx.needNGX)
     {
-#if SL_ENABLE_OTA
-        ctx.otaLambda.get();
-#endif
         SL_LOG_INFO("Shutting down NGX");
         if (ctx.platform == RenderAPI::eD3D11)
         {
@@ -1536,12 +1534,6 @@ void updateEmbeddedJSON(json& config)
     api::getContext()->parameters->set(param::common::kPFunUpdateCommonEmbeddedJSONConfig, updateCommonEmbeddedJSONConfig);
     api::getContext()->parameters->set(param::common::kPFunGetStringFromModule, getStringFromModule);
     api::getContext()->parameters->set(param::common::kPFunNGXGetFeatureRequirements, ngx::getNGXFeatureRequirements);
-#if SL_ENABLE_OTA
-    // First grab the OTA manifest
-    ota::getInterface()->readServerManifest();
-    // Inform other plugins about the OTA interfaces we provide
-    api::getContext()->parameters->set(param::global::kOTAInterface, ota::getInterface());
-#endif
     auto& ctx = (*common::getContext());
 
     // Now we need to check OS and GPU capabilities

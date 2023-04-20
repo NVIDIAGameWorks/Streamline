@@ -414,7 +414,7 @@ bool verifyEmbeddedSignature(const wchar_t* pathToFile)
 
     StrongSigPolicy.cbSize = sizeof(CERT_STRONG_SIGN_PARA);
     StrongSigPolicy.dwInfoChoice = CERT_STRONG_SIGN_OID_INFO_CHOICE;
-    StrongSigPolicy.pszOID = szOID_CERT_STRONG_SIGN_OS_CURRENT;
+    StrongSigPolicy.pszOID = (LPSTR)szOID_CERT_STRONG_SIGN_OS_CURRENT;
     WinTrustData.pSignatureSettings->pCryptoPolicy = &StrongSigPolicy;
 
     // WinVerifyTrust verifies signatures as specified by the GUID  and Wintrust_Data.

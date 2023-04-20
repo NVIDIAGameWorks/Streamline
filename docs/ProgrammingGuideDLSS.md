@@ -5,7 +5,7 @@ Streamline - DLSS
 >The focus of this guide is on using Streamline to integrate DLSS into an application.  For more information about DLSS itself, please visit the [NVIDIA Developer DLSS Page](https://developer.nvidia.com/rtx/dlss)
 >For information on user interface considerations when using the DLSS plugin, please see the "RTX UI Developer Guidelines.pdf" document included in the DLSS SDK.
 
-Version 2.0
+Version 2.0.1
 =======
 
 ### 1.0 INITIALIZE AND SHUTDOWN
@@ -149,17 +149,8 @@ slSetTag(viewport, inputs, _countof(inputs), cmdList);
 > **NOTE:**
 > If dynamic resolution is used then please specify the extent for each tagged resource. Please note that SL **manages resource states so there is no need to transition tagged resources**.
 
-DLSS next requires additional buffers so ***please tag all buffers that are available in your engine***
-
-* `eExposure` (1x1 buffer containing exposure of the current frame)
-* `eAlbedo`
-* `eSpecularAlbedo`
-* `eIndirectAlbedo`
-* `eNormals`
-* `eRoughness`
-* `eEmissive`
-* `eDisocclusionMask`
-* `eSpecularMotionVectors`
+> **NOTE:**
+> If `sl::kBufferTypeExposure` is NOT provided DLSS will be in auto-exposure mode (`NVSDK_NGX_DLSS_Feature_Flags_AutoExposure` will be set automatically)
 
 ### 5.0 PROVIDE DLSS OPTIONS
 

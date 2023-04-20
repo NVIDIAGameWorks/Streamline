@@ -209,7 +209,7 @@ void updateEmbeddedJSON(json& config)
     }
 
     auto& ctx = (*dlss::getContext());
-    ctx.adapterMask = config.contains("supportedAdapters") ? config["supportedAdapters"] : 0;
+    ctx.adapterMask = config.contains("supportedAdapters") ? config["supportedAdapters"].operator uint32_t() : 0;
 
     if (caps && ctx.adapterMask)
     {

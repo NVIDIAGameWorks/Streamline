@@ -1,3 +1,10 @@
+!!!! ------------------------------------
+!!!!
+!!!! This file is now deprecated. 
+!!!! Starting from v2.0.1, releases notes will be posted as commit messages on tagged releases
+!!!!
+!!!! ------------------------------------
+
 Streamline SDK Public 2.0.0a Release Notes
 
 Hotfix Notes:
@@ -10,9 +17,6 @@ Transitioning from SL 2.0.0 to SL 2.0.0a (High Level):
 -- Replace the SL Reflex DLLs
 
 Streamline SDK Public 2.0.0 Release Notes
-
-Development Notes:
--- Note that to rebuild SL from source, you will need to download(/build) and install Slang and xxd.  See the Readme.md for details.
 
 Changed Behavior and New Features:
 -- With the release of SL 2.0.0, the DLSS-G plugin is being made available publicly for the first time.  Note that only precompiled binaries of the sl.dlss_g.dll plugin are available, not source.  However, source is available for the rest of the plugins and SL core.

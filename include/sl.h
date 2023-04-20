@@ -187,6 +187,8 @@ SL_STRUCT(ResourceAllocationDesc, StructType({ 0xbb57e5, 0x49a2, 0x4c23, { 0xa5,
     uint32_t state = 0;
     //! CD3DX12_HEAP_PROPERTIES or nullptr
     void* heap{};
+
+    //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
 };
 
 //! Native resource
@@ -239,6 +241,8 @@ SL_STRUCT(Resource, StructType({ 0x3a9d70cf, 0x2418, 0x4b72, { 0x83, 0x91, 0x13,
     uint32_t usage{};
     //! Reserved for internal use
     uint32_t reserved{};
+
+    //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
 };
 
 //! Specifies life-cycle for the tagged resource
@@ -261,7 +265,7 @@ enum ResourceLifecycle
 //! 
 //! {4C6A5AAD-B445-496C-87FF-1AF3845BE653}
 SL_STRUCT(ResourceTag, StructType({ 0x4c6a5aad, 0xb445, 0x496c, { 0x87, 0xff, 0x1a, 0xf3, 0x84, 0x5b, 0xe6, 0x53 } }), kStructVersion1)
-    ResourceTag(Resource* r, BufferType t, ResourceLifecycle l, Extent* e = nullptr) : BaseStructure(ResourceTag::s_structType, kStructVersion1), resource(r), type(t), lifecycle(l) { if (e) extent = *e; };
+    ResourceTag(Resource* r, BufferType t, ResourceLifecycle l, const Extent* e = nullptr) : BaseStructure(ResourceTag::s_structType, kStructVersion1), resource(r), type(t), lifecycle(l) { if (e) extent = *e; };
     //! Resource description
     Resource* resource{};
     //! Type of the tagged buffer
@@ -270,6 +274,8 @@ SL_STRUCT(ResourceTag, StructType({ 0x4c6a5aad, 0xb445, 0x496c, { 0x87, 0xff, 0x
     ResourceLifecycle lifecycle{};
     //! The area of the tagged resource to use (if using the entire resource leave as null)
     Extent extent{};
+
+    //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
 };
 
 //! Resource allocation/deallocation callbacks
@@ -388,6 +394,8 @@ SL_STRUCT(Preferences, StructType({ 0x1ca10965, 0xbf8e, 0x432b, { 0x8d, 0xa1, 0x
     //! 
     //! NOTE: To ensure correct `slGetFeatureRequirements` behavior please specify if planning to use Vulkan.
     RenderAPI renderAPI = RenderAPI::eD3D12;
+
+    //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
 };
 
 //! Frame tracking handle
@@ -430,7 +438,7 @@ SL_ENUM_OPERATORS_32(FeatureRequirementFlags);
 //! Specifies feature requirements
 //! 
 //! {66714097-AC6D-4BC6-8915-1E0F55A6B61F}
-SL_STRUCT(FeatureRequirements, StructType({ 0x66714097, 0xac6d, 0x4bc6, { 0x89, 0x15, 0x1e, 0xf, 0x55, 0xa6, 0xb6, 0x1f } }), kStructVersion1)
+SL_STRUCT(FeatureRequirements, StructType({ 0x66714097, 0xac6d, 0x4bc6, { 0x89, 0x15, 0x1e, 0xf, 0x55, 0xa6, 0xb6, 0x1f } }), kStructVersion2)
     //! Various Flags
     FeatureRequirementFlags flags {};
     
@@ -455,6 +463,7 @@ SL_STRUCT(FeatureRequirements, StructType({ 0x66714097, 0xac6d, 0x4bc6, { 0x89, 
     //! Command queues
     uint32_t vkNumComputeQueuesRequired{};
     uint32_t vkNumGraphicsQueuesRequired{};
+    
     //! Device extensions
     uint32_t vkNumDeviceExtensions{};
     const char** vkDeviceExtensions{};
@@ -471,6 +480,11 @@ SL_STRUCT(FeatureRequirements, StructType({ 0x66714097, 0xac6d, 0x4bc6, { 0x89, 
     //! NOTE: Use getVkPhysicalDeviceVulkan13Features from sl_helpers_vk.h
     uint32_t vkNumFeatures13{};
     const char** vkFeatures13{};
+
+    //! Vulkan optical flow feature
+    uint32_t vkNumOpticalFlowQueuesRequired{};
+
+    //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
 };
 
 //! Specifies feature's version
@@ -481,6 +495,8 @@ SL_STRUCT(FeatureVersion, StructType({ 0x6d5b51f0, 0x76b, 0x486d, { 0x99, 0x95, 
     Version versionSL{};
     //! NGX version (if feature is using NGX, null otherwise)
     Version versionNGX{};
+
+    //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
 };
 
 //! Specifies either DXGI adapter or VK physical device
@@ -493,6 +509,8 @@ SL_STRUCT(AdapterInfo, StructType({ 0x677315f, 0xa746, 0x4492, { 0x9f, 0x42, 0xc
     uint32_t deviceLUIDSizeInBytes{};
     //! Vulkan Specific, if specified LUID will be ignored
     void* vkPhysicalDevice{};
+
+    //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
 };
 
 }

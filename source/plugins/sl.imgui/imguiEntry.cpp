@@ -271,7 +271,7 @@ Context* createContext(const ContextDesc& desc)
             desc.NumDescriptors = NUM_BACK_BUFFERS;
             desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
             desc.NodeMask = 1;
-            if (d3d12Device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&ctx.pd3dRtvDescHeap)) != S_OK) return false;
+            if (d3d12Device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&ctx.pd3dRtvDescHeap)) != S_OK) return nullptr;
 
             SIZE_T rtvDescriptorSize = d3d12Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
             D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = ctx.pd3dRtvDescHeap->GetCPUDescriptorHandleForHeapStart();
@@ -288,7 +288,7 @@ Context* createContext(const ContextDesc& desc)
             desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
             desc.NumDescriptors = 1;
             desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-            if (d3d12Device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&ctx.pd3dSrvDescHeap)) != S_OK)  return false;
+            if (d3d12Device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&ctx.pd3dSrvDescHeap)) != S_OK)  return nullptr;
         }
 
         ImGui_ImplDX12_Init(d3d12Device, NUM_BACK_BUFFERS,

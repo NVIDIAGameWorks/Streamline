@@ -52,6 +52,8 @@ SL_STRUCT(NISOptions, StructType({ 0x676610e5, 0x9674, 0x4d3a, { 0x9c, 0x8a, 0xf
     NISHDR hdrMode = NISHDR::eNone;
     //! Specifies sharpening level in range [0,1]
     float sharpness = 0.0f;
+
+    //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
 };
 
 //! Returned by the NIS plugin
@@ -60,6 +62,8 @@ SL_STRUCT(NISOptions, StructType({ 0x676610e5, 0x9674, 0x4d3a, { 0x9c, 0x8a, 0xf
 SL_STRUCT(NISState, StructType({ 0x71ab4fd0, 0xd959, 0x4c2a, { 0xaf, 0x69, 0xed, 0x48, 0x50, 0xbd, 0x4e, 0x3d } }), kStructVersion1)
     //! Specified the amount of memory expected to be used
     uint64_t estimatedVRAMUsageInBytes {};
+
+//! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
 };
 
 }

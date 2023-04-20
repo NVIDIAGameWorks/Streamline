@@ -121,13 +121,18 @@ protected:
 class WorkerThread
 {
     std::mutex m_mtx;
-    std::condition_variable m_cv;
-    std::condition_variable m_cvf;
+
+    std::condition_variable m_cv; // work queue cv
+    bool m_workAdded = false;
+
+    std::condition_variable m_cvf; // flushing cv, no need for flag since we use a timeout for it
+
     std::atomic<bool> m_quit = false;
     std::atomic<bool> m_flush = false;
+
     size_t m_jobCount = 0;
     std::thread m_thread;
-    std::vector<std::function<void(void)>> m_work{};
+    std::vector<std::pair<bool, std::function<void(void)>>> m_work{};
     std::wstring m_name;
 
     void workerFunction()
@@ -139,29 +144,40 @@ class WorkerThread
             {
                 // Tell threads waiting on flush that we are done
                 m_cvf.notify_all();
-                // Wait and free the lock
-                m_cv.wait(lock);
+
+                // Check if there was work added while the work queue was empty. If added, don't wait. Otherwise, keep waiting until notify + work added
+                m_cv.wait(lock, [this] { return m_workAdded; });
+                m_workAdded = false;
             }
             else
             {
-                auto func = m_work.front();
+                auto [perpetual, func] = m_work.front();
                 lock.unlock();
                 // NOTE: No need to wrap this in the exception handler
                 // since all internal workers are already executing within one.
                 func();
                 lock.lock();
+                // Done, remove from the queue
                 m_work.erase(m_work.begin());
-                m_jobCount--;
+                // Keep perpetual jobs until flush is requested
+                if (!perpetual || m_flush.load())
+                {
+                    m_jobCount--;
+                }
+                else
+                {
+                    // Back to the queue to execute again but after other workloads (if any)
+                    m_work.push_back({ perpetual, func });
+                }
             }
         }
     }
 
 public:
-
     WorkerThread(const WorkerThread&) = delete;
 
     WorkerThread(const wchar_t* name, int priority)
-    { 
+    {
         m_name = name;
         m_thread = std::thread(&WorkerThread::workerFunction, this);
         if (!SetThreadPriority(m_thread.native_handle(), priority))
@@ -173,14 +189,21 @@ public:
 
     ~WorkerThread()
     {
-        m_quit = true;
-        m_cv.notify_all(); // wake up thread if needed
-        m_thread.join();
+        {
+            std::unique_lock<std::mutex> lock(m_mtx);
+            m_quit = true; // set to true so that worker thread can exit its loop
+            m_workAdded = true; // set to true so that worker thread exit its wait after the notify call
+        }
+        m_cv.notify_all(); // wake up thread
+        m_thread.join(); // block until thread exits
     }
 
     std::cv_status flush(uint32_t timeout = 500)
     {
         std::cv_status res = std::cv_status::no_timeout;
+
+        // Atomic swap to true and check that it was false so we don't flush
+        // multiple times from different threads.
         if (!m_flush.exchange(true))
         {
             std::unique_lock<std::mutex> lock(m_mtx);
@@ -198,18 +221,21 @@ public:
         return res;
     }
 
-    size_t getJobCount() 
-    { 
-        std::unique_lock<std::mutex> lock(m_mtx);
-        return m_jobCount; 
-    }
-
-    bool scheduleWork(const std::function<void(void)>& func)
+    size_t getJobCount()
     {
         std::unique_lock<std::mutex> lock(m_mtx);
-        m_work.push_back(func);
-        m_cv.notify_one();
+        return m_jobCount;
+    }
+
+    bool scheduleWork(const std::function<void(void)>& func, bool perpetual = false)
+    {
+        std::unique_lock<std::mutex> lock(m_mtx);
+        m_work.push_back({ perpetual, func });
+        m_workAdded = true;
         m_jobCount++;
+
+        m_cv.notify_one();
+
         return true;
     }
 };

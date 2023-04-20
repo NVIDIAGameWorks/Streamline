@@ -28,6 +28,8 @@
 #include <windows.h>
 #endif
 
+#include "include/sl_struct.h"
+
 // Forward defines so we can reduce the overall number of includes
 struct NVSDK_NGX_Parameter;
 struct VkPhysicalDevice_T;
@@ -85,7 +87,7 @@ namespace sl
 template<typename T>
 T* findStruct(const void* ptr)
 {
-    auto base = (BaseStructure*)ptr;
+    auto base = static_cast<const BaseStructure*>(ptr);
     while (base && base->structType != T::s_structType)
     {
         base = base->next;
@@ -96,7 +98,7 @@ T* findStruct(const void* ptr)
 template<typename T>
 T* findStruct(void* ptr)
 {
-    auto base = (BaseStructure*)ptr;
+    auto base = static_cast<const BaseStructure*>(ptr);
     while (base && base->structType != T::s_structType)
     {
         base = base->next;
@@ -107,10 +109,10 @@ T* findStruct(void* ptr)
 template<typename T>
 T* findStruct(const void** ptr, uint32_t count)
 {
-    BaseStructure* base{};
+    const BaseStructure* base{};
     for (uint32_t i = 0; base == nullptr && i < count; i++)
     {
-        base = (BaseStructure*)ptr[i];
+        base = static_cast<const BaseStructure*>(ptr[i]);
         while (base && base->structType != T::s_structType)
         {
             base = base->next;
@@ -124,7 +126,7 @@ bool findStructs(const void** ptr, uint32_t count, std::vector<T*>& structs)
 {
     for (uint32_t i = 0; i < count; i++)
     {
-        auto base = (BaseStructure*)ptr[i];
+        auto base = static_cast<const BaseStructure*>(ptr[i]);
         while (base)
         {
             if (base->structType == T::s_structType)
@@ -206,6 +208,7 @@ using PFunCreateReservedResource2After = HRESULT(const D3D12_RESOURCE_DESC* pDes
 using PFunResourceBarrierAfter = void(ID3D12GraphicsCommandList* pCmdList, UINT NumBarriers, const D3D12_RESOURCE_BARRIER* pBarriers);
 #endif
 
+using PFunVkDeviceWaitIdleBefore = VkResult(VkDevice Device, bool& Skip);
 using PFunVkCreateSwapchainKHRBefore = VkResult(VkDevice Device, const VkSwapchainCreateInfoKHR* CreateInfo, const VkAllocationCallbacks* Allocator, VkSwapchainKHR* Swapchain, bool& Skip);
 using PFunVkGetSwapchainImagesKHRBefore = VkResult(VkDevice Device, VkSwapchainKHR Swapchain, uint32_t* SwapchainImageCount, VkImage* SwapchainImages, bool& Skip);
 using PFunVkAcquireNextImageKHRBefore = VkResult(VkDevice Device, VkSwapchainKHR Swapchain, uint64_t Timeout, VkSemaphore Semaphore, VkFence Fence, uint32_t* ImageIndex, bool& Skip);

@@ -245,8 +245,10 @@ class Vulkan : public Generic
 
     inline static PFN_vkCreateInstance vkCreateInstance{};
     inline static PFN_vkDestroyInstance vkDestroyInstance{};
+    inline static PFN_vkGetPhysicalDeviceFeatures2 vkGetPhysicalDeviceFeatures2{};
     inline static PFN_vkGetPhysicalDeviceProperties2 vkGetPhysicalDeviceProperties2{};
     inline static PFN_vkEnumeratePhysicalDevices vkEnumeratePhysicalDevices{};
+    inline static PFN_vkGetPhysicalDeviceQueueFamilyProperties vkGetPhysicalDeviceQueueFamilyProperties{};
     inline static HMODULE s_module{};
 
     static ComputeStatus getStaticVKMethods();
@@ -278,6 +280,7 @@ public:
 
     virtual ComputeStatus getInstance(Instance& instance)  override { instance = m_instance;  return ComputeStatus::eOk; };
     virtual ComputeStatus getPhysicalDevice(PhysicalDevice& device)  override { device = m_physicalDevice;  return ComputeStatus::eOk; };
+    virtual ComputeStatus waitForIdle(Device device) override;
 
     virtual ComputeStatus getVendorId(VendorId& id) override final;
     virtual ComputeStatus getRenderAPI(RenderAPI &OutType);
@@ -348,6 +351,8 @@ public:
     static ComputeStatus createInstanceAndFindPhysicalDevice(uint32_t id, chi::Instance& instance, chi::PhysicalDevice& device);
     static ComputeStatus destroyInstance(chi::Instance& instance);
     static ComputeStatus getLUIDFromDevice(chi::PhysicalDevice device, uint32_t& deviceId, LUID* OutId);
+    static ComputeStatus getOpticalFlowQueueInfo(chi::PhysicalDevice physicalDevice, uint32_t& queueFamilyIndex, uint32_t& queueIndex);
+    virtual ComputeStatus isNativeOpticalFlowSupported() override final;
 };
 
 }

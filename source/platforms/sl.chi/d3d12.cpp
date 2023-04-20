@@ -265,6 +265,23 @@ class CommandListContext : public ICommandListContext
     std::mutex m_mtxQueueList;
 
 public:
+    void waitForVblank(SwapChain chain) override
+    {
+        IDXGIOutput* output = nullptr;
+        ((IDXGISwapChain*)chain)->GetContainingOutput(&output);
+        output->WaitForVBlank();
+    }
+
+    void getFrameStats(SwapChain chain, void* frameStats) override
+    {
+        DXGI_FRAME_STATISTICS* frameStatsPtr = (DXGI_FRAME_STATISTICS*)frameStats;
+        HRESULT hr = ((IDXGISwapChain*)chain)->GetFrameStatistics(frameStatsPtr);
+    }
+
+    void getLastPresentID(SwapChain chain, uint32_t& id) override
+    {
+        HRESULT hr = ((IDXGISwapChain*)chain)->GetLastPresentCount(&id);
+    }
 
     void init(const char* debugName, ID3D12Device* device, ID3D12CommandQueue* queue, uint32_t count)
     {
@@ -655,7 +672,7 @@ public:
         }
         else if (sync == 0)
         {
-            flags |= DXGI_PRESENT_ALLOW_TEARING; // needed for vsync off in windowed mode
+            flags |= DXGI_PRESENT_ALLOW_TEARING;
         }
         
         HRESULT res{};
@@ -1166,6 +1183,21 @@ ComputeStatus D3D12::createFence(FenceFlags flags, uint64_t initialValue, Fence&
         setDebugName(&r, friendlyName);
     }
     return fence ? ComputeStatus::eOk : ComputeStatus::eError;
+}
+
+ComputeStatus D3D12::getFullscreenState(SwapChain chain, bool& fullscreen)
+{
+    if (!chain) return ComputeStatus::eInvalidArgument;
+    IDXGISwapChain* swapChain = (IDXGISwapChain*)chain;
+
+    BOOL fs = false;
+    if (FAILED(swapChain->GetFullscreenState(&fs, NULL)))
+    {
+        SL_LOG_ERROR("Failed to get fullscreen state");
+    }
+
+    fullscreen = (bool)fs;
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::setFullscreenState(SwapChain chain, bool fullscreen, Output out)
@@ -2159,9 +2191,10 @@ ComputeStatus D3D12::cloneResource(Resource resource, Resource &clone, const cha
         res = (ID3D12Resource*)result.native;
     }
     else
-    {        
+    {
+        auto heapProp = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT, creationMask, visibilityMask);
         HRESULT hr = m_device->CreateCommittedResource(
-            &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT, creationMask, visibilityMask),
+            &heapProp,
             D3D12_HEAP_FLAG_NONE,
             &desc1,
             (D3D12_RESOURCE_STATES)nativeState,
@@ -2249,7 +2282,8 @@ ComputeStatus D3D12::unmapResource(CommandList cmdList, Resource resource, uint3
 
 ComputeStatus D3D12::getLUIDFromDevice(NVSDK_NGX_LUID *OutId)
 {
-    memcpy(OutId, &(m_device->GetAdapterLuid()), sizeof(LUID));
+    auto id = m_device->GetAdapterLuid();
+    memcpy(OutId, &id, sizeof(LUID));
     return ComputeStatus::eOk;
 }
 
@@ -2297,7 +2331,8 @@ ComputeStatus D3D12::beginPerfSection(CommandList cmdList, const char *key, uint
         bufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
         bufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
         D3D12_RESOURCE_STATES initialState = D3D12_RESOURCE_STATE_COPY_DEST;
-        m_device->CreateCommittedResource(&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK, queryHeapDesc.NodeMask, queryHeapDesc.NodeMask), D3D12_HEAP_FLAG_NONE, &bufferDesc, initialState, nullptr, IID_PPV_ARGS(&data->queryBufferReadback[data->queryIdx]));
+        auto heapProp = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK, queryHeapDesc.NodeMask, queryHeapDesc.NodeMask);
+        m_device->CreateCommittedResource(&heapProp, D3D12_HEAP_FLAG_NONE, &bufferDesc, initialState, nullptr, IID_PPV_ARGS(&data->queryBufferReadback[data->queryIdx]));
         D3D12_RANGE mapRange = { 0, sizeof(uint64_t) * 2 };
         //! Map in advance to increase performance, no need to map/unmap every frame
         data->queryBufferReadback[data->queryIdx]->Map(0, &mapRange, reinterpret_cast<void**>(&data->pStagingPtr));

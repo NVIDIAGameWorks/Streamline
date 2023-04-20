@@ -111,10 +111,11 @@ inline VkPhysicalDeviceVulkan13Features getVkPhysicalDeviceVulkan13Features(uint
     return features;
 }
 
-//! Interface to provide to slUpgradeInterface when manually hooking Vulkan API
-//! 
+//! Interface to provide to slSetVulkanInfo when manually hooking Vulkan API and NOT
+//! leveraging vkCreateDevice and vkCreateInstance proxies provided by SL.
+//!
 //! {0EED6FD5-82CD-43A9-BDB5-47A5BA2F45D6}
-SL_STRUCT(VulkanInfo, StructType({ 0xeed6fd5, 0x82cd, 0x43a9, { 0xbd, 0xb5, 0x47, 0xa5, 0xba, 0x2f, 0x45, 0xd6 } }), kStructVersion1)
+SL_STRUCT(VulkanInfo, StructType({ 0xeed6fd5, 0x82cd, 0x43a9, { 0xbd, 0xb5, 0x47, 0xa5, 0xba, 0x2f, 0x45, 0xd6 } }), kStructVersion2)
 VkDevice device {};
 VkInstance instance{};
 VkPhysicalDevice physicalDevice{};
@@ -127,6 +128,9 @@ uint32_t computeQueueIndex{};
 uint32_t computeQueueFamily{};
 uint32_t graphicsQueueIndex{};
 uint32_t graphicsQueueFamily{};
+uint32_t opticalFlowQueueIndex{};
+uint32_t opticalFlowQueueFamily{};
+bool useNativeOpticalFlowMode = false;
 };
 
 }
@@ -137,6 +141,8 @@ using PFun_slSetVulkanInfo = sl::Result(const sl::VulkanInfo& info);
 //! 
 //! Use this method to provide Vulkan device, instance information to SL.
 //! 
+//! IMPORTANT: Only call this API if NOT using vkCreateDevice and vkCreateInstance proxies provided by SL.
+//
 //! @param info Reference to the structure providing the information
 //! 
 //! This method is NOT thread safe and should be called IMMEDIATELY after base interface is created.

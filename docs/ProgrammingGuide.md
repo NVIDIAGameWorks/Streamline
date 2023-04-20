@@ -2,7 +2,7 @@
 Streamline - SL
 =======================
 
-Version 2.0
+Version 2.0.1
 =======
 
 1 SETTING UP
@@ -856,7 +856,7 @@ sl::ResourceTag depthTag = sl::ResourceTag {&depth, sl::kBufferTypeDepth, sl::Re
 sl::ResourceTag mvecTag = sl::ResourceTag {&mvec, sl::kBufferTypeMvec, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent };
 
 // Tag as a group for simplicity
-sl::Resource inputs[] = {depthTag, mvecTag};
+sl::ResourceTag inputs[] = {depthTag, mvecTag};
 if(SL_FAILED(result, slSetTag(viewport, inputs, _countof(inputs), cmdList)))
 {
    // Handle error, check the logs

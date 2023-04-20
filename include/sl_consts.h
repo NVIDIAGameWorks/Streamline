@@ -218,6 +218,8 @@ SL_STRUCT(Constants, StructType({ 0xdcd35ad7, 0x4e4a, 0x4bad, { 0xa9, 0xc, 0xe0,
     Boolean motionVectorsDilated = Boolean::eFalse;
     //! Specifies if motion vectors are jittered or not.
     Boolean motionVectorsJittered = Boolean::eFalse;
+
+    //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
 };
 
 }

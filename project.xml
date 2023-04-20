@@ -3,15 +3,12 @@
     <package name="premake" version="5.0.0.13-53e4f813-windows-x86_64" platforms="windows-x86_64" />
     <package name="premake" version="5.0.0#0013-6e380c02-linux-x86_64" platforms="linux-x86_64" />
     <package name="premake" version="5.0.0.13-53e4f813-linux-aarch64" platforms="linux-aarch64" />  
-  </dependency>  
-  <dependency name="nvapi" linkPath="external/nvapi">
-    <package name="nvapi" version="r520-developer-windows-x86_64" platforms="windows-x86_64"/>
-  </dependency>  
-  <dependency name="CUDA11_1" linkPath="external/cuda/11.1">
-    <package name="cuda" version="11.1.74-windows-x86_64" platforms="windows-x86_64"/>
   </dependency>
-  <dependency name="VulkanSDK" linkPath="external/vulkan/1.3.204.1">
-    <package name="VulkanSDK" version="1.3.204.1-ext-windows-x86_64" platforms="windows-x86_64"/>
+  <dependency name="nvapi" linkPath="external/nvapi">
+    <package name="nvapi" version="r530-public-windows-x86_64" platforms="windows-x86_64"/>
+  </dependency>  
+  <dependency name="VulkanSDK" linkPath="external/vulkan/1.3.231.1">
+    <package name="VulkanSDK" version="1.3.231.1-ext-windows-x86_64" platforms="windows-x86_64"/>
   </dependency>  
   <dependency name="nlohmann_json" linkPath="external/json">
     <package name="nlohmann_json" version="v3.7.0" platforms="windows-x86_64"/>
@@ -28,9 +25,6 @@
   <dependency name="reflex-sdk-vk" linkPath="external/reflex-sdk-vk">
     <package name="reflex-sdk" version="r520-developer" platforms="windows-x86_64" />
   </dependency>
-  <dependency name="stb" linkPath="external/stb">
-    <package name="stb" version="7191e947" platforms="windows-x86_64" />
-  </dependency>  
   <dependency name="winpixeventruntime" linkPath="external/pix">
     <package name="winpixeventruntime" version="1.0.190604001-8-1f97383b" platforms="windows-x86_64" />
   </dependency>

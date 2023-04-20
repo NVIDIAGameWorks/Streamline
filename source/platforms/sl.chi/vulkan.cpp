@@ -26,7 +26,7 @@
 #include "source/core/sl.security/secureLoadLibrary.h"
 #include "shaders/vulkan_clear_image_view_spirv.h"
 #include "external/reflex-sdk-vk/inc/NvLowLatencyVk.h"
-#include "external/vulkan/1.3.204.1/include/vulkan/vulkan_win32.h"
+#include "external/vulkan/include/vulkan/vulkan_win32.h"
 
 // Errors are negative so don't check for VK_SUCCESS only since there are other 'non fatal' values > 0, we show them as warnings
 #define VK_CHECK(f) {auto _r = f;if(_r < 0){SL_LOG_ERROR("%s failed - error %d",#f,_r); return ComputeStatus::eError;} else if(_r != 0) {SL_LOG_WARN("%s - warning %d",#f,_r);}}
@@ -609,20 +609,43 @@ public:
     int present(SwapChain chain, uint32_t sync, uint32_t flags, void* params)
     {
         SwapChainVk* sc = (SwapChainVk*)chain;
-        const VkPresentInfoKHR info = {
-        VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-        nullptr,
-        // Cannot wait here on present semaphore (however acquires next image has to wait before doing a copy to back buffer)
-        1,
-        &m_presentSemaphore, 
-        1,
-        &(VkSwapchainKHR)sc->native,
-        &m_bufferToPresent, nullptr
+        auto swapChain = (VkSwapchainKHR)sc->native;
+        const VkPresentInfoKHR info = 
+        {
+            VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+            nullptr,
+            // Cannot wait here on present semaphore (however acquires next image has to wait before doing a copy to back buffer)
+            1,
+            &m_presentSemaphore, 
+            1,
+            &swapChain,
+            &m_bufferToPresent, nullptr
         };
         // With VK it is important to always return the "error" code
         int res{};
         VK_CHECK_RE(res, m_ddt.QueuePresentKHR(m_cmdQueue, &info));
         return res;
+    }
+
+    void getFrameStats(SwapChain chain, void* frameStats)
+    {
+        assert(false);
+        SL_LOG_ERROR("Not implemented");
+        return;
+    }
+
+    void getLastPresentID(SwapChain chain, uint32_t& id)
+    {
+        assert(false);
+        SL_LOG_ERROR("Not implemented");
+        return;
+    }
+
+    void waitForVblank(SwapChain chain)
+    {
+        assert(false);
+        SL_LOG_ERROR("Not implemented");
+        return;
     }
 };
 
@@ -837,6 +860,8 @@ ComputeStatus Vulkan::init(Device device, param::IParameters* params)
     m_vk->computeQueueIndex = vk->computeQueueIndex;
     m_vk->graphicsQueueFamily = vk->graphicsQueueFamily;
     m_vk->graphicsQueueIndex = vk->graphicsQueueIndex;
+    m_vk->opticalFlowQueueFamily = vk->opticalFlowQueueFamily;
+    m_vk->opticalFlowQueueIndex = vk->opticalFlowQueueIndex;
     m_vk->mapVulkanInstanceAPI(m_instance);
     m_vk->mapVulkanDeviceAPI(m_device);
     m_ddt = m_vk->dispatchDeviceMap[m_device];
@@ -1022,6 +1047,14 @@ ComputeStatus Vulkan::shutdown()
     return Generic::shutdown();
 }
 
+ComputeStatus Vulkan::waitForIdle(Device device)
+{
+    if (!device) return ComputeStatus::eInvalidArgument;
+    
+    VK_CHECK(m_ddt.DeviceWaitIdle((VkDevice)device));
+    return ComputeStatus::eOk;
+}
+
 ComputeStatus Vulkan::getRenderAPI(RenderAPI &OutType)
 {
     OutType = RenderAPI::eVulkan;
@@ -1186,6 +1219,16 @@ ComputeStatus Vulkan::createCommandQueue(CommandQueueType type, CommandQueue& qu
             return ComputeStatus::eError;
         }
         queue = new chi::CommandQueueVk{ tmp, type, m_vk->graphicsQueueFamily, m_vk->graphicsQueueIndex + index };
+    }
+    else if (type == CommandQueueType::eOpticalFlow)
+    {
+        VkQueue tmp = {};
+        m_ddt.GetDeviceQueue(m_device, m_vk->opticalFlowQueueFamily, m_vk->opticalFlowQueueIndex + index, &tmp);
+        if (!tmp)
+        {
+            return ComputeStatus::eError;
+        }
+        queue = new chi::CommandQueueVk{ tmp, type, m_vk->opticalFlowQueueFamily, m_vk->opticalFlowQueueIndex + index };
     }
     else
     {
@@ -2280,8 +2323,10 @@ ComputeStatus Vulkan::getStaticVKMethods()
         {
             vkCreateInstance = reinterpret_cast<PFN_vkCreateInstance>(GetProcAddress(s_module, "vkCreateInstance"));
             vkDestroyInstance = reinterpret_cast<PFN_vkDestroyInstance>(GetProcAddress(s_module, "vkDestroyInstance"));
+            vkGetPhysicalDeviceFeatures2 = reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures2>(GetProcAddress(s_module, "vkGetPhysicalDeviceFeatures2"));
             vkGetPhysicalDeviceProperties2 = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties2>(GetProcAddress(s_module, "vkGetPhysicalDeviceProperties2"));
             vkEnumeratePhysicalDevices = reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(GetProcAddress(s_module, "vkEnumeratePhysicalDevices"));
+            vkGetPhysicalDeviceQueueFamilyProperties = reinterpret_cast<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(GetProcAddress(s_module, "vkGetPhysicalDeviceQueueFamilyProperties"));
         }
     }
     if (!vkCreateInstance || !vkDestroyInstance || !vkGetPhysicalDeviceProperties2 || !vkEnumeratePhysicalDevices)
@@ -2302,8 +2347,13 @@ ComputeStatus Vulkan::createInstanceAndFindPhysicalDevice(uint32_t id, chi::Inst
         std::vector<const char*> instanceExtensions = { VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME };
 
         VkInstance inst{};
+        VkApplicationInfo appInfo = { VK_STRUCTURE_TYPE_APPLICATION_INFO };
+        // min version required to support native Vulkan optical flow feature.
+        appInfo.apiVersion = VK_API_VERSION_1_1;
+
         VkInstanceCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+        info.pApplicationInfo = &appInfo;
         info.enabledExtensionCount = 2;
         info.ppEnabledExtensionNames = instanceExtensions.data();
         VK_CHECK(vkCreateInstance(&info, nullptr, &inst));
@@ -2362,6 +2412,74 @@ ComputeStatus Vulkan::getLUIDFromDevice(chi::PhysicalDevice device, uint32_t& de
         deviceId = physicalDeviceProperties2.properties.deviceID;
     }
     return res;
+}
+
+ComputeStatus Vulkan::getOpticalFlowQueueInfo(chi::PhysicalDevice physDevice, uint32_t& queueFamilyIndex, uint32_t& queueIndex)
+{
+    auto res = getStaticVKMethods();
+    if (res != ComputeStatus::eOk)
+    {
+        SL_LOG_ERROR("Failed to obtain VK API!");
+        return res;
+    }
+
+    if (physDevice == nullptr)
+    {
+        SL_LOG_ERROR("Invalid VK physical device!");
+        return ComputeStatus::eInvalidPointer;
+    }
+    auto physicalDevice = reinterpret_cast<VkPhysicalDevice>(physDevice);
+
+    queueFamilyIndex = 0;
+    queueIndex = 0;
+
+    VkPhysicalDeviceOpticalFlowFeaturesNV physicalDeviceOpticalFlowFeaturesNV = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPTICAL_FLOW_FEATURES_NV };
+    VkPhysicalDeviceSynchronization2Features physicalDeviceSynchronization2Features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES, &physicalDeviceOpticalFlowFeaturesNV };
+    VkPhysicalDeviceFeatures2 physicalDeviceFeatures2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &physicalDeviceSynchronization2Features };
+
+    vkGetPhysicalDeviceFeatures2(physicalDevice, &physicalDeviceFeatures2);
+
+    bool nativeOpticalFlowHWSupport = (physicalDeviceSynchronization2Features.synchronization2 == VK_TRUE && physicalDeviceOpticalFlowFeaturesNV.opticalFlow == VK_TRUE);
+    if (!nativeOpticalFlowHWSupport)
+    {
+        SL_LOG_ERROR("Physical device features required to support Native VK OFA not supported by HW!");
+        return ComputeStatus::eNotSupported;
+    }
+
+    uint32_t queueFamilyCount{};
+    vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, NULL);
+    auto queueProps = std::make_unique<VkQueueFamilyProperties[]>(queueFamilyCount);
+    if (queueProps == nullptr)
+    {
+        SL_LOG_ERROR("Invalid queue family properties!");
+        return ComputeStatus::eInvalidPointer;
+    }
+    vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, queueProps.get());
+
+    // Native OFA always runs on the very first queue of the very first optical flow-capable queue family.
+    // Native OFA queue family cannot be the same as that of its client
+    VkQueueFlags requiredCaps = VK_QUEUE_OPTICAL_FLOW_BIT_NV;
+    for (queueFamilyIndex = 0; queueFamilyIndex < queueFamilyCount && (queueProps[queueFamilyIndex].queueFlags & requiredCaps) != requiredCaps; queueFamilyIndex++);
+
+    if (queueFamilyIndex == queueFamilyCount)
+    {
+        SL_LOG_ERROR("Queue family index out of bounds!");
+        return ComputeStatus::eError;
+    }
+
+    return ComputeStatus::eOk;
+}
+
+ComputeStatus Vulkan::isNativeOpticalFlowSupported()
+{
+    interposer::VkTable* vk{};
+    if (!getPointerParam(m_parameters, sl::param::global::kVulkanTable, &vk) || vk == nullptr)
+    {
+        SL_LOG_WARN("Failed to obtain VK table info!");
+        return ComputeStatus::eNoImplementation;
+    }
+
+    return vk->nativeOpticalFlowHWSupport ? ComputeStatus::eOk : ComputeStatus::eNotSupported;
 }
 
 ComputeStatus Vulkan::mapResource(CommandList cmdList, Resource resource, void*& data, uint32_t subResource, uint64_t offset, uint64_t totalBytes)
@@ -2978,7 +3096,7 @@ ComputeStatus Vulkan::getNativeFormat(Format format, NativeFormat& native)
      if(vkValidationOn) return ComputeStatus::eOk;
 #endif
 
-	 reflexSemaphoreValue++;
+     reflexSemaphoreValue++;
      LL_CHECK(NvLL_VK_Sleep(m_device, reflexSemaphoreValue));
      VkSemaphoreWaitInfo waitInfo;
      waitInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
@@ -2987,7 +3105,7 @@ ComputeStatus Vulkan::getNativeFormat(Format format, NativeFormat& native)
      waitInfo.semaphoreCount = 1;
      waitInfo.pSemaphores = &m_lowLatencySemaphore;
      waitInfo.pValues = &reflexSemaphoreValue;
-	 m_ddt.WaitSemaphores(m_device, &waitInfo, kMaxSemaphoreWaitUs);
+     m_ddt.WaitSemaphores(m_device, &waitInfo, kMaxSemaphoreWaitUs);
      return ComputeStatus::eOk;
  }
 

@@ -24,9 +24,9 @@
 
 #include <mutex>
 
-#include "external/vulkan/1.3.204.1/include/vulkan/vulkan.h"
-#include "external/vulkan/1.3.204.1/include/vulkan/vk_layer.h"
-#include "external/vulkan/1.3.204.1/include/vulkan/vk_layer_dispatch_table.h"
+#include "external/vulkan/include/vulkan/vulkan.h"
+#include "external/vulkan/include/vulkan/vk_layer.h"
+#include "external/vulkan/include/vulkan/vk_layer_dispatch_table.h"
 
 //#include "vulkannv.h"
 
@@ -48,6 +48,10 @@ struct VkTable
     uint32_t computeQueueFamily = 0;
     uint32_t graphicsQueueIndex = 0;
     uint32_t graphicsQueueFamily = 0;
+    uint32_t opticalFlowQueueIndex = 0;
+    uint32_t opticalFlowQueueFamily = 0;
+
+    bool nativeOpticalFlowHWSupport = false;
 
     std::mutex mutex;
     std::map<void*, VkLayerInstanceDispatchTable> dispatchInstanceMap;

@@ -1,7 +1,5 @@
 require("vstudio")
 
-include("scripts/cuda.lua")
-
 local ROOT = "./"
 
 function os.winSdkVersion()
@@ -49,11 +47,11 @@ workspace "streamline"
 		
 		
 	-- building makefiles
-	cppdialect "C++17"
+	cppdialect "C++20"
 	
 	filter "configurations:Debug"
 		defines { "DEBUG", "_DEBUG", "SL_ENABLE_TIMING=1", "SL_DEBUG" }
-		symbols "On"
+		symbols "Full"
 				
 	filter "configurations:Release"
 		defines { "NDEBUG","SL_ENABLE_TIMING=1", "SL_RELEASE" }
@@ -94,7 +92,7 @@ workspace "streamline"
 
 	filter {} -- clear filter when you know you no longer need it!
 	
-	vpaths { ["cuda"] = "**.cu", ["shaders"] = {"**.hlsl" } }
+	vpaths { ["shaders"] = {"**.hlsl" } }
 		
 group "core"
 
@@ -182,8 +180,12 @@ project "sl.compute"
 	dependson { "sl.interposer"}
 
 	if os.host() == "windows" then
+		if (os.isfile("./external/slang_internal/bin/windows-x64/release/slangc.exe")) then
 		files {
-			"./shaders/**.hlsl",
+			"./shaders/**.hlsl"
+		}
+		end
+		files {
 			"./source/platforms/sl.chi/capture.h",
 			"./source/platforms/sl.chi/capture.cpp",
 			"./source/platforms/sl.chi/compute.h",
@@ -255,7 +257,7 @@ project "sl.common"
 
 	pluginBasicSetup("common")
 
-	defines {"SL_COMMON_PLUGIN", "SL_ENABLE_OTA=0"}
+	defines {"SL_COMMON_PLUGIN"}
 
 	files { 
 		"./source/core/sl.extra/**.cpp",		
@@ -299,7 +301,9 @@ if (os.isdir("./source/plugins/sl.dlss_g")) then
 			"./source/plugins/sl.dlss_g/**.cpp", 		
 		}
 
-		vpaths { ["impl"] = {"./source/plugins/sl.dlss_g/**.h", "./source/plugins/sl.dlss_g/**.cpp" }}
+		links {"external/nvapi/amd64/nvapi64.lib"}
+
+		vpaths {["impl"] = { "./source/plugins/sl.dlss_g/**.h", "./source/plugins/sl.dlss_g/**.cpp" }}
 		
 		removefiles {"./source/core/sl.extra/extra.cpp"}
 end
@@ -419,7 +423,7 @@ project "sl.imgui"
 	
 	removefiles {"./source/core/sl.extra/extra.cpp"}
 
-	libdirs {externaldir .."vulkan/1.3.204.1/Lib"}
+	libdirs {externaldir .."vulkan/Lib"}
 
 	links { "d3d12.lib", "vulkan-1.lib"}
 	

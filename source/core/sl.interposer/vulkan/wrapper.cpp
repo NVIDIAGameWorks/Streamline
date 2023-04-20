@@ -36,6 +36,7 @@
 #include "source/core/sl.interposer/hook.h"
 #include "include/sl_hooks.h"
 #include "include/sl_helpers_vk.h"
+#include "include/sl_struct.h"
 
 HMODULE s_module = {};
 
@@ -77,7 +78,13 @@ sl::Result processVulkanInterface(const sl::VulkanInfo* extension)
     s_vk.graphicsQueueFamily = extension->graphicsQueueFamily;
     s_vk.graphicsQueueIndex = extension->graphicsQueueIndex;
     s_vk.computeQueueFamily = extension->computeQueueFamily;
-    s_vk.computeQueueIndex = extension->computeQueueIndex;    
+    s_vk.computeQueueIndex = extension->computeQueueIndex;
+    if (extension->structVersion >= sl::kStructVersion2)
+    {
+        s_vk.opticalFlowQueueFamily = extension->opticalFlowQueueFamily;
+        s_vk.opticalFlowQueueIndex = extension->opticalFlowQueueIndex;
+        s_vk.nativeOpticalFlowHWSupport = extension->useNativeOpticalFlowMode;
+    }
 
     // Allow all plugins to access this information
     sl::param::getInterface()->set(sl::param::global::kVulkanTable, &s_vk);
@@ -246,11 +253,18 @@ extern "C"
         // Figure out what extra features we need 
         uint32_t extraGraphicsQueues = 0;
         uint32_t extraComputeQueues = 0;
+        uint32_t extraOpticalFlowQueues = 0;
         auto pluginManager = sl::plugin_manager::getInterface();
+
         std::vector<json> configs;
         pluginManager->getLoadedFeatureConfigs(configs);
         for (auto& cfg : configs)
         {
+            if (cfg.contains("/external/vk/opticalflow/supported"_json_pointer))
+            {
+                s_vk.nativeOpticalFlowHWSupport = cfg["external"]["vk"]["opticalflow"]["supported"];
+                SL_LOG_INFO("Vulkan optical flow is supported natively as indicated by a plugin(s)");
+            }
             // Device extensions
             if (cfg.contains("/external/vk/device/extensions"_json_pointer))
             {
@@ -276,6 +290,19 @@ extern "C"
                 extraComputeQueues += cfg["external"]["vk"]["device"]["queues"]["compute"]["count"];
                 SL_LOG_INFO("Adding extra %u compute queue(s) requested by a plugin(s)", extraComputeQueues);
             }
+            if (s_vk.nativeOpticalFlowHWSupport)
+            {
+                if (cfg.contains("/external/vk/device/queues/opticalflow/family"_json_pointer))
+                {
+                    s_vk.opticalFlowQueueFamily = cfg["external"]["vk"]["device"]["queues"]["opticalflow"]["family"];
+                }
+
+                if (cfg.contains("/external/vk/device/queues/opticalflow/count"_json_pointer))
+                {
+                    extraOpticalFlowQueues = cfg["external"]["vk"]["device"]["queues"]["opticalflow"]["count"];
+                    SL_LOG_INFO("Adding extra %u optical flow queue(s) from queue family %u requested by a plugin(s)", extraOpticalFlowQueues, s_vk.opticalFlowQueueFamily);
+                }
+            }
         }
 
         for (uint32_t i = 0; i < createInfo.enabledExtensionCount; i++)
@@ -298,31 +325,124 @@ extern "C"
         createInfo.ppEnabledExtensionNames = extensions.data();
 
         // Check if host is already specifying 1.2 features
-        auto features12 = (VkPhysicalDeviceVulkan12Features*)createInfo.pNext;
-        while (features12)
+        VkPhysicalDeviceVulkan12Features* features12{};
+        VkPhysicalDeviceTimelineSemaphoreFeatures* pphysicalDeviceTimelineSemaphoreFeatures{};
+        VkPhysicalDeviceDescriptorIndexingFeatures* pphysicalDeviceDescriptorIndexingFeatures{};
+        VkPhysicalDeviceBufferDeviceAddressFeatures* pphysicalDeviceBufferDeviceAddressFeatures{};
+        // Check if host is already specifying 1.3 features
+        VkPhysicalDeviceVulkan13Features* features13{};
+        VkPhysicalDeviceSynchronization2Features* pphysicalDeviceSynchronization2Features{};
+        VkPhysicalDeviceOpticalFlowFeaturesNV* pphysicalDeviceOpticalFlowFeaturesNV{};
+        auto featuresChain = createInfo.pNext;
+
+        while (featuresChain)
         {
-            if (features12->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES)
+            if (((VkPhysicalDeviceVulkan12Features*)featuresChain)->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES)
             {
-                break;
+                features12 = (VkPhysicalDeviceVulkan12Features*)featuresChain;
             }
-            features12 = (VkPhysicalDeviceVulkan12Features*)features12->pNext;
+            else if (((VkPhysicalDeviceTimelineSemaphoreFeatures*)featuresChain)->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES)
+            {
+                pphysicalDeviceTimelineSemaphoreFeatures = (VkPhysicalDeviceTimelineSemaphoreFeatures*)featuresChain;
+            }
+            else if (((VkPhysicalDeviceDescriptorIndexingFeatures*)featuresChain)->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES)
+            {
+                pphysicalDeviceDescriptorIndexingFeatures = (VkPhysicalDeviceDescriptorIndexingFeatures*)featuresChain;
+            }
+            else if (((VkPhysicalDeviceBufferDeviceAddressFeatures*)featuresChain)->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES)
+            {
+                pphysicalDeviceBufferDeviceAddressFeatures = (VkPhysicalDeviceBufferDeviceAddressFeatures*)featuresChain;
+            }
+            else if (((VkPhysicalDeviceVulkan13Features*)featuresChain)->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES)
+            {
+                features13 = (VkPhysicalDeviceVulkan13Features*)featuresChain;
+            }
+            else if (((VkPhysicalDeviceSynchronization2Features*)featuresChain)->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES)
+            {
+                pphysicalDeviceSynchronization2Features = (VkPhysicalDeviceSynchronization2Features*)featuresChain;
+            }
+            else if (((VkPhysicalDeviceOpticalFlowFeaturesNV*)featuresChain)->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPTICAL_FLOW_FEATURES_NV)
+            {
+                pphysicalDeviceOpticalFlowFeaturesNV = (VkPhysicalDeviceOpticalFlowFeaturesNV*)featuresChain;
+            }
+            featuresChain = ((VkPhysicalDeviceVulkan12Features*)featuresChain)->pNext;
         }
 
-        VkPhysicalDeviceVulkan12Features enable12Features{};
-
         // Update either existing features or add ours to the chain
+        VkPhysicalDeviceOpticalFlowFeaturesNV physicalDeviceOpticalFlowFeaturesNV{};
+        //VkPhysicalDeviceSynchronization2Features physicalDeviceSynchronization2Features{};
+        VkPhysicalDeviceVulkan13Features enable13Features{};
+        VkPhysicalDeviceVulkan12Features enable12Features{};
+        if (s_vk.nativeOpticalFlowHWSupport)
+        {
+            if (pphysicalDeviceOpticalFlowFeaturesNV)
+            {
+                pphysicalDeviceOpticalFlowFeaturesNV->opticalFlow = true;
+            }
+            else
+            {
+                physicalDeviceOpticalFlowFeaturesNV.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPTICAL_FLOW_FEATURES_NV;
+                physicalDeviceOpticalFlowFeaturesNV.opticalFlow = true;
+                physicalDeviceOpticalFlowFeaturesNV.pNext = (void*)createInfo.pNext;
+                createInfo.pNext = &physicalDeviceOpticalFlowFeaturesNV;
+            }
+
+            if (features13)
+            {
+                features13->synchronization2 = true;
+            }
+            else if (pphysicalDeviceSynchronization2Features)
+            {
+                pphysicalDeviceSynchronization2Features->synchronization2 = true;
+            }
+            else
+            {
+                //physicalDeviceSynchronization2Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
+                //physicalDeviceSynchronization2Features.synchronization2 = true;
+                //physicalDeviceSynchronization2Features.pNext = (void*)createInfo.pNext;
+                //createInfo.pNext = &physicalDeviceSynchronization2Features;
+                enable13Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+                enable13Features.synchronization2 = true;
+                enable13Features.pNext = (void*)createInfo.pNext;
+                createInfo.pNext = &enable13Features;
+            }
+        }
+
         if (features12)
         {
-            features12->timelineSemaphore = true;
-            features12->descriptorIndexing = true;
+            features12->timelineSemaphore	= true;
+            features12->descriptorIndexing	= true;
             features12->bufferDeviceAddress = true;
         }
         else
         {
             enable12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
-            enable12Features.timelineSemaphore = true;
-            enable12Features.descriptorIndexing = true;
-            enable12Features.bufferDeviceAddress = true;
+
+            if (pphysicalDeviceTimelineSemaphoreFeatures)
+            {
+                pphysicalDeviceTimelineSemaphoreFeatures->timelineSemaphore = true;
+            }
+            else
+            {
+                enable12Features.timelineSemaphore = true;
+            }
+            //if (pphysicalDeviceDescriptorIndexingFeatures)
+            //{
+            //	pphysicalDeviceDescriptorIndexingFeatures->descriptorIndexing = true;
+            //}
+            //else
+            {
+                enable12Features.descriptorIndexing = true;
+            }
+            if (pphysicalDeviceBufferDeviceAddressFeatures)
+            {
+                pphysicalDeviceBufferDeviceAddressFeatures->bufferDeviceAddress = true;
+            }
+            else
+            {
+                enable12Features.bufferDeviceAddress = true;
+            }
+
             enable12Features.pNext = (void*)createInfo.pNext;
             createInfo.pNext = &enable12Features;
         }
@@ -340,15 +460,18 @@ extern "C"
         s_vk.computeQueueFamily = 0;
         for (uint32_t i = 0; i < static_cast<uint32_t>(queueFamilyProperties.size()); i++)
         {
-            if ((queueFamilyProperties[i].queueFlags & VK_QUEUE_GRAPHICS_BIT))
+            if (!s_vk.nativeOpticalFlowHWSupport || i != s_vk.opticalFlowQueueFamily)
             {
-                SL_LOG_VERBOSE("Found Vulkan graphics queue family at index %u - max queues allowed %u", i, queueFamilyProperties[i].queueCount);
-                s_vk.graphicsQueueFamily = i;
-            }
-            else if ((queueFamilyProperties[i].queueFlags & VK_QUEUE_COMPUTE_BIT))
-            {
-                SL_LOG_VERBOSE("Found Vulkan compute queue family at index %u - max queues allowed %u", i, queueFamilyProperties[i].queueCount);
-                s_vk.computeQueueFamily = i;
+                if ((queueFamilyProperties[i].queueFlags & VK_QUEUE_GRAPHICS_BIT))
+                {
+                    SL_LOG_VERBOSE("Found Vulkan graphics queue family at index %u - max queues allowed %u", i, queueFamilyProperties[i].queueCount);
+                    s_vk.graphicsQueueFamily = i;
+                }
+                else if ((queueFamilyProperties[i].queueFlags & VK_QUEUE_COMPUTE_BIT))
+                {
+                    SL_LOG_VERBOSE("Found Vulkan compute queue family at index %u - max queues allowed %u", i, queueFamilyProperties[i].queueCount);
+                    s_vk.computeQueueFamily = i;
+                }
             }
         }
 
@@ -390,6 +513,15 @@ extern "C"
             queueInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
             queueInfo.queueFamilyIndex = s_vk.computeQueueFamily;
             queueInfo.queueCount = extraComputeQueues;
+            queueInfo.pQueuePriorities = &defaultQueuePriority;
+            queueCreateInfos.push_back(queueInfo);
+        }
+
+        if (s_vk.nativeOpticalFlowHWSupport && extraOpticalFlowQueues > 0 && queueFamilyProperties[s_vk.opticalFlowQueueFamily].queueCount >= extraOpticalFlowQueues)
+        {
+            queueInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+            queueInfo.queueFamilyIndex = s_vk.opticalFlowQueueFamily;
+            queueInfo.queueCount = extraOpticalFlowQueues;
             queueInfo.pQueuePriorities = &defaultQueuePriority;
             queueCreateInfos.push_back(queueInfo);
         }
@@ -530,7 +662,24 @@ extern "C"
 
     VkResult VKAPI_CALL vkDeviceWaitIdle(VkDevice Device)
     {
-        return s_ddt.DeviceWaitIdle(Device);
+        const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(sl::FunctionHookID::eVulkan_DeviceWaitIdle);
+        bool skip = false;
+        VkResult result = VK_SUCCESS;
+        for (auto [hook, feature] : hooks)
+        {
+            result = ((sl::PFunVkDeviceWaitIdleBefore*)hook)(Device, skip);
+            // report error on first fail
+            if (result != VK_SUCCESS)
+            {
+                return result;
+            }
+        }
+
+        if (!skip)
+        {
+            result = s_ddt.DeviceWaitIdle(Device);
+        }
+        return result;
     }
 
     VkResult VKAPI_CALL vkAllocateMemory(VkDevice Device, const VkMemoryAllocateInfo* AllocateInfo, const VkAllocationCallbacks* Allocator, VkDeviceMemory* Memory)
@@ -1286,6 +1435,7 @@ if (strcmp(pName, #F) == 0)          \
         SL_INTERCEPT(vkDestroySwapchainKHR);
         SL_INTERCEPT(vkAcquireNextImageKHR);
         SL_INTERCEPT(vkBeginCommandBuffer);
+        SL_INTERCEPT(vkDeviceWaitIdle);
 
         return s_ddt.GetDeviceProcAddr(device, pName);
     }
@@ -1303,7 +1453,7 @@ if (strcmp(pName, #F) == 0)          \
         {
             s_idt.GetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)GetProcAddress(s_module, "vkGetInstanceProcAddr");
         }
-    	
+        
         // Redirect only the hooks we need
         SL_INTERCEPT(vkGetInstanceProcAddr);
         SL_INTERCEPT(vkGetDeviceProcAddr);
@@ -1323,6 +1473,7 @@ if (strcmp(pName, #F) == 0)          \
         SL_INTERCEPT(vkGetSwapchainImagesKHR);
         SL_INTERCEPT(vkAcquireNextImageKHR);
         SL_INTERCEPT(vkBeginCommandBuffer);
+        SL_INTERCEPT(vkDeviceWaitIdle);
 
         return s_idt.GetInstanceProcAddr(instance, pName);
     }

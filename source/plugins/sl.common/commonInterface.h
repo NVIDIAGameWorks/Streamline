@@ -212,8 +212,16 @@ inline bool operator!(GetDataResult r)
     return !((uint8_t)r);
 }
 
+struct OpticalFlowInfo
+{
+    bool nativeHWSupport = false;
+    uint32_t queueFamily{};
+    uint32_t queueIndex{};
+};
+
 struct PluginInfo
 {
+    PluginInfo() {};
     PluginInfo(const PluginInfo& rhs) = delete;
     Version minOS{};
     Version minDriver{};
@@ -224,6 +232,8 @@ struct PluginInfo
     std::vector<std::pair<BufferType, ResourceLifecycle>> requiredTags;
     std::vector<std::string> vkInstanceExtensions;
     std::vector<std::string> vkDeviceExtensions;
+    uint32_t minVkAPIVersion{};
+    OpticalFlowInfo opticalFlowInfo{};
 };
 
 // NOTE: Using void* instead of json* to avoid including large json header

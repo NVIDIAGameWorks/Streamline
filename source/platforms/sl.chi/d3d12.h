@@ -325,6 +325,7 @@ public:
     virtual ComputeStatus createCommandQueue(CommandQueueType type, CommandQueue& queue, const char friendlyName[], uint32_t index) override final;
     virtual ComputeStatus destroyCommandQueue(CommandQueue& queue) override final;
 
+    virtual ComputeStatus getFullscreenState(SwapChain chain, bool& fullscreen) override final;
     virtual ComputeStatus setFullscreenState(SwapChain chain, bool fullscreen, Output out) override final;
     virtual ComputeStatus getRefreshRate(SwapChain chain, float& refreshRate) override final;
     virtual ComputeStatus getSwapChainBuffer(SwapChain chain, uint32_t index, Resource& buffer) override final;

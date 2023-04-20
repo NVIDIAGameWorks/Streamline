@@ -53,6 +53,8 @@ SL_STRUCT(ReflexOptions, StructType({ 0xf03af81a, 0x6d0b, 0x4902, { 0xa6, 0x51, 
     uint16_t virtualKey = 0;
     //! ThreadID for reflex messages
     uint32_t idThread = 0;
+
+    //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
 };
 
 // {0D569B37-A1C8-4453-BE4D-40F4DE57952B}
@@ -74,6 +76,8 @@ SL_STRUCT(ReflexReport, StructType({ 0xd569b37, 0xa1c8, 0x4453, { 0xbe, 0x4d, 0x
     uint64_t gpuRenderEndTime{};
     uint32_t gpuActiveRenderTimeUs{};
     uint32_t gpuFrameTimeUs{};
+
+    //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
 };
 
 // {F0BB5985-DAF9-4728-B2FD-AE80A2BD7989}
@@ -88,6 +92,8 @@ SL_STRUCT(ReflexState, StructType({ 0xf0bb5985, 0xdaf9, 0x4728, { 0xb2, 0xfd, 0x
     ReflexReport frameReport[64];
     //! Specifies ownership of flash indicator toggle (true = driver, false = application)
     bool flashIndicatorDriverControlled = false;
+
+    //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
 };
 
 enum ReflexMarker
@@ -136,7 +142,7 @@ using PFun_slReflexGetState = sl::Result(sl::ReflexState& state);
 //! @param frame Specifies current frame
 //! @return sl::ResultCode::eOk if successful, error code otherwise (see sl_result.h for details)
 //!
-//! This method is NOT thread safe.
+//! This method is thread safe.
 using PFun_slReflexSetMarker = sl::Result(sl::ReflexMarker marker, const sl::FrameToken& frame);
 
 //! Tells reflex to sleep the app
@@ -146,7 +152,7 @@ using PFun_slReflexSetMarker = sl::Result(sl::ReflexMarker marker, const sl::Fra
 //! @param frame Specifies current frame
 //! @return sl::ResultCode::eOk if successful, error code otherwise (see sl_result.h for details)
 //!
-//! This method is NOT thread safe.
+//! This method is thread safe.
 using PFun_slReflexSleep = sl::Result(const sl::FrameToken& frame);
 
 //! Sets Reflex options

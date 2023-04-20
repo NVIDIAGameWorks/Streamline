@@ -28,7 +28,7 @@
 #include "source/core/sl.interposer/d3d12/d3d12CommandList.h"
 #include "source/core/sl.interposer/dxgi/dxgiFactory.h"
 #include "source/core/sl.interposer/dxgi/dxgiSwapchain.h"
-#include "external/vulkan/1.3.204.1/include/vulkan/vulkan.h"
+#include "external/vulkan/include/vulkan/vulkan.h"
 #include <versionhelpers.h>
 #else
 #include <unistd.h>
@@ -104,12 +104,21 @@ struct APIContext
     std::map<Feature, std::pair<size_t, char**>> vkDeviceExtensions;
     std::map<Feature, std::pair<size_t, char**>> vkFeatures12;
     std::map<Feature, std::pair<size_t, char**>> vkFeatures13;
+    std::map<Feature, std::pair<size_t, char**>> vkFeaturesOpticalflowNV;
 };
 
 APIContext s_ctx;
 
 sl::Result slInit(const Preferences &pref, uint64_t sdkVersion)
 {
+    //! IMPORTANT:
+    //! 
+    //! As explained in sl_struct.h any new elements must be placed at the end
+    //! of each structure and version must be increased or new elements can be
+    //! added in a new structure which is then chained. This assert ensures
+    //! that new element(s) are NOT added in the middle of a structure.
+    static_assert(offsetof(sl::Preferences, renderAPI) == 136, "new elements can only be added at the end of each structure");
+
     auto init = [&pref, &sdkVersion]()->sl::Result
     {
         // Setup logging first
@@ -262,6 +271,15 @@ Result slSetFeatureLoaded(sl::Feature feature, bool enabled)
 
 Result slSetTag(const sl::ViewportHandle& viewport, const sl::ResourceTag* tags, uint32_t numTags, sl::CommandBuffer* cmdBuffer)
 {
+    //! IMPORTANT:
+    //! 
+    //! As explained in sl_struct.h any new elements must be placed at the end
+    //! of each structure and version must be increased or new elements can be
+    //! added in a new structure which is then chained. This assert ensures
+    //! that new element(s) are NOT added in the middle of a structure.
+    static_assert(offsetof(sl::ResourceTag, extent) == 48, "new elements can only be added at the end of each structure");
+    static_assert(offsetof(sl::Resource, reserved) == 104, "new elements can only be added at the end of each structure");
+
     SL_EXCEPTION_HANDLE_START;
     SL_CHECK(slValidateState());
     const sl::plugin_manager::FeatureContext* ctx;
@@ -273,6 +291,14 @@ Result slSetTag(const sl::ViewportHandle& viewport, const sl::ResourceTag* tags,
 
 Result slSetConstants(const Constants& values, const FrameToken& frame, const ViewportHandle& viewport)
 {
+    //! IMPORTANT:
+    //! 
+    //! As explained in sl_struct.h any new elements must be placed at the end
+    //! of each structure and version must be increased or new elements can be
+    //! added in a new structure which is then chained. This assert ensures
+    //! that new element(s) are NOT added in the middle of a structure.
+    static_assert(offsetof(sl::Constants, motionVectorsJittered) == 450, "new elements can only be added at the end of each structure");
+
     SL_EXCEPTION_HANDLE_START;
     SL_CHECK(slValidateState());
     const sl::plugin_manager::FeatureContext* ctx;
@@ -323,6 +349,14 @@ Result slEvaluateFeature(sl::Feature feature, const sl::FrameToken& frame, const
 
 Result slSetVulkanInfo(const sl::VulkanInfo& info)
 {
+    //! IMPORTANT:
+    //! 
+    //! As explained in sl_struct.h any new elements must be placed at the end
+    //! of each structure and version must be increased or new elements can be
+    //! added in a new structure which is then chained. This assert ensures
+    //! that new element(s) are NOT added in the middle of a structure.
+    static_assert(offsetof(sl::VulkanInfo, useNativeOpticalFlowMode) == 80, "new elements can only be added at the end of each structure");
+
     SL_EXCEPTION_HANDLE_START;
     SL_CHECK(slValidateState());
     extern sl::Result processVulkanInterface(const sl::VulkanInfo*);
@@ -579,20 +613,31 @@ Result slUpgradeInterface(void** baseInterface)
 
 Result slIsFeatureSupported(sl::Feature feature, const sl::AdapterInfo& adapterInfo)
 {
+    //! IMPORTANT:
+    //! 
+    //! As explained in sl_struct.h any new elements must be placed at the end
+    //! of each structure and version must be increased or new elements can be
+    //! added in a new structure which is then chained. This assert ensures
+    //! that new element(s) are NOT added in the middle of a structure.
+    static_assert(offsetof(sl::AdapterInfo, vkPhysicalDevice) == 48, "new elements can only be added at the end of each structure");
+
     auto isSupported = [](sl::Feature feature, const sl::AdapterInfo& adapterInfo)->Result
     {
+        //! NOTE: 
+        //! 
+        //! Removed all logging to avoid confusion when feature is not loaded purposely.
+        //! Also since we return a specific error code no real need for extra logging.
+        //! 
         SL_CHECK(slValidateState());
         auto ctx = plugin_manager::getInterface()->getFeatureContext(feature);
         if (!ctx)
         {
-            SL_LOG_ERROR("'%s' is missing.", getFeatureAsStr(feature));
             return Result::eErrorFeatureMissing;
         }
 
         const char* jsonConfig{};
         if (!plugin_manager::getInterface()->getExternalFeatureConfig(feature, &jsonConfig))
         {
-            SL_LOG_ERROR("Feature '%s' was not loaded", getFeatureAsStr(feature));
             return Result::eErrorFeatureMissing;
         }
 
@@ -618,18 +663,15 @@ Result slIsFeatureSupported(sl::Feature feature, const sl::AdapterInfo& adapterI
         // Handle errors at the end so we can fill the structure with all the information needed
         if (!osSupported)
         {
-            SL_LOG_ERROR("Feature '%s' requires newer OS", getFeatureAsStr(feature));
             return Result::eErrorOSOutOfDate;
         }
         if (!driverSupported)
         {
-            SL_LOG_ERROR("Feature '%s' requires newer graphics driver", getFeatureAsStr(feature));
             return Result::eErrorDriverOutOfDate;
         }
 
         if (!ctx->supportedAdapters)
         {
-            SL_LOG_WARN("Feature '%s' not supported on any available adapter", getFeatureAsStr(feature));
             return Result::eErrorNoSupportedAdapterFound;
         }
 
@@ -648,6 +690,14 @@ Result slIsFeatureSupported(sl::Feature feature, const sl::AdapterInfo& adapterI
 
 Result slGetFeatureVersion(sl::Feature feature, sl::FeatureVersion& version)
 {
+    //! IMPORTANT:
+    //! 
+    //! As explained in sl_struct.h any new elements must be placed at the end
+    //! of each structure and version must be increased or new elements can be
+    //! added in a new structure which is then chained. This assert ensures
+    //! that new element(s) are NOT added in the middle of a structure.
+    static_assert(offsetof(sl::FeatureVersion, versionNGX) == 44, "new elements can only be added at the end of each structure");
+
     auto getVersion = [](sl::Feature feature, sl::FeatureVersion& version)->Result
     {
         SL_CHECK(slValidateState());
@@ -688,6 +738,14 @@ Result slGetFeatureVersion(sl::Feature feature, sl::FeatureVersion& version)
 
 Result slGetFeatureRequirements(sl::Feature feature, sl::FeatureRequirements& requirements)
 {
+    //! IMPORTANT:
+    //! 
+    //! As explained in sl_struct.h any new elements must be placed at the end
+    //! of each structure and version must be increased or new elements can be
+    //! added in a new structure which is then chained. This assert ensures
+    //! that new element(s) are NOT added in the middle of a structure.
+    static_assert(offsetof(sl::FeatureRequirements, vkNumOpticalFlowQueuesRequired) == 176, "new elements can only be added at the end of each structure");
+
     SL_EXCEPTION_HANDLE_START;
 
     auto getFeatureRequirements = [](sl::Feature feature, sl::FeatureRequirements& requirements)->Result
@@ -828,7 +886,7 @@ Result slGetFeatureRequirements(sl::Feature feature, sl::FeatureRequirements& re
             if (it == s_ctx.vkFeatures13.end())
             {
                 std::vector<std::string> features = cfg["vk"]["device"]["1.3_features"];
-                auto list = new char* [features.size()];
+                auto list = new char*[features.size()];
                 uint32_t i = 0;
                 for (auto& e : features)
                 {
@@ -850,6 +908,13 @@ Result slGetFeatureRequirements(sl::Feature feature, sl::FeatureRequirements& re
         if (cfg.contains("/external/vk/device/queues/compute/count"_json_pointer))
         {
             requirements.vkNumComputeQueuesRequired = cfg["vk"]["device"]["queues"]["compute"]["count"];
+        }
+        if (cfg.contains("/external/vk/device/queues/opticalflow/count"_json_pointer))
+        {
+            if (requirements.structVersion >= kStructVersion2)
+            {
+                requirements.vkNumOpticalFlowQueuesRequired = cfg["vk"]["device"]["queues"]["opticalflow"]["count"];
+            }
         }
 
         return Result::eOk;

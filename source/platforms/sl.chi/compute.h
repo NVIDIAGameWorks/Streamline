@@ -128,7 +128,8 @@ enum class CommandQueueType
 {
     eGraphics,
     eCompute,
-    eCopy
+    eCopy,
+    eOpticalFlow
 };
 
 enum class ResourceState : uint32_t
@@ -398,6 +399,9 @@ struct ICommandListContext
     virtual Handle getFenceEvent() = 0;
     virtual Fence getFence(uint32_t index) = 0;
     virtual int present(SwapChain chain, uint32_t sync, uint32_t flags, void* params = nullptr) = 0;
+    virtual void getFrameStats(SwapChain chain, void* frameStats) = 0;
+    virtual void getLastPresentID(SwapChain chain, uint32_t& id) = 0;
+    virtual void waitForVblank(SwapChain chain) = 0;
 };
 
 struct HashedResource
@@ -475,6 +479,7 @@ public:
     virtual ComputeStatus getDevice(Device& device) = 0;
     virtual ComputeStatus getInstance(Instance& instance) = 0;
     virtual ComputeStatus getPhysicalDevice(PhysicalDevice& device) = 0;
+    virtual ComputeStatus waitForIdle(Device device) = 0;
 
     virtual ComputeStatus clearCache() = 0;
 
@@ -566,8 +571,7 @@ public:
     virtual ComputeStatus getResourceFootprint(Resource resoruce, ResourceFootprint& footprint) = 0;
 
     virtual ComputeStatus clearView(CommandList cmdList, Resource resource, const float4 Color, const RECT * pRect, uint32_t NumRects, CLEAR_TYPE &outType) = 0;    
-    virtual ComputeStatus renderText(CommandList cmdList, int x, int y, const char *text, const ResourceArea &area, const float4& color = { 1.0f, 1.0f, 1.0f, 0.0f }, int reverseX = 0, int reverseY = 0) = 0;
-    
+
     virtual ComputeStatus beginVRAMSegment(const char* name) = 0;
     virtual ComputeStatus endVRAMSegment() = 0;
     virtual ComputeStatus getAllocatedBytes(uint64_t& bytes, const char* name = kGlobalVRAMSegment) = 0;
@@ -577,6 +581,7 @@ public:
     virtual ComputeStatus setDebugName(Resource res, const char friendlyName[]) = 0;
     virtual ComputeStatus getDebugName(Resource res, std::wstring& name) = 0;
 
+    virtual ComputeStatus getFullscreenState(SwapChain chain, bool& fullscreen) = 0;
     virtual ComputeStatus setFullscreenState(SwapChain chain, bool fullscreen, Output out = nullptr) = 0;
     virtual ComputeStatus getRefreshRate(SwapChain chain, float& refreshRate) = 0;
     virtual ComputeStatus getSwapChainBuffer(SwapChain chain, uint32_t index, Resource& buffer) = 0;
@@ -604,6 +609,9 @@ public:
     // Resource pool
     virtual ComputeStatus createResourcePool(IResourcePool** pool, const char* vramSegment) = 0;
     virtual ComputeStatus destroyResourcePool(IResourcePool* pool) = 0;
+
+    // OFA
+    virtual ComputeStatus isNativeOpticalFlowSupported() = 0;
 };
 
 ICompute* getD3D11();

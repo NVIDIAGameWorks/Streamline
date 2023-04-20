@@ -97,6 +97,8 @@ SL_STRUCT(DLSSGOptions, StructType({ 0xfac5f1cb, 0x2dfd, 0x4f36, { 0xa1, 0xe6, 0
     uint32_t uiBufferFormat{};
     //! Optional - if specified DLSSG will return any errors which occur when calling underlying API (DXGI or Vulkan)
     PFunOnAPIErrorCallback* onErrorCallback{};
+
+    //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
 };
 
 enum class DLSSGStatus : uint32_t
@@ -126,8 +128,10 @@ SL_STRUCT(DLSSGState, StructType({ 0xcc8ac8e1, 0xa179, 0x44f5, { 0x97, 0xfa, 0xe
     DLSSGStatus status{};
     //! Specifies minimum supported dimension
     uint32_t minWidthOrHeight{};
-    //! Number of frames presented (set after each present call)
+    //! Number of frames presented since the last 'slDLSSGGetState' call
     uint32_t numFramesActuallyPresented{};
+
+    //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
 };
 
 }

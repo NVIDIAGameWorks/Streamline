@@ -42,50 +42,68 @@ struct StructType
 
 //! SL is using typed and versioned structures which can be chained or not.
 //! 
-//! -------- Example using chaining --------
+//! --- OPTION 1 ---
+//! 
+//! New members must be added at the end and version needs to be increased:
 //! 
 //! SL_STRUCT(S1, GUID1, kStructVersion1)
 //! {
-//!   A
-//!   B
-//!   C
+//!     A
+//!     B
+//!     C
 //! }
 //! 
-//! SL_STRUCT(S1, GUID1, kStructVersion2)
+//! SL_STRUCT(S1, GUID1, kStructVersion2) // Note that version is bumped
 //! {
-//!   D
-//!   E
+//!     // V1
+//!     A
+//!     B
+//!     C
+//! 
+//!     //! V2 - new members always go at the end!
+//!     D
+//!     E
 //! }
 //! 
-//! S1 s1;
-//! slFunction(s1) // old code
+//! Here is one example on how to check for version and handle backwards compatibility:
 //! 
-//! S2 s2;
-//! s1->next = &s2; // new code
-//! slFunction(s1)
-//! 
-//! -------- Example NOT using chaining -------- 
-//! 
-//! SL_STRUCT(S1, GUID1, kStructVersion1)
+//! void func(const S1* input)
 //! {
-//!   A
-//!   B
-//!   C
+//!     // Access A, B, C as needed
+//!     ...
+//!     if (input->structVersion >= kStructVersion2)
+//!     {
+//!         // Safe to access D, E
+//!     }
 //! }
-//! 
-//! SL_STRUCT(S1, GUID1, kStructVersion2)
-//! {
-//!   A
-//!   B
-//!   C
-//!   D
-//!   E
-//! }
-//! 
-//! S1 s1;
-//! slFunction(s1) // old and new code
 
+
+//! --- OPTION 2 ---
+//! 
+//! New members are optional and added to a new struct which is then chained as needed:
+//! 
+//! SL_STRUCT(S1, GUID1, kStructVersion1)
+//! {
+//!     A
+//!     B
+//!     C
+//! }
+//! 
+//! SL_STRUCT(S2, GUID2, kStructVersion1) // Note that this is a different struct with new GUID
+//! {
+//!     D
+//!     E
+//! }
+//! 
+//! S1 s1;
+//! S2 s2
+//! s1.next = &s2; // optional parameters in S2
+
+//! IMPORTANT: New members in the structure always go at the end!
+//!
 constexpr uint32_t kStructVersion1 = 1;
+constexpr uint32_t kStructVersion2 = 2;
+constexpr uint32_t kStructVersion3 = 3;
 
 struct BaseStructure
 {

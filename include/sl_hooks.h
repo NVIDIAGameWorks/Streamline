@@ -70,6 +70,7 @@ enum class FunctionHookID : uint32_t
     eVulkan_DestroySwapchainKHR,
     eVulkan_GetSwapchainImagesKHR,
     eVulkan_AcquireNextImageKHR,
+    eVulkan_DeviceWaitIdle,
 
     eMaxNum
 };
@@ -99,6 +100,7 @@ inline const char* getFunctionHookIDAsStr(FunctionHookID v)
         SL_CASE_STR(FunctionHookID::eVulkan_DestroySwapchainKHR);
         SL_CASE_STR(FunctionHookID::eVulkan_GetSwapchainImagesKHR);
         SL_CASE_STR(FunctionHookID::eVulkan_AcquireNextImageKHR);
+        SL_CASE_STR(FunctionHookID::eVulkan_DeviceWaitIdle);
     };
     return "Unknown";
 }

@@ -78,6 +78,8 @@ SL_STRUCT(DLSSOptions, StructType({ 0x6ac826e4, 0x4c61, 0x4101, { 0xa9, 0x2d, 0x
     DLSSPreset balancedPreset = DLSSPreset::eDefault;
     DLSSPreset performancePreset = DLSSPreset::eDefault;
     DLSSPreset ultraPerformancePreset = DLSSPreset::eDefault;
+
+    //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
 };
 
 //! Returned by DLSS plugin
@@ -98,6 +100,8 @@ SL_STRUCT(DLSSOptimalSettings, StructType({ 0xef1d0957, 0xfd58, 0x4df7, { 0xb5, 
     uint32_t renderWidthMax{};
     //! Specifies maximal render area height
     uint32_t renderHeightMax{};
+
+    //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
 };
 
 //! Returned by DLSS plugin
@@ -106,6 +110,8 @@ SL_STRUCT(DLSSOptimalSettings, StructType({ 0xef1d0957, 0xfd58, 0x4df7, { 0xb5, 
 SL_STRUCT(DLSSState, StructType({ 0x9366b056, 0x8c01, 0x463c, { 0xbb, 0x91, 0xe6, 0x87, 0x82, 0x63, 0x6c, 0xe9 } }), kStructVersion1)
     //! Specified the amount of memory expected to be used
     uint64_t estimatedVRAMUsageInBytes{};
+
+    //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
 };
 
 }

@@ -4,7 +4,7 @@ Streamline - Reflex
 
 >The focus of this guide is on using Streamline to integrate Reflex into an application.  For more information about Reflex itself, please visit the [NVIDIA Developer Reflex Page](https://developer.nvidia.com/performance-rendering-tools/reflex)
 
-Version 2.0
+Version 2.0.1
 =======
 
 Here is an overview list of sub-features in the Reflex plugin:
@@ -280,6 +280,8 @@ Please use this checklist to confirm that your Reflex integration has been compl
 
 Checklist Item | Pass/Fail
 ---|---
+Reflex Low Latency’s default state is On |
+All Reflex modes (Off, On, On + Boost) function correctly |
 PC Latency (PCL) in the Reflex Test Utility is not 0.0 |
 Reflex Test Utility Report has "PASSED" with Reflex On |
 Reflex does not significantly impact FPS (more than 4%) when Reflex is On <br> (On + Boost is expect to have some FPS hit for lowest latency) |
@@ -298,38 +300,40 @@ Reflex UI settings are disabled or not available on other IHV Hardware |
 2. Install FrameView SDK
     * Double click the FrameView SDK Installer (`FVSDKSetup.exe`)
 3. Run `ReflexTestSetup.bat` from an administrator mode command prompt
-    * This will force the Reflex Flash Indicator to enable and set up the Reflex Test framework
-4. Running Reflex Tests
+    * This will force the Reflex Flash Indicator to enable, enable the Verification HUD, and set up the Reflex Test framework
+4. Check Reflex Low Latency modes
     1. Run game
         * Make sure game is running in fullscreen exclusive
         * Make sure VSYNC is disabled
         * Make sure MSHybrid mode is not enabled
-    2. Turn Reflex to On
-    3. Press `Alt + t` in game to start the test (2 beeps)
-    4. Analyze results after the test is done (3 beeps)
+    2. Check Reflex Low Latency’s default state is On in UI and in the Verification HUD
+        * Use the Reset / Default button in UI if it exists
+    3. Cycle through the Reflex modes in UI and check that it matches with “Reflex Mode” in the Verification HUD
+5. Running Reflex Tests
+    1. Turn Reflex to On
+    2. Press `Alt + t` in game to start the test (2 beeps)
+    3. Analyze results after the test is done (3 beeps)
         * Test should take approximately 5 minutes
         * Look for "PASSED"
-    5. Turn Reflex to On + Boost
-    6. Press `Alt + t` in game to start the test (2 beeps)
-    7. Analyze results after the test is done (3 beeps)
+    4. Turn Reflex to On + Boost
+    5. Press `Alt + t` in game to start the test (2 beeps)
+    6. Analyze results after the test is done (3 beeps)
         * Test should take approximately 5 minutes
         * Look for "PASSED"
-    8. Press `Ctrl + c` in the command prompt to exit ReflexTest.exe
-5. Test that markers are always sent even when Reflex is Off
+    7. Press `Ctrl + c` in the command prompt to exit ReflexTest.exe
+6. Test that markers are always sent even when Reflex is Off
     1. Run `PrintPCL.exe` in administrator mode command prompt
-    2. Turn Reflex to Off
-    3. Press `Alt + t` in game
-        * Look at the PCL value in the command prompt. Check to make sure the PCL value is not 0.0 and it is not a very large number (> 200 ms)
-    4. Press `Ctrl + c` in the command prompt to exit PrintPCL.exe
-6. Test the Reflex Flash Indicator
+    2. Look at the Verification HUD to ensure that the markers are still updating
+7. Test the Reflex Flash Indicator
     1. Verify the Reflex Flash Indicator is showing
         * Notice the gray square that flashes when the left mouse button is pressed
-7. Check UI
+        * Verify that Flash Indicator in the Verification HUD increments by 1 when the left mouse button is pressed
+8. Check UI
     1. Verify UI follows the Guidelines
     2. Check the Keybinding menu to make sure F13 is not being automatically applied when selecting a key
-8. Run `ReflexTestCleanUp.bat` in administrator mode command prompt
+9.  Run `ReflexTestCleanUp.bat` in administrator mode command prompt
     1. This disables the Reflex Flash Indicator and the Reflex Test framework
-9. Test on other IHV (if available)
+10. Test on other IHV (if available)
     1. Install other IHV hardware
     2. Install FrameView SDK
     3. Run `PrintPCL.exe` in administrator mode command prompt
@@ -338,5 +342,37 @@ Reflex UI settings are disabled or not available on other IHV Hardware |
         * Look at the PCL value in the command prompt. If the value is not 0.0, then PCL is working
     6. Press `Ctrl + c` in the command prompt to exit PrintPCL.exe
     7. Check to make sure Reflex UI is not available
-10. Send NVIDIA Reflex Test report and Checklist results
+11. Send NVIDIA Reflex Test report and Checklist results
     * Send to NVIDIA alias: reflex-sdk-support@nvidia.com
+
+**Reflex Verification HUD**
+
+The Reflex Verification HUD can be used to help validate your integration for correctness.
+- ReflexTestEnable.exe 1 [xpos ypos]
+  * Display the Reflex Verification HUD in your game. Optional arguments xpos and ypos specify the on-screen position of the HUD.
+- ReflexTestEnable.exe 0
+  * Hide the Reflex Verification HUD.
+
+For the commands to take effect, a restart of the game is required.
+
+> **NOTE:**
+> Reflex Verification HUD requires 531.18 driver or newer.  
+> If the Verification HUD does not appear, you will need to add the game to the app profile: NVIDIA Control Panel -> 3D Settings -> Program Settings -> Select Program to Customize -> Add -> Select a program -> Add Selected Program -> Apply.
+
+Fields are as follows:
+Field | Value | Details
+------|-------|--------|
+Reflex Mode | Off, enabled,<br/> enabled + boost |
+App Called Sleep | 0/1 | Is the game calling NvAPI_D3D_Sleep / NvAPI_VK_Sleep <br/> function?
+Flash Indicator | Counter | Number of flash trigger marks seen
+Total Render Time | Duration | Time spent by GPU rendering
+Simulation Interval | Duration | Simulation start time of frame X - simulation start time of <br/> frame X-1 <br/> All other timestamps are relative to simulation start time
+Simulation End Time | Timestamp | Simulation end marker time
+Render Start/End Time | Timestamp | Render submit start/end marker time
+Present Start/End Time | Timestamp | Present start/end marker time
+Driver Start/End Time | Timestamp | Start = first buffer submission <br/> End = last present submission
+OS Queue Start/End Time | Timestamp | Start = first significant buffer submission <br/> End = GPU end time
+GPU Start/End Time | Timestamp | Start = GPU rendering starts; End = GPU rendering ends
+
+> **NOTE:**
+> All durations and timestamps should be non-zero. Start timestamps must be less than end values (I.e., start must come before end).

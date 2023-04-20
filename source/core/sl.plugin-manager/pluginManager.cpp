@@ -1209,6 +1209,7 @@ PluginManager::PluginManager()
     FUNCTION_HOOK_ID_MAP_ENTRY(Vulkan_DestroySwapchainKHR);
     FUNCTION_HOOK_ID_MAP_ENTRY(Vulkan_GetSwapchainImagesKHR);
     FUNCTION_HOOK_ID_MAP_ENTRY(Vulkan_AcquireNextImageKHR);
+    FUNCTION_HOOK_ID_MAP_ENTRY(Vulkan_DeviceWaitIdle);
 
     assert((size_t)FunctionHookID::eMaxNum == m_functionHookIDMap.size());
 }

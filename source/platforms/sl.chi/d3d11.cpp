@@ -229,6 +229,27 @@ struct D3D11CommandListContext : public ICommandListContext
         SL_LOG_ERROR( "Not implemented");
         return 0;
     }
+
+    void getFrameStats(SwapChain chain, void* frameStats)
+    {
+        assert(false);
+        SL_LOG_ERROR("Not implemented");
+        return;
+    }
+
+    void getLastPresentID(SwapChain chain, uint32_t& id)
+    {
+        assert(false);
+        SL_LOG_ERROR("Not implemented");
+        return;
+    }
+
+    void waitForVblank(SwapChain chain)
+    {
+        assert(false);
+        SL_LOG_ERROR("Not implemented");
+        return;
+    }
 };
 
 std::wstring D3D11::getDebugName(Resource res)

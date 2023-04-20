@@ -773,9 +773,11 @@ Result nrdEndEvent(chi::CommandList cmdList, const common::EventData& data, cons
         //SL_LOG_HINT("-----------------------------------------------------------------------------------------------------------------------------------------");
 
         nrd::CommonSettings commonSettings{};
-        memcpy(commonSettings.viewToClipMatrix, &transpose(ctx.commonConsts->cameraViewToClip), sizeof(float4x4));
+        auto tmp = transpose(ctx.commonConsts->cameraViewToClip);
+        memcpy(commonSettings.viewToClipMatrix, &tmp, sizeof(float4x4));
         memcpy(commonSettings.viewToClipMatrixPrev, ctx.viewport->instance->prevCommonSettings.viewToClipMatrix, sizeof(float4x4));
-        memcpy(commonSettings.worldToViewMatrix, &transpose(ctx.nrdConsts->common.worldToViewMatrix), sizeof(float4x4));
+        tmp = transpose(ctx.nrdConsts->common.worldToViewMatrix);
+        memcpy(commonSettings.worldToViewMatrix, &tmp, sizeof(float4x4));
         memcpy(commonSettings.worldToViewMatrixPrev, ctx.viewport->instance->prevCommonSettings.worldToViewMatrix, sizeof(float4x4));
         memcpy(commonSettings.cameraJitter, &ctx.commonConsts->jitterOffset, sizeof(float2));
 
