@@ -2,7 +2,7 @@
 Streamline - SL
 =======================
 
-Version 2.0.1
+Version 2.1.0
 =======
 
 1 SETTING UP
@@ -22,8 +22,6 @@ The following is needed to use SL features:
 ---------------------------------
 
 ### 2.1 ADDING SL TO YOUR APPLICATION
-
-As of SL 2.0.0, it is now possible to recompile all of SL from source, with the exception of the DLSS-G plugin.  The DLSS-G plugin is provided as prebuilt DLLs only.  We also provide prebuilt DLLs (signed) for all other plugins that have source.  Most application developers will never need to rebuild SL themselves, especially for shipping; all of the pieces needed to develop, debug and ship an application that integrates SL and its features are provided in the pre-existing directories `bin/`, `include/`, and `lib/`.  Compiling from source is purely optional and likely of interest to a subset of SL application developers. For developers wishing to build SL from source, see the section at the end of this document.
 
 The SL SDK comes with several header files, `sl.h` and `sl_*.h`, which are located in the `./include` folder. Two main header files are `sl.h`and `sl_consts.h` and they should be included always. Depending on which SL features are used by your application, additional header(s) should be included (see below for more details). Since SL can work as an interposer or as a regular library, there are several ways it can be integrated into your application:
 
@@ -156,7 +154,10 @@ enum PreferenceFlags : uint64_t
     egDisableDebugText = 1 << 1,
     //! IMPORTANT: Only to be used in the advanced integration mode, see the 'manual hooking' programming guide for more details
     eUseManualHooking = 1 << 2,
-    //! Optional - Enables Over The Air (OTA) updates for SL and NGX
+    //! Optional - Enables downloading of Over The Air (OTA) updates for SL and NGX
+    //! This will invoke the OTA updater to look for new updates. A separate
+    //! flag below is used to control whether or not OTA-downloaded SL Plugins are
+    //! loaded.
     eAllowOTA = 1 << 3,
     //! Do not check OS version when deciding if feature is supported or not
     //! 
@@ -167,7 +168,10 @@ enum PreferenceFlags : uint64_t
     //! Optional - If specified SL will create DXGI factory proxy rather than modifying the v-table for the base interface.
     //! 
     //! This can help with 3rd party overlays which are NOT integrated with the host application but rather operate via injection.
-    eUseDXGIFactoryProxy = 1 << 5
+    eUseDXGIFactoryProxy = 1 << 5,
+    //! Optional - Enables loading of plugins downloaded Over The Air (OTA), to
+    //! be used in conjunction with the eAllowOTA flag.
+    eLoadDownloadedPlugins = 1 << 6,
 };
 
 //! Engine types
@@ -202,7 +206,7 @@ SL_STRUCT(Preferences, StructType({ 0x1ca10965, 0xbf8e, 0x432b, { 0x8d, 0xa1, 0x
     //! Optional - Allows log message tracking including critical errors if they occur
     PFun_LogMessageCallback* logMessageCallback{};
     //! Optional - Flags used to enable or disable advanced options
-    PreferenceFlags flags = PreferenceFlags::eDisableCLStateTracking | PreferenceFlags::eAllowOTA;
+    PreferenceFlags flags = PreferenceFlags::eDisableCLStateTracking | PreferenceFlags::eAllowOTA | PreferenceFlags::eLoadDownloadedPlugins;
     //! Required - Features to load (assuming appropriate plugins are found), if not specified NO features will be loaded by default
     const Feature* featuresToLoad{};
     //! Required - Number of features to load, only used when list is not a null pointer
@@ -404,7 +408,7 @@ SL allows host application to opt in (default) or out from an OTA. When enabled,
 
 sl::Preferences pref{};
 // Inform SL that it is OK to use newer version of SL or NGX (if available)
-pref.flags |= PreferenceFlag::eAllowOTA;
+pref.flags |= PreferenceFlag::eAllowOTA | PreferenceFlag::eLoadDownloadedPlugins;
 // Set other preferences, request features etc.
 if(SL_FAILED(result, slInit(pref)))
 {
@@ -1401,39 +1405,7 @@ else
 
 If an exception is thrown while executing SL code mini-dump will be writted in `ProgramData/NVIDIA/Streamline/$exe_name/$unique_id`. Exception which occur outside of SL code will continue to be captured by the host.
 
-7 BUILDING SL FROM SOURCE
-------------------------------------------------
-
-As mentioned in the lead section of this document, SL now ships with most of its source code available.  The only norablyt
-
-### 7.1 Configuring and Building a Tree
-
-All of SL's projects and build information (and those of all SL based apps) are controlled through a single platform independent build script called `premake5.lua`.  This is located in the root of the SL tree and uses the `premake` project creation toolchain.  Any new projects or changes to existing projects must be listed in this file.  For most projects, all source and header files found within a project's directory will be automatically added to that project.
-
-To configure a new SL tree to build, there is a script called `setup.bat`.  Note that on Windows this must be run from either a Windows command prompt window or a PowerShell window.  
-
-Running the `setup.bat` script will cause two things to be done:
-
-1. Use the NVIDIA tool `packman` to pull all build dependencies to the local machine and cache them in a shared directory.  Links are created from `external` in the SL tree to this shared cache for external build dependencies.
-2. Run `premake` to generate the project build files in `_project\vs2017` (for Windows)
-
-To build the project, simply open `_project\vs2017\streamline.sln` in Visual Studio, select the desired build configuration and build.
-
-### 7.2 Changing an Existing Project
-
-Do not edit the MSVC project files (or Makefiles on other platforms) directly!  Always modify the `premake5.lua` described above.
-
-When changing an existing project's settings or contents (ie: adding a new source file, changing a compiler setting, linking to a new library, etc), it is necessary to run `setup.bat` again for those changes to take effect and MSVC project files and or solution will need to be reloaded in the IDE.
-
-NVIDIA does not recommend making changes to the headers in `include`, as these can affect the API itself and can make developer-built components incompatible with NVIDIA-supplied components.
-
-### 7.3 Using the results of local builds
-
-Once the project is built for a configuration, the built, unsigned DLLs may be found in `_artifacts\sl.*\<Config>\`.  These DLLs can be copied as desired into the `bin\x64` directory, or packaged for use in the application itself.
-
-Obviously, `sl.dlss_g.dll` cannot be built from source and thus the prebuilt copy must be used.
-
-8 SUPPORT
+7 SUPPORT
 ------------------------------------------------
 
 For any SL related questions, please email StreamlineSupport@nvidia.com.

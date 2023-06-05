@@ -37,6 +37,7 @@ mkdir %dest%\scripts
 
 copy %src%\docs\ProgrammingGuide*.md %dest%\doc
 copy %src%\docs\RTX*.* %dest%\doc
+copy %src%\docs\Streamline*.pdf %dest%\doc
 
 copy %src%\include\sl.h %dest%\include
 copy %src%\include\sl_*.h %dest%\include

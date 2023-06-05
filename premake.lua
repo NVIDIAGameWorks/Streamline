@@ -136,6 +136,7 @@ project "sl.interposer"
 		vpaths { ["security"] = {"./source/security/**.h","./source/security/**.cpp"}}
 
 		links {"dbghelp.lib"}
+		links {"external/nvapi/amd64/nvapi64.lib"}
 
 		linkoptions { "/DEF:../../source/core/sl.interposer/exports.def" }
 	else

@@ -121,6 +121,7 @@ static const char* JSON = R"json(
 {
     "id" : 3,
     "priority" : 100,
+    "name" : "sl.reflex",
     "namespace" : "reflex",
     "required_plugins" : ["sl.common"],
     "incompatible_plugins" : ["sl.latency"],

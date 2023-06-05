@@ -121,6 +121,7 @@ const char* JSON = R"json(
 {
     "id" : 2,
     "priority" : 100,
+    "name" : "sl.nis",
     "namespace" : "nis",
     "required_plugins" : ["sl.common"],
     "rhi" : ["d3d11", "d3d12", "vk"],

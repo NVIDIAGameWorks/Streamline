@@ -629,11 +629,6 @@ Result slIsFeatureSupported(sl::Feature feature, const sl::AdapterInfo& adapterI
         //! Also since we return a specific error code no real need for extra logging.
         //! 
         SL_CHECK(slValidateState());
-        auto ctx = plugin_manager::getInterface()->getFeatureContext(feature);
-        if (!ctx)
-        {
-            return Result::eErrorFeatureMissing;
-        }
 
         const char* jsonConfig{};
         if (!plugin_manager::getInterface()->getExternalFeatureConfig(feature, &jsonConfig))
@@ -665,14 +660,55 @@ Result slIsFeatureSupported(sl::Feature feature, const sl::AdapterInfo& adapterI
         {
             return Result::eErrorOSOutOfDate;
         }
+
         if (!driverSupported)
         {
             return Result::eErrorDriverOutOfDate;
         }
 
-        if (!ctx->supportedAdapters)
+        FeatureRequirements featureReqs;
+        slGetFeatureRequirements(feature, featureReqs);
+
+        auto renderAPI = plugin_manager::getInterface()->getPreferences().renderAPI;
+        switch (renderAPI)
+        {
+            case RenderAPI::eD3D11:
+                if (!(featureReqs.flags & FeatureRequirementFlags::eD3D11Supported))
+                {
+                    SL_LOG_WARN("D3D11 not supported for this plugin");
+                    return Result::eErrorMissingOrInvalidAPI;
+                }
+                break;
+            case RenderAPI::eD3D12:
+                if (!(featureReqs.flags & FeatureRequirementFlags::eD3D12Supported))
+                {
+                    SL_LOG_WARN("D3D12 not supported for this plugin");
+                    return Result::eErrorMissingOrInvalidAPI;
+                }
+                break;
+            case RenderAPI::eVulkan:
+                if (!(featureReqs.flags & FeatureRequirementFlags::eVulkanSupported))
+                {
+                    SL_LOG_WARN("Vulkan not supported for this plugin");
+                    return Result::eErrorMissingOrInvalidAPI;
+                }
+                break;
+            default:
+                SL_LOG_ERROR("Unexpected renderAPI value passed to slInit!");
+                return Result::eErrorInvalidParameter;
+        }
+
+        // Check if the feature is supported on any available adapters
+        bool featureSupported = cfg["feature"]["supported"];
+        if (!featureSupported)
         {
             return Result::eErrorNoSupportedAdapterFound;
+        }
+
+        auto ctx = plugin_manager::getInterface()->getFeatureContext(feature);
+        if (!ctx)
+        {
+            return Result::eErrorFeatureMissing;
         }
 
         // Not having 'isSupported' function indicates that plugin is supported on all adapters by design.

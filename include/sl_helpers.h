@@ -174,6 +174,7 @@ inline const char* getDLSSModeAsStr(DLSSMode mode)
     switch (mode)
     {
         SL_CASE_STR(DLSSMode::eOff);
+        SL_CASE_STR(DLSSMode::eDLAA);
         SL_CASE_STR(DLSSMode::eMaxPerformance);
         SL_CASE_STR(DLSSMode::eBalanced);
         SL_CASE_STR(DLSSMode::eMaxQuality);
@@ -238,9 +239,27 @@ inline const char* getFeatureAsStr(Feature f)
         SL_CASE_STR(kFeatureNIS);
         SL_CASE_STR(kFeatureReflex);
         SL_CASE_STR(kFeatureDLSS_G);
+        SL_CASE_STR(kFeatureImGUI);
         SL_CASE_STR(kFeatureCommon);
     }
     return "Unknown";
+}
+
+// Get the feature file name as a string. For a given feature kFeatureDLSS with
+// a plugin name sl.dlss.dll the value "dlss" will be returned
+inline const char* getFeatureFilenameAsStrNoSL(Feature f)
+{
+    switch (f)
+    {
+        case kFeatureDLSS: return "dlss";
+        case kFeatureNRD:  return "nrd";
+        case kFeatureNIS: return "nis";
+        case kFeatureReflex: return "reflex";
+        case kFeatureDLSS_G: return "dlss_g";
+        case kFeatureImGUI: return "imgui";
+        case kFeatureCommon: return "common";
+        default: return "Unknown";
+    }
 }
 
 inline const char* getLogLevelAsStr(LogLevel v)

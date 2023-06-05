@@ -146,6 +146,7 @@ static const char* JSON = R"json(
 {
     "id" : -1,
     "priority" : 0,
+    "name" : "sl.common",
     "namespace" : "common",
     "rhi" : ["d3d11", "d3d12", "vk"],
     "hooks" :

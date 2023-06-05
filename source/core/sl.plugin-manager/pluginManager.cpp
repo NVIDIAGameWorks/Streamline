@@ -38,6 +38,7 @@
 #include "source/core/sl.log/log.h"
 #include "source/core/sl.file/file.h"
 #include "source/core/sl.param/parameters.h"
+#include "source/core/sl.plugin-manager/ota.h"
 #include "source/core/sl.plugin-manager/pluginManager.h"
 #include "source/core/sl.security/secureLoadLibrary.h"
 #include "source/core/sl.interposer/versions.h"
@@ -175,6 +176,9 @@ public:
             SL_LOG_WARN("No features will be loaded - the explicit list of features to load must be specified in sl::Preferences or provided with 'sl.interposer.json' in development builds");
         }
 
+        // sl.common is always enabled
+        m_featuresToLoad.push_back(kFeatureCommon);
+
         // These are not safe to touch after we exit here
         m_pref.pathsToPlugins = {};
         m_pref.pathToLogsAndData = {};
@@ -261,7 +265,7 @@ public:
 
 private:
 
-    Result mapPlugins(const std::wstring& path, std::vector<std::wstring>& files);
+    Result mapPlugins(std::vector<std::wstring>& files);
     Result findPlugins(const std::wstring& path, std::vector<std::wstring>& files);
     
 
@@ -279,6 +283,8 @@ private:
         HMODULE lib{};
         json config{};
         std::string name{};
+        std::string filename{};
+        std::string fullpath{};
         std::string paramNamespace{};
         api::PFuncOnPluginStartup* onStartup{};
         api::PFuncOnPluginShutdown* onShutdown{};
@@ -290,6 +296,7 @@ private:
         FeatureContext context{};
     };
 
+    bool loadPlugin(const fs::path path, Plugin **ppPlugin);
     void processPluginHooks(const Plugin* plugin);
     void mapPluginCallbacks(Plugin* plugin);
     uint32_t getFunctionHookID(const std::string& name);
@@ -334,6 +341,8 @@ private:
     std::map<Feature, std::string*> m_externalJSONConfigs{};
 
     Preferences m_pref{};
+
+    sl::ota::IOTA* m_ota{};
 };
 
 IPluginManager* getInterface()
@@ -469,7 +478,7 @@ Result PluginManager::findPlugins(const std::wstring& directory, std::vector<std
             // Make sure this is a dynamic library and it starts with "sl." but ignore "sl.interposer.dll"
             if (ext == dynamicLibraryExt && name.find(L"sl.") == 0 && name.find(L"sl.interposer") == std::string::npos)
             {
-                files.push_back(name + ext);
+                files.push_back(directory + L"/" + name + ext);
             }
         }
     }
@@ -480,14 +489,108 @@ Result PluginManager::findPlugins(const std::wstring& directory, std::vector<std
     return files.empty() ? Result::eErrorNoPlugins : Result::eOk;
 }
 
-Result PluginManager::mapPlugins(const std::wstring& path, std::vector<std::wstring>& files)
+bool PluginManager::loadPlugin(const fs::path pluginFullPath, Plugin **ppPlugin)
 {
-    using namespace sl::api;
+    auto freePlugin = [](Plugin** plugin)->void
+    {
+        FreeLibrary((*plugin)->lib);
+        delete* plugin;
+        *plugin = nullptr;
+    };
+
+    HMODULE mod = security::loadLibrary(pluginFullPath.c_str());
+    if (!mod)
+    {
+        return false;
+    }
+
+    Plugin *plugin = new Plugin();
+    plugin->fullpath = pluginFullPath.string();
+    plugin->filename = pluginFullPath.stem().string();
+    plugin->lib = mod;
+    plugin->getFunction = reinterpret_cast<api::PFuncGetPluginFunction*>(GetProcAddress(mod, "slGetPluginFunction"));
+    if (plugin->getFunction)
+    {
+        plugin->onLoad = reinterpret_cast<api::PFuncOnPluginLoad*>(plugin->getFunction("slOnPluginLoad"));
+    }
+    if (!plugin->getFunction || !plugin->onLoad)
+    {
+        SL_LOG_ERROR( "Ignoring '%s' since it does not contain proper API", plugin->filename.c_str());
+        freePlugin(&plugin);
+        return false;
+    }
+
+    plugin->context.getFunction = plugin->getFunction;
+    plugin->context.isSupported = reinterpret_cast<PFun_slIsSupported*>(plugin->getFunction("slIsSupported"));
 
     param::IParameters* parameters = param::getInterface();
+    try
+    {
+        // Let's get JSON config from our plugin
 
-    // sl.common is always enabled
-    m_featuresToLoad.push_back(kFeatureCommon);
+        json loaderJSON;
+        // Here we do not know device type yet so just pass invalid id
+        populateLoaderJSON((uint32_t)m_pref.renderAPI, loaderJSON);
+        auto loaderJSONStr = loaderJSON.dump();
+        const char* pluginJSONText{};
+        if (!plugin->onLoad(parameters, loaderJSONStr.c_str(), &pluginJSONText))
+        {
+            SL_LOG_ERROR( "Ignoring '%s' since core API 'onPluginLoad' failed", plugin->filename.c_str());
+            freePlugin(&plugin);
+            return false;
+        }
+
+        // pluginJSONText allocation freed by plugin
+        std::istringstream stream(pluginJSONText);
+        stream >> plugin->config;
+
+        // Check if plugin id is unique
+        plugin->config.at("id").get_to(plugin->id);
+
+        // Store external config so we can share it with host at any point in time (even if plugin gets unloaded)
+        m_featureExternalConfigMap[plugin->id] = plugin->config.at("external");
+        auto& extCfg = m_featureExternalConfigMap[plugin->id];
+
+        // Now we check if plugin is supported on this system
+        plugin->config.at("supportedAdapters").get_to(plugin->context.supportedAdapters);
+        plugin->config.at("sha").get_to(plugin->sha);
+        plugin->config.at("name").get_to(plugin->name);
+        plugin->config.at("namespace").get_to(plugin->paramNamespace);
+        plugin->config.at("priority").get_to(plugin->priority);
+        plugin->config.at("version").at("major").get_to(plugin->version.major);
+        plugin->config.at("version").at("minor").get_to(plugin->version.minor);
+        plugin->config.at("version").at("build").get_to(plugin->version.build);
+        plugin->config.at("api").at("major").get_to(plugin->api.major);
+        plugin->config.at("api").at("minor").get_to(plugin->api.minor);
+        plugin->config.at("api").at("build").get_to(plugin->api.build);
+
+        // Let the host know about API, priority etc. 
+        // Plugin has already populated OS, driver and other custom requirements.
+        extCfg["feature"]["lastError"] = "ok";
+        extCfg["feature"]["rhi"] = plugin->config.at("rhi");
+        extCfg["feature"]["supported"] = plugin->context.supportedAdapters != 0;
+        extCfg["feature"]["unloaded"] = false;
+        extCfg["feature"]["api"]["detected"] = plugin->api.toStr();
+        extCfg["feature"]["api"]["requested"] = m_api.toStr();
+        extCfg["feature"]["api"]["supported"] = true;
+        extCfg["feature"]["priority"]["detected"] = plugin->priority;
+        extCfg["feature"]["priority"]["supported"] = true;
+    }
+    catch (std::exception& e)
+    {
+        SL_LOG_ERROR( "JSON exception %s in plugin %s", e.what(), plugin->name.c_str());
+        freePlugin(&plugin);
+        return false;
+    };
+
+    // Finally on success make ppPlugin point to our new plugin
+    *ppPlugin = plugin;
+    return true;
+}
+
+Result PluginManager::mapPlugins(std::vector<std::wstring>& files)
+{
+    using namespace sl::api;
 
     auto freePlugin = [](Plugin** plugin)->void
     {
@@ -498,170 +601,167 @@ Result PluginManager::mapPlugins(const std::wstring& path, std::vector<std::wstr
 
     for (auto fileName : files)
     {
-
         // From this point any error is fatal since user requested specific set of features
-        auto pluginFullPath = path + L"/" + fileName;
-        HMODULE mod = security::loadLibrary(pluginFullPath.c_str());
-        if (mod)
+        Plugin *plugin = nullptr;
+        fs::path pluginFullPath(fileName);
+        if (loadPlugin(pluginFullPath, &plugin))
         {
-            Plugin* plugin = new Plugin();
-            plugin->name = file::removeExtension(extra::toStr(fileName));
-            plugin->lib = mod;
-            plugin->getFunction = reinterpret_cast<api::PFuncGetPluginFunction*>(GetProcAddress(mod, "slGetPluginFunction"));
-            if (plugin->getFunction)
+            auto& extCfg = m_featureExternalConfigMap[plugin->id];
+            Plugin *duplicatedPluginById = nullptr;
+            for (auto p : m_plugins)
             {
-                plugin->onLoad = reinterpret_cast<api::PFuncOnPluginLoad*>(plugin->getFunction("slOnPluginLoad"));
-            }
-            if (!plugin->getFunction || !plugin->onLoad)
-            {
-                SL_LOG_ERROR( "Ignoring '%s' since it does not contain proper API", plugin->name.c_str());
-                freePlugin(&plugin);
-                continue;
+                if (p->id == plugin->id)
+                {
+                    SL_LOG_INFO("Detected two plugins with the same id %s - %s", p->filename.c_str(), plugin->filename.c_str());
+                    duplicatedPluginById = p;
+                }
             }
 
-            plugin->context.getFunction = plugin->getFunction;
-            plugin->context.isSupported = reinterpret_cast<PFun_slIsSupported*>(plugin->getFunction("slIsSupported"));
-
-            try
+            // Check if plugin's id (SL feature) is requested by the host
+            bool requested = false;
+            for (auto f : m_featuresToLoad)
             {
-                // Let's get JSON config from our plugin
-
-                json loaderJSON;
-                // Here we do not know device type yet so just pass invalid id
-                populateLoaderJSON((uint32_t)m_pref.renderAPI, loaderJSON);
-                auto loaderJSONStr = loaderJSON.dump();
-                const char* pluginJSONText{};
-                if (!plugin->onLoad(parameters, loaderJSONStr.c_str(), &pluginJSONText))
+                if (f == plugin->id)
                 {
-                    SL_LOG_ERROR( "Ignoring '%s' since core API 'onPluginLoad' failed", plugin->name.c_str());
-                    freePlugin(&plugin);
-                    continue;
+                    requested = true;
+                    break;
                 }
+            }
+            extCfg["feature"]["requested"] = requested;
 
-                // pluginJSONText allocation freed by plugin
-                std::istringstream stream(pluginJSONText);
-                stream >> plugin->config;
+            bool pluginNeedsInterposer = false;
 
-                // Check if plugin id is unique
-                plugin->config.at("id").get_to(plugin->id);
-
-                bool duplicatedId = false;
-                for (auto p : m_plugins)
+            bool newerVersion = false;
+            if (duplicatedPluginById)
+            {
+                // Sanity check we're looking at a compatible plugin,
+                // this is done later on as well, but we musn't try to
+                // load an incompatible plugin and remove a compatible
+                // one in the meantime.
+                if (plugin->api.major == m_api.major)
                 {
-                    if (p->id == plugin->id)
+                    // Compare the versions of these two plugins, if
+                    // pluginIsNewer then we should load it instead of p.
+                    if (plugin->version > duplicatedPluginById->version)
                     {
-                        SL_LOG_ERROR("Detected two plugins with the same id %s - %s", p->name.c_str(), plugin->name.c_str());
-                        duplicatedId = true;
+                        SL_LOG_INFO("Plugin %s is newer (%s) will choose that", plugin->name.c_str(), plugin->version.toStr().c_str());
+                        newerVersion = true;
                     }
-                }
-
-                // Check if plugin's id (SL feature) is requested by the host
-                bool requested = false;
-                for (auto f : m_featuresToLoad)
-                {
-                    if (f == plugin->id)
-                    {
-                        requested = true;
-                        break;
-                    }
-                }
-
-                // Store external config so we can share it with host at any point in time (even if plugin gets unloaded)
-                m_featureExternalConfigMap[plugin->id] = plugin->config.at("external");
-                auto& extCfg = m_featureExternalConfigMap[plugin->id];
-
-                // Now we check if plugin is supported on this system
-                plugin->config.at("supportedAdapters").get_to(plugin->context.supportedAdapters);
-                plugin->config.at("sha").get_to(plugin->sha);
-                plugin->config.at("namespace").get_to(plugin->paramNamespace);
-                plugin->config.at("priority").get_to(plugin->priority);
-                plugin->config.at("version").at("major").get_to(plugin->version.major);
-                plugin->config.at("version").at("minor").get_to(plugin->version.minor);
-                plugin->config.at("version").at("build").get_to(plugin->version.build);
-                plugin->config.at("api").at("major").get_to(plugin->api.major);
-                plugin->config.at("api").at("minor").get_to(plugin->api.minor);
-                plugin->config.at("api").at("build").get_to(plugin->api.build);
-
-                // Let the host know about API, priority etc. 
-                // Plugin has already populated OS, driver and other custom requirements.
-                extCfg["feature"]["lastError"] = "ok";
-                extCfg["feature"]["rhi"] = plugin->config.at("rhi");
-                extCfg["feature"]["requested"] = requested;
-                extCfg["feature"]["supported"] = plugin->context.supportedAdapters != 0;
-                extCfg["feature"]["unloaded"] = false;
-                extCfg["feature"]["api"]["detected"] = plugin->api.toStr();
-                extCfg["feature"]["api"]["requested"] = m_api.toStr();
-                extCfg["feature"]["api"]["supported"] = true;
-                extCfg["feature"]["priority"]["detected"] = plugin->priority;
-                extCfg["feature"]["priority"]["supported"] = true;
-
-                bool pluginNeedsInterposer = false;
-
-                if (!requested)
-                {
-                    SL_LOG_WARN("Ignoring plugin '%s' since it is was not requested by the host", plugin->name.c_str());
-                    freePlugin(&plugin);
-                }
-                else if (duplicatedId)
-                {
-                    SL_LOG_WARN("Ignoring plugin '%s' since it has duplicated unique id", plugin->name.c_str());
-                    freePlugin(&plugin);
                 }
                 else
                 {
-                    // Next step, check if plugin's API is compatible
-
-                    // Manager needs to be aware of the API otherwise if plugin is newer we just skip it
-                    if (plugin->api > m_api)
-                    {
-                        SL_LOG_ERROR( "Detected plugin %s with newer API version %s - host should ship with proper DLLs", plugin->name.c_str(), plugin->api.toStr().c_str());
-                        extCfg["feature"]["api"]["supported"] = false;
-                        extCfg["feature"]["unloaded"] = true;
-                        extCfg["feature"]["lastError"] = "Error: feature has newer API than the plugin manager";
-                        freePlugin(&plugin);
-                    }
-
-                    // Make sure that common plugin always runs first
-                    if (plugin->priority <= 0 && plugin->name != "sl.common")
-                    {
-                        SL_LOG_ERROR( "Detected plugin '%s' with priority <= 0 which is not allowed", plugin->name.c_str());
-                        extCfg["feature"]["priority"]["supported"] = false;
-                        extCfg["feature"]["unloaded"] = true;
-                        extCfg["feature"]["lastError"] = "Error: feature has invalid priority";
-                        freePlugin(&plugin);
-                    }
-
-                    // Now let's check for special requirements, dependencies to other plugins, exclusive hooks etc.
-                    auto extractItems = [plugin](const char* key, std::vector<std::string>& stringList)->void
-                    {
-                        if (plugin->config.contains(key))
-                        {
-                            auto& items = plugin->config.at(key);
-                            for (auto& item : items)
-                            {
-                                std::string name;
-                                item.get_to(name);
-                                stringList.push_back(name);
-                            }
-                        }
-                    };
-                    
-                    extractItems("required_plugins", plugin->requiredPlugins);
-                    extractItems("exclusive_hooks", plugin->exclusiveHooks);
-                    extractItems("incompatible_plugins", plugin->incompatiblePlugins);
-                }
-
-                if (plugin)
-                {
-                    SL_LOG_INFO("Loaded plugin '%s' - version %u.%u.%u.%s - id %u - priority %u - adapter mask 0x%x - interposer '%s'", plugin->name.c_str(), plugin->version.major, plugin->version.minor, plugin->version.build, 
-                        plugin->sha.c_str(), plugin->id, plugin->priority, plugin->context.supportedAdapters, pluginNeedsInterposer ? "yes" : "no");
+                    SL_LOG_INFO("Plugin %s has a newer apiVersion (%s) than sl.interposer (%s)",
+                                plugin->name.c_str(), plugin->api.toStr().c_str(), m_api.toStr().c_str());
                 }
             }
-            catch (std::exception& e)
+
+            if (!requested)
             {
-                SL_LOG_ERROR( "JSON exception %s in plugin %s", e.what(), plugin->name.c_str());
+                SL_LOG_WARN("Ignoring plugin '%s' since it is was not requested by the host", plugin->name.c_str());
                 freePlugin(&plugin);
-            };
+            }
+            else if (duplicatedPluginById && !newerVersion)
+            {
+                SL_LOG_WARN("Ignoring plugin '%s' since it has duplicated unique id", plugin->name.c_str());
+                freePlugin(&plugin);
+
+                // XXX[ljm] Plugins can inject global state in their 'onLoad'
+                // functions. We need to ensure that this global state is set in
+                // accordance with the plugin we actually have loaded rather
+                // than whatever plugin we *attempted* to load most recently.
+                // In order to do this (without refactoring plugins to not
+                // mutate global state 'onLoad'), we need to reload the desired
+                // plugin from scratch so thaat it's 'onLoad' can execute and
+                // write to the global state.
+                //
+                // Loop over our plugin list to find the duplicated plugin that
+                // we want to reload
+                for (auto it = m_plugins.begin(); it != m_plugins.end(); it++)
+                {
+                    if (*it == duplicatedPluginById)
+                    {
+                        // Reload the plugin by it's full-path. Ensure that 
+                        fs::path fullPath = duplicatedPluginById->fullpath;
+                        freePlugin(&duplicatedPluginById);
+                        if (!loadPlugin(fullPath, &duplicatedPluginById))
+                        {
+                            SL_LOG_ERROR("Failed to reload plugin file: %s it loaded before, so what happened!?", fullPath.c_str());
+                            m_plugins.erase(it);
+                            continue;
+                        }
+                        *it = duplicatedPluginById;
+                        continue;
+                    }
+                }
+            }
+            else
+            {
+                // Next step, check if plugin's API is compatible
+
+                // Manager needs to be aware of the API otherwise if plugin is newer we just skip it
+                if (plugin->api > m_api)
+                {
+                    SL_LOG_ERROR( "Detected plugin %s with newer API version %s - host should ship with proper DLLs", plugin->name.c_str(), plugin->api.toStr().c_str());
+                    extCfg["feature"]["api"]["supported"] = false;
+                    extCfg["feature"]["unloaded"] = true;
+                    extCfg["feature"]["lastError"] = "Error: feature has newer API than the plugin manager";
+                    freePlugin(&plugin);
+                }
+
+                // Make sure that common plugin always runs first
+                if (plugin->priority <= 0 && plugin->name != "sl.common")
+                {
+                    SL_LOG_ERROR( "Detected plugin '%s' with priority <= 0 which is not allowed", plugin->name.c_str());
+                    extCfg["feature"]["priority"]["supported"] = false;
+                    extCfg["feature"]["unloaded"] = true;
+                    extCfg["feature"]["lastError"] = "Error: feature has invalid priority";
+                    freePlugin(&plugin);
+                }
+
+                // Now let's check for special requirements, dependencies to other plugins, exclusive hooks etc.
+                auto extractItems = [plugin](const char* key, std::vector<std::string>& stringList)->void
+                {
+                    if (plugin->config.contains(key))
+                    {
+                        auto& items = plugin->config.at(key);
+                        for (auto& item : items)
+                        {
+                            std::string name;
+                            item.get_to(name);
+                            stringList.push_back(name);
+                        }
+                    }
+                };
+                
+                extractItems("required_plugins", plugin->requiredPlugins);
+                extractItems("exclusive_hooks", plugin->exclusiveHooks);
+                extractItems("incompatible_plugins", plugin->incompatiblePlugins);
+            }
+
+            // We have loaded a newer version of a plugin that has already
+            // been loaded (from a secondary source, likely OTA). We need to
+            // unload the old plugin and remove it from the list.
+            if (newerVersion)
+            {
+                SL_LOG_INFO("A duplicate was found, but a newer plugin version was available");
+                for (auto it = m_plugins.begin(); it != m_plugins.end(); it++)
+                {
+                    if (*it == duplicatedPluginById)
+                    {
+                        // Remove the plugin from the list and free it
+                        SL_LOG_INFO("Removing plugin with name: %s superseded by plugin %s", duplicatedPluginById->name.c_str(), plugin->name.c_str());
+                        m_plugins.erase(it);
+                        freePlugin(&duplicatedPluginById);
+                        break;
+                    }
+                }
+            }
+
+            if (plugin)
+            {
+                SL_LOG_INFO("Loaded plugin '%s' - version %u.%u.%u.%s - id %u - priority %u - adapter mask 0x%x - interposer '%s'", plugin->name.c_str(), plugin->version.major, plugin->version.minor, plugin->version.build, 
+                    plugin->sha.c_str(), plugin->id, plugin->priority, plugin->context.supportedAdapters, pluginNeedsInterposer ? "yes" : "no");
+            }
 
             if (plugin)
             {
@@ -712,6 +812,14 @@ Result PluginManager::loadPlugins()
 
     s_status = PluginManagerStatus::ePluginsLoaded;
 
+    // Kickoff OTA update, this function internally will check OTA preferences
+    m_ota->readServerManifest();
+    bool requestOptionalUpdates = (m_pref.flags & PreferenceFlags::eAllowOTA);
+    for (Feature f : m_featuresToLoad)
+    {
+        m_ota->checkForOTA(f, m_api, requestOptionalUpdates);
+    }
+
     //! Now let's enumerate SL plugins!
     //!
     //! Two options - look next to the sl.interposer or in the specified paths
@@ -732,7 +840,34 @@ Result PluginManager::loadPlugins()
             }
         }
     }
-    
+
+    if (m_pref.flags & PreferenceFlags::eLoadDownloadedPlugins)
+    {
+        SL_LOG_INFO("Searching for OTA'd plugins...");
+        for (Feature f : m_featuresToLoad)
+        {
+            std::wstring pluginPath;
+            if (m_ota->getOTAPluginForFeature(f, m_api, pluginPath))
+            {
+                SL_LOG_INFO("Found plugin: %ls", pluginPath.c_str());
+                if (f == kFeatureCommon)
+                {
+                    // Push kFeatureCommon OTA to front of list so sl.common is
+                    // loaded first+foremost
+                    pluginList.insert(pluginList.begin(), pluginPath);
+                }
+                else
+                {
+                    pluginList.push_back(pluginPath);
+                }
+            }
+        }
+    }
+    else
+    {
+        SL_LOG_INFO("eLoadDownloadedPlugins flag not passed to preferences, OTA'd plugins will not be loaded!");
+    }
+
     if (pluginList.empty())
     {
         SL_LOG_WARN("No plugins found - last searched path %S", m_pluginPath.c_str());
@@ -741,7 +876,7 @@ Result PluginManager::loadPlugins()
 
     param::getInterface()->set(param::global::kPluginPath, (void*)m_pluginPath.c_str());
 
-    SL_CHECK(mapPlugins(m_pluginPath, pluginList));
+    SL_CHECK(mapPlugins(pluginList));
     
     // Sort by priority so we can execute hooks in the specific order and check dependencies and other requirements in the correct order
     std::sort(m_plugins.begin(), m_plugins.end(),
@@ -1212,6 +1347,8 @@ PluginManager::PluginManager()
     FUNCTION_HOOK_ID_MAP_ENTRY(Vulkan_DeviceWaitIdle);
 
     assert((size_t)FunctionHookID::eMaxNum == m_functionHookIDMap.size());
+
+    m_ota = ota::getInterface();
 }
 
 uint32_t PluginManager::getFunctionHookID(const std::string& name)

@@ -51,7 +51,7 @@ struct Exception : IException
         };
 #endif
         // Unique id
-        auto id = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        auto id = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 
         std::wstring path = L"";
         PWSTR programDataPath = NULL;

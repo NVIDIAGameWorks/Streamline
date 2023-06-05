@@ -318,7 +318,10 @@ enum class PreferenceFlags : uint64_t
     eDisableDebugText = 1 << 1,
     //! Optional - IMPORTANT: Only to be used in the advanced integration mode, see the 'manual hooking' programming guide for more details
     eUseManualHooking = 1 << 2,
-    //! Optional - Enables Over The Air (OTA) updates for SL and NGX
+    //! Optional - Enables downloading of Over The Air (OTA) updates for SL and NGX
+    //! This will invoke the OTA updater to look for new updates. A separate
+    //! flag below is used to control whether or not OTA-downloaded SL Plugins are
+    //! loaded.
     eAllowOTA = 1 << 3,
     //! Do not check OS version when deciding if feature is supported or not
     //! 
@@ -329,7 +332,10 @@ enum class PreferenceFlags : uint64_t
     //! Optional - If specified SL will create DXGI factory proxy rather than modifying the v-table for the base interface.
     //! 
     //! This can help with 3rd party overlays which are NOT integrated with the host application but rather operate via injection.
-    eUseDXGIFactoryProxy = 1 << 5
+    eUseDXGIFactoryProxy = 1 << 5,
+    //! Optional - Enables loading of plugins downloaded Over The Air (OTA), to
+    //! be used in conjunction with the eAllowOTA flag.
+    eLoadDownloadedPlugins = 1 << 6,
 };
 
 SL_ENUM_OPERATORS_64(PreferenceFlags)
@@ -377,7 +383,7 @@ SL_STRUCT(Preferences, StructType({ 0x1ca10965, 0xbf8e, 0x432b, { 0x8d, 0xa1, 0x
     //! Optional - Allows log message tracking including critical errors if they occur
     PFun_LogMessageCallback* logMessageCallback{};
     //! Optional - Flags used to enable or disable advanced options
-    PreferenceFlags flags = PreferenceFlags::eDisableCLStateTracking | PreferenceFlags::eAllowOTA;
+    PreferenceFlags flags = PreferenceFlags::eDisableCLStateTracking | PreferenceFlags::eAllowOTA | PreferenceFlags::eLoadDownloadedPlugins;
     //! Required - Features to load (assuming appropriate plugins are found), if not specified NO features will be loaded by default
     const Feature* featuresToLoad{};
     //! Required - Number of features to load, only used when list is not a null pointer

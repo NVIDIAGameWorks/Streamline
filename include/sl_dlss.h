@@ -36,7 +36,8 @@ enum class DLSSMode : uint32_t
     eMaxQuality,
     eUltraPerformance,
     eUltraQuality,
-    eCount
+    eDLAA,
+    eCount,
 };
 
 enum class DLSSPreset : uint32_t
@@ -50,10 +51,11 @@ enum class DLSSPreset : uint32_t
     ePresetD,
     ePresetE,
     ePresetF,
+    ePresetG,
 };
 
 // {6AC826E4-4C61-4101-A92D-638D421057B8}
-SL_STRUCT(DLSSOptions, StructType({ 0x6ac826e4, 0x4c61, 0x4101, { 0xa9, 0x2d, 0x63, 0x8d, 0x42, 0x10, 0x57, 0xb8 } }), kStructVersion1)
+SL_STRUCT(DLSSOptions, StructType({ 0x6ac826e4, 0x4c61, 0x4101, { 0xa9, 0x2d, 0x63, 0x8d, 0x42, 0x10, 0x57, 0xb8 } }), kStructVersion2)
     //! Specifies which mode should be used
     DLSSMode mode = DLSSMode::eOff;
     //! Specifies output (final) target width
@@ -78,6 +80,10 @@ SL_STRUCT(DLSSOptions, StructType({ 0x6ac826e4, 0x4c61, 0x4101, { 0xa9, 0x2d, 0x
     DLSSPreset balancedPreset = DLSSPreset::eDefault;
     DLSSPreset performancePreset = DLSSPreset::eDefault;
     DLSSPreset ultraPerformancePreset = DLSSPreset::eDefault;
+    DLSSPreset ultraQualityPreset = DLSSPreset::eDefault;
+
+    //! Specifies if the setting for AutoExposure is used
+    Boolean useAutoExposure = Boolean::eFalse;
 
     //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
 };

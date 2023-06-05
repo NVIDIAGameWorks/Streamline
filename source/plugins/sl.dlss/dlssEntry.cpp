@@ -165,6 +165,7 @@ const char* JSON = R"json(
     "id" : 0,
     "priority" : 100,
     "required_plugins" : ["sl.common"],
+    "name" : "sl.dlss",
     "namespace" : "dlss",
     "rhi" : ["d3d11", "d3d12", "vk"],
     "hooks" :
@@ -386,7 +387,7 @@ Result dlssBeginEvent(chi::CommandList pCmdList, const common::EventData& data, 
                 CommonResource exposure = {};
                 getTaggedResource(kBufferTypeExposure, exposure, ctx.viewport->id, true, inputs, numInputs);
 
-                if (!exposure)
+                if ((sl::kStructVersion2 >= 2 && ctx.viewport->consts.useAutoExposure) || !exposure)
                 {
                     dlssCreateFlags |= NVSDK_NGX_DLSS_Feature_Flags_AutoExposure;
                 }

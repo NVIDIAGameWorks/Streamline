@@ -21,10 +21,6 @@
 
 * SL now includes `sl_security.h` header as part of the main SDK (no longer needed to download the SL sample SDK)
 
-### DLSS-G RUNNING ON D3D11
-
-* DLSS-G is supported on D3D11 via D3D12 interop (please note that DLSS-G feature continues to use D3D12 so swap-chains and presents will use D3D12 command queues)
-
 ### OS VERSION DETECTION
 
 * Switched to obtaining the **correct** version from the `kernel32.dll` product description instead of using various MS APIs which return different/incorrect versions

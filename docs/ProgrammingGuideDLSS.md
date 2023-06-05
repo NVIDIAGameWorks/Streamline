@@ -5,7 +5,7 @@ Streamline - DLSS
 >The focus of this guide is on using Streamline to integrate DLSS into an application.  For more information about DLSS itself, please visit the [NVIDIA Developer DLSS Page](https://developer.nvidia.com/rtx/dlss)
 >For information on user interface considerations when using the DLSS plugin, please see the "RTX UI Developer Guidelines.pdf" document included in the DLSS SDK.
 
-Version 2.0.1
+Version 2.1.0
 =======
 
 ### 1.0 INITIALIZE AND SHUTDOWN
@@ -135,11 +135,13 @@ sl::Resource colorIn = {sl::ResourceType::Tex2d, myTAAUInput, nullptr, nullptr, 
 sl::Resource colorOut = {sl::ResourceType::Tex2d, myTAAUOutput, nullptr, nullptr, nullptr};
 sl::Resource depth = {sl::ResourceType::Tex2d, myDepthBuffer, nullptr, nullptr, nullptr};
 sl::Resource mvec = {sl::ResourceType::Tex2d, myMotionVectorsBuffer, nullptr, nullptr, nullptr};
+sl::Resource exposure = {sl::ResourceType::Tex2d, myExposureBuffer, nullptr, nullptr, nullptr};
 
 sl::ResourceTag colorInTag = sl::ResourceTag {&colorIn, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eOnlyValidNow, &myExtent };
 sl::ResourceTag colorOutTag = sl::ResourceTag {&colorOut, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eOnlyValidNow, &myExtent };
 sl::ResourceTag depthTag = sl::ResourceTag {&depth, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent };
 sl::ResourceTag mvecTag = sl::ResourceTag {&mvec, sl::kBufferTypeMvec, sl::ResourceLifecycle::eOnlyValidNow, &fullExtent };
+sl::ResourceTag exposureTag = sl::ResourceTag {&exposure, sl::kBufferTypeExposure, sl::ResourceLifecycle::eOnlyValidNow, &my1x1Extent};
 
 // Tag in group
 sl::Resource inputs[] = {colorInTag, colorOutTag, depthTag, mvecTag};
@@ -150,7 +152,7 @@ slSetTag(viewport, inputs, _countof(inputs), cmdList);
 > If dynamic resolution is used then please specify the extent for each tagged resource. Please note that SL **manages resource states so there is no need to transition tagged resources**.
 
 > **NOTE:**
-> If `sl::kBufferTypeExposure` is NOT provided DLSS will be in auto-exposure mode (`NVSDK_NGX_DLSS_Feature_Flags_AutoExposure` will be set automatically)
+> If `sl::kBufferTypeExposure` is NOT provided or `dlssOptions.useAutoExposure` is set to be true then DLSS will be in auto-exposure mode (`NVSDK_NGX_DLSS_Feature_Flags_AutoExposure` will be set automatically)
 
 ### 5.0 PROVIDE DLSS OPTIONS
 
@@ -164,6 +166,7 @@ dlssOptions.outputWidth = myUI->getOutputWidth();    // e.g 1920;
 dlssOptions.outputHeight = myUI->getOutputHeight(); // e.g. 1080;
 dlssOptions.sharpness = dlssSettings.sharpness; // optimal sharpness
 dlssOptions.colorBuffersHDR = sl::Boolean::eTrue; // assuming HDR pipeline
+dlssOptions.useAutoExposure = sl::Boolean::eFalse; // autoexposure is not to be used if a proper exposure texture is available
 if(SL_FAILED(result, slDLSSSetOptions(viewport, dlssOptions)))
 {
     // Handle error here, check the logs
@@ -172,6 +175,9 @@ if(SL_FAILED(result, slDLSSSetOptions(viewport, dlssOptions)))
 
 > **NOTE:**
 > To turn off DLSS set `sl::DLSSOptions.mode` to `sl::DLSSMode::eOff`, note that this does NOT release any resources, for that please use `slFreeResources`
+
+> **NOTE:**
+> Set the DLSSOptions.useAutoExposure boolean to be true only if you want DLSS to be in in auto-exposure mode. Also, it is strongly advised to provide exposure if a proper exposure texture is available. 
 
 ### 6.0 PROVIDE COMMON CONSTANTS
 

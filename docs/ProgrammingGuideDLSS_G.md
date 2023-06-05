@@ -4,7 +4,7 @@ Streamline - DLSS-G
 
 NVIDIA DLSS Frame Generation (“DLSS-FG” or “DLSS-G”) is an AI based technology that infers frames based on rendered frames coming from a game engine or rendering pipeline. This document explains how to integrate DLSS-G into a renderer.
 
-Version 2.0
+Version 2.1.0
 =======
 
 ### 0.0 Integration checklist
@@ -38,7 +38,7 @@ No errors or unexpected warnings in Streamline and DLSS-G log files while runnin
 
 ### 2.0 INITIALIZATION AND SHUTDOWN
 
-Call `slInit` as early as possible (before any d3d11/d3d12/vk APIs are invoked)
+Call `slInit` as early as possible (before any d3d12/vk APIs are invoked)
 
 ```cpp
 #include <sl.h>
@@ -66,7 +66,7 @@ if(SL_FAILED(res, slInit(pref)))
 
 For more details please see [preferences](ProgrammingGuide.md#221-preferences)
 
-Call `slShutdown()` before destroying dxgi/d3d11/d3d12/vk instances, devices and other components in your engine.
+Call `slShutdown()` before destroying dxgi/d3d12/vk instances, devices and other components in your engine.
 
 ```cpp
 if(SL_FAILED(res, slShutdown()))
@@ -138,7 +138,6 @@ if (SL_FAILED(result, slGetFeatureRequirements(sl::kFeatureDLSS_G, requirements)
 else
 {
     // Feature is loaded, we can check the requirements    
-    requirements.flags & FeatureRequirementFlags::eD3D11Supported
     requirements.flags & FeatureRequirementFlags::eD3D12Supported
     requirements.flags & FeatureRequirementFlags::eVulkanSupported
     requirements.maxNumViewports
@@ -202,7 +201,7 @@ It is important to emphasize that **the overuse of `sl::ResourceLifecycle::eOnly
 // 
 // GPU payload that generates content for any volatile resource MUST be either already submitted to the provided command list or some other command list which is guaranteed to be executed BEFORE.
 
-// Prepare resources (assuming d3d11/d3d12 integration so leaving Vulkan view and device memory as null pointers)
+// Prepare resources (assuming d3d12 integration so leaving Vulkan view and device memory as null pointers)
 //
 // NOTE: As an example we are tagging depth as immutable and mvec as volatile, this needs to be adjusted based on how your engine works
 sl::Resource depth = {sl::ResourceType::Tex2d, myDepthBuffer, nullptr, nullptr, depthState, nullptr};
@@ -229,9 +228,6 @@ sl::ResourceTag uiTag = sl::ResourceTag {&ui, sl::kBufferTypeUIColorAndAlpha, sl
 sl::Resource inputs[] = {uiTag};
 slSetTag(viewport, inputs, _countof(inputs), cmdList);
 ```
-
-> **NOTE:**
-> When using d3d11 DLSS-G will use d3d12 interop so the best policy is to generate tagged resources with the `D3D11_RESOURCE_MISC_SHARED_NTHANDLE` flag so they can be shared directly.
 
 > **NOTE:**
 > If dynamic resolution is used then please specify the extent for each tagged resource. Please note that SL **manages resource states so there is no need to transition tagged resources**.

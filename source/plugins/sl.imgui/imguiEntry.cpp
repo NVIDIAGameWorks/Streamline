@@ -114,6 +114,7 @@ static const char* JSON = R"json(
     "id" : 9999,
     "priority" : 1,
     "required_plugins" : ["sl.common"],
+    "name" : "sl.imgui",
     "namespace" : "imgui",
     "rhi" : ["d3d12"],
     "hooks" :

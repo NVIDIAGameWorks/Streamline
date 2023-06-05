@@ -111,6 +111,9 @@ static const char* JSON = R"json(
     "comment_priority" : "plugins are executed in the order of their priority so keep that in mind",
     "priority" : 100,
     
+    "comment_name" : "rename this to the name of your plugin (ex: sl.nis). This value is what other plugins will use to refer to your plugin",
+    "name" : "sl.template",
+
     "comment_namespace" : "rename this to the namespace used for parameters used by your plugin",
     "namespace" : "template",
     
