@@ -34,7 +34,7 @@
 #include "source/platforms/sl.chi/compute.h"
 #include "source/plugins/sl.template/versions.h"
 #include "source/plugins/sl.common/commonInterface.h"
-#include "source/plugins/sl.reflex/latencystats.h"
+#include "source/plugins/sl.reflex/pclstats.h"
 #include "source/plugins/sl.imgui/imgui.h"
 #include "_artifacts/gitVersion.h"
 #include "external/nvapi/nvapi.h"
@@ -42,7 +42,7 @@
 using json = nlohmann::json;
 
 //! GPU agnostic stats definition
-NVSTATS_DEFINE();
+PCLSTATS_DEFINE();
 
 namespace sl
 {
@@ -67,7 +67,7 @@ struct UIStats
 struct LatencyContext
 {
     SL_PLUGIN_CONTEXT_CREATE_DESTROY(LatencyContext);
-
+    void onCreateContext() {};
     void onDestroyContext() {};
 
     common::PFunRegisterEvaluateCallbacks* registerEvaluateCallbacks{};
@@ -234,7 +234,7 @@ Result slSetData(const BaseStructure* inputs, CommandBuffer* cmdBuffer)
         else
         {
             // According to Cody we want markers set even when Reflex is off
-            if (ctx.lowLatencyAvailable && evd.id != NVSTATS_PC_LATENCY_PING)
+            if (ctx.lowLatencyAvailable && evd.id != PCLSTATS_PC_LATENCY_PING)
             {
                 CHI_VALIDATE(ctx.compute->setReflexMarker((ReflexMarker)evd.id, evd.frame));
             }
@@ -258,7 +258,7 @@ Result slSetData(const BaseStructure* inputs, CommandBuffer* cmdBuffer)
                 }
             }
 
-            NVSTATS_MARKER((NVSTATS_LATENCY_MARKER_TYPE)evd.id, evd.frame);
+            PCLSTATS_MARKER((PCLSTATS_LATENCY_MARKER_TYPE)evd.id, evd.frame);
         }
     }
     else
@@ -290,17 +290,17 @@ Result slSetData(const BaseStructure* inputs, CommandBuffer* cmdBuffer)
             uint32_t idThread = 0;
             idThread = consts->idThread;
 
-            NVSTATS_INIT(consts->virtualKey, 0, idThread);
+            PCLSTATS_INIT(0);
         }
 
         {
             uint32_t idThread = 0;
             idThread = consts->idThread;
 
-            g_ReflexStatsIdThread = idThread;
+            PCLSTATS_SET_ID_THREAD(idThread);
         }
 
-        g_ReflexStatsVirtualKey = consts->virtualKey;
+        PCLSTATS_SET_VIRTUAL_KEY(consts->virtualKey);
 
         {
             ctx.constants = *consts;
@@ -347,14 +347,14 @@ Result slGetData(const BaseStructure* inputs, BaseStructure* outputs, CommandBuf
     settings->latencyReportAvailable = ctx.latencyReportAvailable;
     settings->flashIndicatorDriverControlled = ctx.flashIndicatorDriverControlled;
     // Allow host to check Windows messages for the special low latency message
-    settings->statsWindowMessage = g_ReflexStatsWindowMessage;
+    settings->statsWindowMessage = g_PCLStatsWindowMessage;
     return Result::eOk;
 }
 
 //! Allows other plugins to set GPU agnostic stats
 void setLatencyStatsMarker(ReflexMarker marker, uint32_t frameId)
 {
-    NVSTATS_MARKER(marker, frameId);
+    PCLSTATS_MARKER(marker, frameId);
 }
 
 //! Main entry point - starting our plugin
@@ -466,7 +466,7 @@ void slOnPluginShutdown()
     ctx.registerEvaluateCallbacks(kFeatureReflex, nullptr, nullptr);
 
     //! GPU agnostic latency stats shutdown
-    NVSTATS_SHUTDOWN();
+    PCLSTATS_SHUTDOWN();
 
     // Common shutdown
     plugin::onShutdown(api::getContext());

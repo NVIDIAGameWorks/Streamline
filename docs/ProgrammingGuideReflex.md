@@ -4,7 +4,7 @@ Streamline - Reflex
 
 >The focus of this guide is on using Streamline to integrate Reflex into an application.  For more information about Reflex itself, please visit the [NVIDIA Developer Reflex Page](https://developer.nvidia.com/performance-rendering-tools/reflex)
 
-Version 2.1.0
+Version 2.1.1
 =======
 
 Here is an overview list of sub-features in the Reflex plugin:
@@ -283,9 +283,10 @@ Checklist Item | Pass/Fail
 Reflex Low Latency’s default state is On |
 All Reflex modes (Off, On, On + Boost) function correctly |
 PC Latency (PCL) in the Reflex Test Utility is not 0.0 |
-Reflex Test Utility Report has "PASSED" with Reflex On |
+Reflex Test Utility Report passed without warning with DLSS Frame Generation |
+Reflex Test Utility Report passed without warning with Reflex On |
 Reflex does not significantly impact FPS (more than 4%) when Reflex is On <br> (On + Boost is expect to have some FPS hit for lowest latency) |
-Reflex Test Utility Report has "PASSED" with Reflex On + Boost |
+Reflex Test Utility Report passed without warning with Reflex On + Boost |
 Reflex Markers are always sent regardless of Reflex Low Latency mode state |
 Reflex Flash Indicator appears when left mouse button is pressed |
 Reflex UI settings are following the UI Guidelines |
@@ -299,8 +300,9 @@ Reflex UI settings are disabled or not available on other IHV Hardware |
     * <https://developer.download.nvidia.com/assets/gamedev/files/ReflexVerification.zip>
 2. Install FrameView SDK
     * Double click the FrameView SDK Installer (`FVSDKSetup.exe`)
+    * Restart the system
 3. Run `ReflexTestSetup.bat` from an administrator mode command prompt
-    * This will force the Reflex Flash Indicator to enable, enable the Verification HUD, and set up the Reflex Test framework
+    * This will force the Reflex Flash Indicator to enable, enable the Verification HUD, set up the Reflex Test framework, and start ReflexTest.exe.
 4. Check Reflex Low Latency modes
     1. Run game
         * Make sure game is running in fullscreen exclusive
@@ -310,19 +312,24 @@ Reflex UI settings are disabled or not available on other IHV Hardware |
         * Use the Reset / Default button in UI if it exists
     3. Cycle through the Reflex modes in UI and check that it matches with “Reflex Mode” in the Verification HUD
 5. Running Reflex Tests
-    1. Turn Reflex to On
-    2. Press `Alt + t` in game to start the test (2 beeps)
-    3. Analyze results after the test is done (3 beeps)
-        * Test should take approximately 5 minutes
-        * Look for "PASSED"
-    4. Turn Reflex to On + Boost
-    5. Press `Alt + t` in game to start the test (2 beeps)
-    6. Analyze results after the test is done (3 beeps)
-        * Test should take approximately 5 minutes
-        * Look for "PASSED"
+    * For titles with DLSS Frame Generation (FG), turn FG to On
+        1. Press `Alt + t` in game to start the test (2 beeps)
+        2. Analyze results after the test is done (3 beeps)
+            * Test should take approximately 5 minutes
+            * Check for warnings in the ReflexTest.exe output
+    * Turn DLSS FG to Off, Reflex to On
+        1. Press `Alt + t` in game to start the test (2 beeps)
+        2. Analyze results after the test is done (3 beeps)
+            * Test should take approximately 5 minutes
+            * Check for warnings in the ReflexTest.exe output
+    * Turn Reflex to On + Boost
+        1. Press `Alt + t` in game to start the test (2 beeps)
+        2. Analyze results after the test is done (3 beeps)
+            * Test should take approximately 5 minutes
+            * Check for warnings in the ReflexTest.exe output
     7. Press `Ctrl + c` in the command prompt to exit ReflexTest.exe
 6. Test that markers are always sent even when Reflex is Off
-    1. Run `PrintPCL.exe` in administrator mode command prompt
+    1. Turn Reflex to Off
     2. Look at the Verification HUD to ensure that the markers are still updating
 7. Test the Reflex Flash Indicator
     1. Verify the Reflex Flash Indicator is showing
@@ -330,20 +337,57 @@ Reflex UI settings are disabled or not available on other IHV Hardware |
         * Verify that Flash Indicator in the Verification HUD increments by 1 when the left mouse button is pressed
 8. Check UI
     1. Verify UI follows the Guidelines
-    2. Check the Keybinding menu to make sure F13 is not being automatically applied when selecting a key
-9.  Run `ReflexTestCleanUp.bat` in administrator mode command prompt
-    1. This disables the Reflex Flash Indicator and the Reflex Test framework
-10. Test on other IHV (if available)
+9. Check keybinding
+    1. Run `capturePclEtw.bat` in administrator mode command prompt
+    2. Go back to the game.  Start game play
+    3. Check the Keybinding menu to make sure F13 is not being automatically applied when selecting a key
+    4. Go back to the command prompt and press any key to exit the bat
+10.  Run `ReflexTestCleanUp.bat` in administrator mode command prompt
+    * This disables the Reflex Flash Indicator and the Reflex Test framework
+11. Test on other IHV (if available)
     1. Install other IHV hardware
-    2. Install FrameView SDK
+    2. Install FrameView SDK and restart the system
     3. Run `PrintPCL.exe` in administrator mode command prompt
     4. Run game
     5. Press `Alt + t` in game
         * Look at the PCL value in the command prompt. If the value is not 0.0, then PCL is working
     6. Press `Ctrl + c` in the command prompt to exit PrintPCL.exe
     7. Check to make sure Reflex UI is not available
-11. Send NVIDIA Reflex Test report and Checklist results
+12. Send NVIDIA Reflex Test report and Checklist results
     * Send to NVIDIA alias: reflex-sdk-support@nvidia.com
+
+**ReflexTestResults.txt**
+
+The Reflex Test Utility iterates through (up to) 10 FPS points, measuring PCL. Here is an example of the report summary:
+```
+*** Summary [647e5c14] -    Reflex ON,  Frame Gen x2,                                       I>S  S>Q  Q>R  R>FG FG>D 
+ 252.5 FPS: PCL  23.4 ms is PASS at 5.91 FT!  -0.4% FPS impact.  34.0% latency reduction. {0.96 1.42 1.95 0.43 0.66} 
+ 236.4 FPS: PCL  24.1 ms is PASS at 5.71 FT!  -0.5% FPS impact.  36.0% latency reduction. {0.91 1.33 1.93 0.42 0.62} 
+ 213.3 FPS: PCL  26.0 ms is PASS at 5.54 FT!   0.1% FPS impact.  39.7% latency reduction. {1.00 1.16 1.90 0.42 0.57} 
+ 197.2 FPS: PCL  27.3 ms is PASS at 5.39 FT!  -0.4% FPS impact.  40.3% latency reduction. {0.99 0.99 1.91 0.41 0.58} 
+ 177.4 FPS: PCL  28.9 ms is PASS at 5.13 FT!  -0.9% FPS impact.  42.8% latency reduction. {0.96 0.85 1.89 0.41 0.52} 
+ 160.5 FPS: PCL  32.6 ms is PASS at 5.24 FT!   0.2% FPS impact.  42.8% latency reduction. {1.11 0.74 1.95 0.41 0.53} 
+ 145.0 FPS: PCL  33.5 ms is PASS at 4.85 FT!  -0.1% FPS impact.  46.7% latency reduction. {0.97 0.70 1.84 0.41 0.43} 
+ 121.3 FPS: PCL  38.8 ms is PASS at 4.70 FT!  -1.2% FPS impact.  47.5% latency reduction. {1.10 0.47 1.87 0.40 0.36} 
+  59.6 FPS: PCL  68.0 ms is PASS at 4.06 FT!  -0.4% FPS impact.  55.1% latency reduction. {0.93 0.21 1.78 0.40 0.23} 
+  44.1 FPS: PCL  94.9 ms is PASS at 4.18 FT!  -1.3% FPS impact.  52.6% latency reduction. {1.29 0.16 1.73 0.40 0.16} 
+```
+
+
+Field | Description 
+-|-
+FPS | Average frames per second when Reflex On (+ Boost). 
+PCL | Average PC latency when Reflex On (+ Boost). 
+PASS/OKAY/WARN | This is a sanity check on PCL. WARN indicates a possible issue with the integration. 
+FT | PCL expressed in average frame times. (E.g., 23.4 / 1000 * 252.5 = 5.91 FT) 
+FPS impact | Average FPS difference between Reflex On (+ Boost) vs Off.  <br/>A negative value means Reflex lowers/worsens FPS. 
+Latency reduction | Average PCL difference between Reflex On (+ Boost) vs Off.  <br/>A positive value means Reflex lowers/improves latency. 
+I>S | Input to simulation start latency in average frame times. 
+S>Q | Simulation start to queue start latency in average frame times. 
+Q>R | Queue start to GPU end (or DLSS FG start) latency in average frame times. 
+R>FG | DLSS FG start to GPU end latency in average frame times. 
+R>D/FG>D | GPU end to displayed latency in average frame times. 
+
 
 **Reflex Verification HUD**
 

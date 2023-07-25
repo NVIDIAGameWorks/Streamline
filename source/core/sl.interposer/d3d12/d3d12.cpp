@@ -49,6 +49,24 @@ extern "C" HRESULT WINAPI D3D12CreateDevice(
 {
     loadD3D12Module();
 
+#ifndef SL_PRODUCTION
+    bool bEnableDebugLayer = sl::interposer::getInterface()->getConfig().enableD3D12DebugLayer;
+    if (bEnableDebugLayer)
+    {
+        // enable debug layer
+        ID3D12Debug* debugController;
+        if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController))))
+        {
+            SL_LOG_INFO("Enabling D3D12 debug layer...");
+            debugController->EnableDebugLayer();
+        }
+        else
+        {
+            SL_LOG_WARN("Tried to enable D3D12 debug layer, but failed to get debug interface");
+        }
+    }
+#endif
+
     const HRESULT hr = sl::interposer::call(D3D12CreateDevice, hookD3D12CreateDevice)(pAdapter, MinimumFeatureLevel, riid, ppDevice);
     if (FAILED(hr))
     {

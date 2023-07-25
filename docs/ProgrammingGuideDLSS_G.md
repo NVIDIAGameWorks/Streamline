@@ -4,7 +4,7 @@ Streamline - DLSS-G
 
 NVIDIA DLSS Frame Generation (“DLSS-FG” or “DLSS-G”) is an AI based technology that infers frames based on rendered frames coming from a game engine or rendering pipeline. This document explains how to integrate DLSS-G into a renderer.
 
-Version 2.1.0
+Version 2.0
 =======
 
 ### 0.0 Integration checklist
@@ -13,19 +13,19 @@ See Section 15.0 for further details on some of these items, in addition to the 
 
 Item | Reference | Confirmed
 ---|---|---
-All the required inputs are passed to Streamline: depth buffers, motion vectors, HUD-less color buffers  | Section 5.0  |
+All the required inputs are passed to Streamline: depth buffers, motion vectors, HUD-less color buffers  | Section 5.0 |
 Common constants and frame index are provided for **each frame** using slSetConstants and slSetFeatureConstants methods   |  Section 7.0 |
 All tagged buffers are valid at frame present time, and they are not re-used for other purposes | Section 5.0 |
 Buffers to be tagged with unique id 0 | Section 5.0 |
 Make sure that frame index provided with the common constants is matching the presented frame | Section 8.0 |
-Inputs are passed into Streamline look correct as well as camera matrices and dynamic objects | Debug plugin guide (separate doc) |
-Application checks the signature of sl.interposer.dll to make sure it is a genuine NVIDIA library | Streamline programming guide,section 2.1.1 |
+Inputs are passed into Streamline look correct, as well as camera matrices and dynamic objects | [SL ImGUI guide](./Debugging%20-%20SL%20ImGUI%20(Realtime%20Data%20Inspection).md) |
+Application checks the signature of sl.interposer.dll to make sure it is a genuine NVIDIA library | [Streamline programming guide, section 2.1.1](./ProgrammingGuide.md#211-security) |
 Requirements for Dynamic Resolution are met (if the game supports Dynamic Resolution)  | Section 10.0 |
 DLSS-G is turned off (by setting `sl::DLSSGOptions::mode` to `sl::DLSSGMode::eOff`) when the game is paused, loading, in menu and in general NOT rendering game frames and also when modifying resolution & full-screen vs windowed mode | Section 12.0 |
 Swap chain is recreated every time DLSS-G is turned on or off (by changing `sl::DLSSGOptions::mode`) to avoid unnecessary performance overhead when DLSS-G is switched off | Section 19.0 |
 Reduce the amount of motion blur; when DLSS-G enabled, halve the distance/magnitude of motion blur | Section 14.0 |
 Reflex is properly integrated (see checklist in Reflex Programming Guide) | Section 8.0 |
-In-game UI for enabling/disabling DLSS-G is implemented | RTX UI Guidelines (separate doc) |
+In-game UI for enabling/disabling DLSS-G is implemented | [RTX UI Guidelines](./RTX%20UI%20Developer%20Guidelines.pdf) |
 Only full production non-watermarked libraries are packaged in the release build | N/A |
 No errors or unexpected warnings in Streamline and DLSS-G log files while running the feature | N/A |
 
@@ -178,11 +178,27 @@ factory->CreateSwapChainForHwnd(device, hWnd, desc, nullptr, nullptr, &mainSwapC
 
 ### 5.0 TAG ALL REQUIRED RESOURCES
 
-DLSS-G requires depth, motion vectors and HUD-less color buffers which are used during the SwapChain::Present call so **if these buffers are going to be reused, destroyed or changed in any way before the frame is presented their life-cycle needs to be specified correctly**.
+#### **Buffers to tag**
+
+DLSS-G requires `depth` and `motion vectors` buffers.
+
+Additionally, for maximal image quality, it is **critical** to integrate `UI Color and Alpha` or `Hudless` buffers:
+* `UI Color and Alpha` buffer provides significant image quality improvements on UI elements like name plates and on-screen hud. If your application/game has this available, we strongly recommend you integrate this buffer.
+* If `UI Color and Alpha` is not available, `Hudless` integration can also significantly improve image quality on UI elements.
+
+Input | Requirements/Recommendations | Reference Image
+---|---|---
+Final Color | - *No requirements, this is intercepted automatically via SL's SwapChain API* | ![dlssg_final_color](./media/dlssg_docs_final_color.png "DLSSG Input Example: Final Color")
+Depth | - Same depth data used to generate motion vector data <br> - `sl::Constants` depth-related data (e.g. `depthInverted`) should be set accordingly<br>  - *Note: this is the same set of requirements as DLSS-SR, and the same depth can be used for both* | ![dlssg_depth](./media/dlssg_docs_depth.png "DLSSG Input Example: Depth")
+Motion Vectors | - Dense motion vector field (i.e. includes camera motion, and motion of dynamic objects) <br> - *Note: this is the same set of requirements as DLSS-SR, and the same motion vectors can be used for both* | ![dlssg_mvec](./media/dlssg_docs_mvec.png "DLSSG Input Example: Motion Vectors")
+Hudless | - Should contain the full viewable scene, **without any HUD/UI elements in it**. If some HUD/UI elements are unavoidably included, expect some image quality degradation on those elements <br> - Same color space and post-processing effects (e.g tonemapping, blur etc.) as color backbuffer <br> - When appropriate buffer extents are *not* provided, needs to have the same dimensions as the color backbuffer <br> | ![dlssg_hudless](./media/dlssg_docs_hudless.png "DLSSG Input Example: Hudless")
+UI Color and Alpha | - Should **only** contain pixels that denote the UI/HUD, along with appropriate alpha values (described below) <br> - Alpha is *zero* on all pixels that do *not* have UI on them <br> - Alpha is *non-zero* on all pixels that do have UI on them <br> - RGB is as close as possible to respecting the following blending formula: `UI.RGB x UI.Alpha + (1 - UI.Alpha) x Hudless.RGB = Final_Color.RGB` <br> - When appropriate buffer extents are *not* provided, needs to have the same dimensions as the color backbuffer <br> | ![dlssg_ui_color_and_alpha](./media/dlssg_docs_ui_color_and_alpha.png "DLSSG Input Example: UI Color and Alpha")
+
+#### **Tagging recommendations**
+
+**For all buffers**: tagged buffers are used during the `Swapchain::Present` call. **If the tagged buffers are going to be reused, destroyed or changed in any way before the frame is presented, their life-cycle needs to be specified correctly**.
 
 Unlike other SL features (DLSS, NRD, etc.) which might be enabled in multiple viewports, DLSS-G has just one main viewport, so when tagging resources **make sure to use the same id as when calling `slDLSSGSetOptions`** as shown below:
-
-Note that while non-default extent is supported for UI and HUDLess resources with DLSS-G, the width and height of the extent for these buffers must match those of the final color (i.e. the backbuffer).  The left and top values may vary.
 
 It is important to emphasize that **the overuse of `sl::ResourceLifecycle::eOnlyValidNow` and `sl::ResourceLifecycle::eValidUntilEvaluate` can result in wasted VRAM**. Therefore please do the following:
 

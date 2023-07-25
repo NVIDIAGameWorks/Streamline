@@ -269,6 +269,7 @@ public:
     virtual ComputeStatus getLatencyReport(ReflexState& settings) override;
     virtual ComputeStatus sleep() override;
     virtual ComputeStatus setReflexMarker(ReflexMarker marker, uint64_t frameId) override;
+    
 
     // Sharing API
     virtual ComputeStatus fetchTranslatedResourceFromCache(ICompute* otherAPI, ResourceType type, Resource res, TranslatedResource& shared, const char friendlyName[]) override;

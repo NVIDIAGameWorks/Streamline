@@ -24,6 +24,7 @@
 #include <sstream>
 #include <atomic>
 #include <future>
+#include <vector>
 
 #include "include/sl.h"
 #include "include/sl_helpers.h"
@@ -54,27 +55,502 @@
 using json = nlohmann::json;
 namespace sl
 {
+    constexpr uint32_t kNrdInputBufferTagCount = static_cast<uint32_t>(nrd::ResourceType::OUT_DIFF_RADIANCE_HITDIST);
+    constexpr uint32_t kNrdOutputBufferTagCount = static_cast<uint32_t>(nrd::ResourceType::TRANSIENT_POOL) - kNrdInputBufferTagCount;
 
-using PFunGetLibraryDesc = const nrd::LibraryDesc&();
-using PFunCreateDenoiser = nrd::Result(const nrd::DenoiserCreationDesc& denoiserCreationDesc, nrd::Denoiser*& denoiser);
-using PFunGetDenoiserDesc = const nrd::DenoiserDesc&(const nrd::Denoiser& denoiser);
-using PFunSetMethodSettings = nrd::Result(nrd::Denoiser& denoiser, nrd::Method method, const void* methodSettings);
-using PFunGetComputeDispatches = nrd::Result(nrd::Denoiser& denoiser, const nrd::CommonSettings& commonSettings, const nrd::DispatchDesc*& dispatchDescs, uint32_t& dispatchDescNum);
-using PFunDestroyDenoiser = void(nrd::Denoiser& denoiser);
+    enum class DenoiserClass
+    {
+        eReblur,
+        eSigma,
+        eRelax,
+        eReference,
+        eMv,
+        eCount
+    };
+
+    enum class ResourceTypeRole
+    {
+        eInput,
+        eOutput,
+        eRw,
+    };
+
+    struct ResourceTypeDesc
+    {
+        nrd::ResourceType resourceType;
+        ResourceTypeRole typeRole;
+        bool isOptional;
+    };
+
+    std::vector<ResourceTypeDesc> const kReblurDiffuseBuffers{
+        { nrd::ResourceType::IN_MV,                         ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_NORMAL_ROUGHNESS,           ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_VIEWZ,                      ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_DIFF_RADIANCE_HITDIST,      ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_DIFF_CONFIDENCE,            ResourceTypeRole::eInput,       true },
+        { nrd::ResourceType::OUT_DIFF_RADIANCE_HITDIST,     ResourceTypeRole::eOutput,      false },
+    };
+
+    std::vector<ResourceTypeDesc> const kReblurDiffuseOcclusionBuffers{
+        { nrd::ResourceType::IN_MV,                         ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_NORMAL_ROUGHNESS,           ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_VIEWZ,                      ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_DIFF_HITDIST,               ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::OUT_DIFF_HITDIST,              ResourceTypeRole::eOutput,      false },
+    };
+
+    std::vector<ResourceTypeDesc> const kReblurDiffuseShBuffers{
+        { nrd::ResourceType::IN_MV,                         ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_NORMAL_ROUGHNESS,           ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_VIEWZ,                      ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_DIFF_SH0,                   ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_DIFF_SH1,                   ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_DIFF_CONFIDENCE,            ResourceTypeRole::eInput,       true },
+        { nrd::ResourceType::OUT_DIFF_SH0,                  ResourceTypeRole::eOutput,      false },
+        { nrd::ResourceType::OUT_DIFF_SH1,                  ResourceTypeRole::eOutput,      false },
+    };
+
+    std::vector<ResourceTypeDesc> const kReblurSpecularBuffers{
+        { nrd::ResourceType::IN_MV,                         ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_NORMAL_ROUGHNESS,           ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_VIEWZ,                      ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_SPEC_RADIANCE_HITDIST,      ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_SPEC_CONFIDENCE,            ResourceTypeRole::eInput,       true },
+        { nrd::ResourceType::OUT_SPEC_RADIANCE_HITDIST,     ResourceTypeRole::eOutput,      false },
+    };
+
+    std::vector<ResourceTypeDesc> const kReblurSpecularOcclusionBuffers{
+        { nrd::ResourceType::IN_MV,                         ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_NORMAL_ROUGHNESS,           ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_VIEWZ,                      ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_SPEC_HITDIST,               ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::OUT_SPEC_HITDIST,              ResourceTypeRole::eOutput,      false },
+    };
+
+    std::vector<ResourceTypeDesc> const kReblurSpecularShBuffers{
+        { nrd::ResourceType::IN_MV,                         ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_NORMAL_ROUGHNESS,           ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_VIEWZ,                      ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_SPEC_SH0,                   ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_SPEC_SH1,                   ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_SPEC_CONFIDENCE,            ResourceTypeRole::eInput,       true },
+        { nrd::ResourceType::OUT_SPEC_SH0,                  ResourceTypeRole::eOutput,      false },
+        { nrd::ResourceType::OUT_SPEC_SH1,                  ResourceTypeRole::eOutput,      false },
+    };
+
+    std::vector<ResourceTypeDesc> const kReblurDiffuseSpecularBuffers{
+        { nrd::ResourceType::IN_MV,                         ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_NORMAL_ROUGHNESS,           ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_VIEWZ,                      ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_DIFF_RADIANCE_HITDIST,      ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_SPEC_RADIANCE_HITDIST,      ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_DIFF_CONFIDENCE,            ResourceTypeRole::eInput,       true },
+        { nrd::ResourceType::IN_SPEC_CONFIDENCE,            ResourceTypeRole::eInput,       true },
+        { nrd::ResourceType::OUT_DIFF_RADIANCE_HITDIST,     ResourceTypeRole::eOutput,      false },
+        { nrd::ResourceType::OUT_SPEC_RADIANCE_HITDIST,     ResourceTypeRole::eOutput,      false },
+    };
+
+    std::vector<ResourceTypeDesc> const kReblurDiffuseSpecularOcclusionBuffers{
+        { nrd::ResourceType::IN_MV,                         ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_NORMAL_ROUGHNESS,           ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_VIEWZ,                      ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_DIFF_HITDIST,               ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_SPEC_HITDIST,               ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::OUT_DIFF_HITDIST,              ResourceTypeRole::eOutput,      false },
+        { nrd::ResourceType::OUT_SPEC_HITDIST,              ResourceTypeRole::eOutput,      false },
+    };
+
+    std::vector<ResourceTypeDesc> const kReblurDiffuseSpecularShBuffers{
+        { nrd::ResourceType::IN_MV,                         ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_NORMAL_ROUGHNESS,           ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_VIEWZ,                      ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_DIFF_SH0,                   ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_DIFF_SH1,                   ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_SPEC_SH0,                   ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_SPEC_SH1,                   ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_DIFF_CONFIDENCE,            ResourceTypeRole::eInput,       true },
+        { nrd::ResourceType::IN_SPEC_CONFIDENCE,            ResourceTypeRole::eInput,       true },
+        { nrd::ResourceType::OUT_DIFF_SH0,                  ResourceTypeRole::eOutput,      false },
+        { nrd::ResourceType::OUT_DIFF_SH1,                  ResourceTypeRole::eOutput,      false },
+        { nrd::ResourceType::OUT_SPEC_SH0,                  ResourceTypeRole::eOutput,      false },
+        { nrd::ResourceType::OUT_SPEC_SH1,                  ResourceTypeRole::eOutput,      false },
+    };
+
+    std::vector<ResourceTypeDesc> const kReblurDiffuseDirectionalOcclusionBuffers{
+        { nrd::ResourceType::IN_MV,                         ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_NORMAL_ROUGHNESS,           ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_VIEWZ,                      ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_DIFF_DIRECTION_HITDIST,     ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_DIFF_CONFIDENCE,            ResourceTypeRole::eInput,       true },
+        { nrd::ResourceType::OUT_DIFF_DIRECTION_HITDIST,    ResourceTypeRole::eOutput,      false },
+    };
+
+    std::vector<ResourceTypeDesc> const kSigmaShadowBuffers{
+        { nrd::ResourceType::IN_NORMAL_ROUGHNESS,           ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_SHADOWDATA,                 ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::OUT_SHADOW_TRANSLUCENCY,       ResourceTypeRole::eRw,          false },
+    };
+
+    std::vector<ResourceTypeDesc> const kSigmaShadowTransluscencyBuffers{
+        { nrd::ResourceType::IN_NORMAL_ROUGHNESS,           ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_SHADOWDATA,                 ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_SHADOW_TRANSLUCENCY,        ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::OUT_SHADOW_TRANSLUCENCY,       ResourceTypeRole::eRw,          false },
+    };
+
+    std::vector<ResourceTypeDesc> const kRelaxDiffuseBuffers{
+        { nrd::ResourceType::IN_MV,                         ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_NORMAL_ROUGHNESS,           ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_VIEWZ,                      ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_DIFF_RADIANCE_HITDIST,      ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::OUT_DIFF_RADIANCE_HITDIST,     ResourceTypeRole::eOutput,      false },
+    };
+
+    std::vector<ResourceTypeDesc> const kRelaxSpecularBuffers{
+        { nrd::ResourceType::IN_MV,                         ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_NORMAL_ROUGHNESS,           ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_VIEWZ,                      ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_SPEC_RADIANCE_HITDIST,      ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::OUT_SPEC_RADIANCE_HITDIST,     ResourceTypeRole::eOutput,      false },
+    };
+
+    std::vector<ResourceTypeDesc> const kRelaxDiffuseSpecularBuffers{
+        { nrd::ResourceType::IN_MV,                         ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_NORMAL_ROUGHNESS,           ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_VIEWZ,                      ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_DIFF_RADIANCE_HITDIST,      ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_SPEC_RADIANCE_HITDIST,      ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::OUT_DIFF_RADIANCE_HITDIST,     ResourceTypeRole::eOutput,      false },
+        { nrd::ResourceType::OUT_SPEC_RADIANCE_HITDIST,     ResourceTypeRole::eOutput,      false },
+    };
+
+    std::vector<ResourceTypeDesc> const kReferenceBuffers{
+        { nrd::ResourceType::IN_RADIANCE,                   ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::OUT_RADIANCE,                  ResourceTypeRole::eOutput,      false },
+    };
+
+    std::vector<ResourceTypeDesc> const kSpecularReflectionMvBuffers{
+        { nrd::ResourceType::IN_MV,                         ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_NORMAL_ROUGHNESS,           ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_VIEWZ,                      ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_SPEC_HITDIST,               ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::OUT_REFLECTION_MV,             ResourceTypeRole::eOutput,      false },
+    };
+
+    std::vector<ResourceTypeDesc> const kSpecularDeltaMvBuffers{
+        { nrd::ResourceType::IN_MV,                         ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_DELTA_PRIMARY_POS,          ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::IN_DELTA_SECONDARY_POS,        ResourceTypeRole::eInput,       false },
+        { nrd::ResourceType::OUT_DELTA_MV,                  ResourceTypeRole::eOutput,      false },
+    };
+
+    BufferType convert2BufferType(nrd::ResourceType resourceType)
+    {
+        switch (resourceType)
+        {
+        case nrd::ResourceType::IN_MV:                      return kBufferTypeMotionVectors;
+        case nrd::ResourceType::IN_NORMAL_ROUGHNESS:        return kBufferTypeNormalRoughness;
+        case nrd::ResourceType::IN_VIEWZ:                   return kBufferTypeDepth;
+        case nrd::ResourceType::IN_DIFF_RADIANCE_HITDIST:   return kBufferTypeInDiffuseRadianceHitDist;
+        case nrd::ResourceType::IN_SPEC_RADIANCE_HITDIST:                   return kBufferTypeInSpecularRadianceHitDist;
+        case nrd::ResourceType::IN_DIFF_HITDIST:                   return kBufferTypeInDiffuseHitDist;
+        case nrd::ResourceType::IN_SPEC_HITDIST:                   return kBufferTypeInSpecularHitDist;
+        case nrd::ResourceType::IN_DIFF_DIRECTION_HITDIST:                   return kBufferTypeInDiffuseDirectionHitDist;
+        case nrd::ResourceType::IN_DIFF_SH0:                   return kBufferTypeInDiffuseSH0;
+        case nrd::ResourceType::IN_DIFF_SH1:                   return kBufferTypeInDiffuseSH1;
+        case nrd::ResourceType::IN_SPEC_SH0:                   return kBufferTypeInSpecularSH0;
+        case nrd::ResourceType::IN_SPEC_SH1:                   return kBufferTypeInSpecularSH1;
+        case nrd::ResourceType::IN_DIFF_CONFIDENCE:                   return kBufferTypeInDiffuseConfidence;
+        case nrd::ResourceType::IN_SPEC_CONFIDENCE:                   return kBufferTypeInSpecularConfidence;
+        case nrd::ResourceType::IN_DISOCCLUSION_THRESHOLD_MIX:                   return kBufferTypeInDisocclusionThresholdMix;
+        case nrd::ResourceType::IN_BASECOLOR_METALNESS:                   return kBufferTypeInBasecolorMetalness;
+        case nrd::ResourceType::IN_SHADOWDATA:                   return kBufferTypeInShadowData;
+        case nrd::ResourceType::IN_SHADOW_TRANSLUCENCY:                   return kBufferTypeInShadowTransluscency;
+        case nrd::ResourceType::IN_RADIANCE:                   return kBufferTypeInRadiance;
+        case nrd::ResourceType::IN_DELTA_PRIMARY_POS:                   return kBufferTypeInDeltaPrimaryPos;
+        case nrd::ResourceType::IN_DELTA_SECONDARY_POS:                   return kBufferTypeInDeltaSecondaryPos;
+
+        case nrd::ResourceType::OUT_DIFF_RADIANCE_HITDIST:                   return kBufferTypeOutDiffuseRadianceHitDist;
+        case nrd::ResourceType::OUT_SPEC_RADIANCE_HITDIST:                   return kBufferTypeOutSpecularRadianceHitDist;
+        case nrd::ResourceType::OUT_DIFF_SH0:                   return kBufferTypeOutDiffuseSH0;
+        case nrd::ResourceType::OUT_DIFF_SH1:                   return kBufferTypeOutDiffuseSH1;
+        case nrd::ResourceType::OUT_SPEC_SH0:                   return kBufferTypeOutSpecularSH0;
+        case nrd::ResourceType::OUT_SPEC_SH1:                   return kBufferTypeOutSpecularSH1;
+        case nrd::ResourceType::OUT_DIFF_HITDIST:                   return kBufferTypeOutDiffuseHitDist;
+        case nrd::ResourceType::OUT_SPEC_HITDIST:                   return kBufferTypeOutSpecularHitDist;
+        case nrd::ResourceType::OUT_DIFF_DIRECTION_HITDIST:                   return kBufferTypeOutDiffuseDirectionHitDist;
+        case nrd::ResourceType::OUT_SHADOW_TRANSLUCENCY:                   return kBufferTypeOutShadowTransluscency;
+        case nrd::ResourceType::OUT_RADIANCE:                   return kBufferTypeOutRadiance;
+        case nrd::ResourceType::OUT_REFLECTION_MV:                   return kBufferTypeOutReflectionMv;
+        case nrd::ResourceType::OUT_DELTA_MV:                   return kBufferTypeOutDeltaMv;
+        case nrd::ResourceType::OUT_VALIDATION:                   return kBufferTypeOutValidation;
+        }
+        return (BufferType)-1;
+    }
+
+    struct NrdMethodInfo
+    {
+        nrd::Denoiser const method;
+        const char* const name;
+        DenoiserClass const denoiserClass;
+        std::vector<ResourceTypeDesc> const& resourceTypeDescs;
+    };
+
+    std::vector<NrdMethodInfo> const kMethodInfos{
+        { nrd::Denoiser::REBLUR_DIFFUSE,                      "REBLUR_DIFFUSE",                       DenoiserClass::eReblur,     kReblurDiffuseBuffers },
+        { nrd::Denoiser::REBLUR_DIFFUSE_OCCLUSION,            "REBLUR_DIFFUSE_OCCLUSION",             DenoiserClass::eReblur,     kReblurDiffuseOcclusionBuffers },
+        { nrd::Denoiser::REBLUR_DIFFUSE_SH,                   "REBLUR_DIFFUSE_SH",                    DenoiserClass::eReblur,     kReblurDiffuseShBuffers },
+        { nrd::Denoiser::REBLUR_SPECULAR,                     "REBLUR_SPECULAR",                      DenoiserClass::eReblur,     kReblurSpecularBuffers },
+        { nrd::Denoiser::REBLUR_SPECULAR_OCCLUSION,           "REBLUR_SPECULAR_OCCLUSION",            DenoiserClass::eReblur,     kReblurSpecularOcclusionBuffers },
+        { nrd::Denoiser::REBLUR_SPECULAR_SH,                  "REBLUR_SPECULAR_SH",                   DenoiserClass::eReblur,     kReblurSpecularShBuffers },
+        { nrd::Denoiser::REBLUR_DIFFUSE_SPECULAR,             "REBLUR_DIFFUSE_SPECULAR",              DenoiserClass::eReblur,     kReblurDiffuseSpecularBuffers },
+        { nrd::Denoiser::REBLUR_DIFFUSE_SPECULAR_OCCLUSION,   "REBLUR_DIFFUSE_SPECULAR_OCCLUSION",    DenoiserClass::eReblur,     kReblurDiffuseSpecularOcclusionBuffers },
+        { nrd::Denoiser::REBLUR_DIFFUSE_SPECULAR_SH,          "REBLUR_DIFFUSE_SPECULAR_SH",           DenoiserClass::eReblur,     kReblurDiffuseSpecularShBuffers },
+        { nrd::Denoiser::REBLUR_DIFFUSE_DIRECTIONAL_OCCLUSION,"REBLUR_DIFFUSE_DIRECTIONAL_OCCLUSION", DenoiserClass::eReblur,     kReblurDiffuseDirectionalOcclusionBuffers },
+        { nrd::Denoiser::SIGMA_SHADOW,                        "SIGMA_SHADOW",                         DenoiserClass::eSigma,      kSigmaShadowBuffers },
+        { nrd::Denoiser::SIGMA_SHADOW_TRANSLUCENCY,           "SIGMA_SHADOW_TRANSLUCENCY",            DenoiserClass::eSigma,      kSigmaShadowTransluscencyBuffers },
+        { nrd::Denoiser::RELAX_DIFFUSE,                       "RELAX_DIFFUSE",                        DenoiserClass::eRelax,      kRelaxDiffuseBuffers },
+        { nrd::Denoiser::RELAX_SPECULAR,                      "RELAX_SPECULAR",                       DenoiserClass::eRelax,      kRelaxSpecularBuffers },
+        { nrd::Denoiser::RELAX_DIFFUSE_SPECULAR,              "RELAX_DIFFUSE_SPECULAR",               DenoiserClass::eRelax,      kRelaxDiffuseSpecularBuffers },
+        { nrd::Denoiser::REFERENCE,                           "REFERENCE",                            DenoiserClass::eReference,  kReferenceBuffers },
+        { nrd::Denoiser::SPECULAR_REFLECTION_MV,              "SPECULAR_REFLECTION_MV",               DenoiserClass::eMv,         kSpecularReflectionMvBuffers },
+        { nrd::Denoiser::SPECULAR_DELTA_MV,                   "SPECULAR_DELTA_MV",                    DenoiserClass::eMv,         kSpecularDeltaMvBuffers },
+    };
+    std::vector<NrdMethodInfo> listMethodsFromMask(uint32_t mask)
+    {
+        std::vector<NrdMethodInfo> output;
+        for (auto i = 0ul; mask; ++i, mask = mask >> 1)
+            if (mask & 0x01)
+                output.push_back(kMethodInfos[i]);
+        return output;
+    }
+
+    enum class Encodable
+    {
+        eDiffuseRadianceHitDist = 0ul,
+        eSpecularRadianceHitDist,
+        eDiffuseDirectionHitDist,
+        eDiffuseSh0,
+        eDiffuseSh1,
+        eSpecularSh0,
+        eSpecularSh1,
+        eShadowdata,
+        eShadowTransluscency,
+        eCount
+    };
+
+    enum class Decodable
+    {
+        eDiffuseRadianceHitDist = 0ul,
+        eSpecularRadianceHitDist,
+        eDiffuseDirectionHitDist,
+        eDiffuseSh0,
+        eDiffuseSh1,
+        eSpecularSh0,
+        eSpecularSh1,
+        eShadowTransluscency,
+        eCount
+    };
+
+    struct EncodableInfo
+    {
+        Encodable const encodable;
+        chi::Format const format;
+        const char* const debugName;
+    };
+
+    std::vector<EncodableInfo> const kEncodableInfos{
+        { Encodable::eDiffuseRadianceHitDist,   chi::eFormatRGBA16F, "sl.ctx.DiffuseRadianceHitDist"},
+        { Encodable::eSpecularRadianceHitDist,  chi::eFormatRGBA16F, "sl.ctx.SpecularRadianceHitDist"},
+        { Encodable::eDiffuseDirectionHitDist,  chi::eFormatRGBA8UN, "sl.ctx.DiffuseDirectionHitDist"},
+        { Encodable::eDiffuseSh0,               chi::eFormatRGBA16F, "sl.ctx.DiffuseSh0"},
+        { Encodable::eDiffuseSh1,               chi::eFormatRGBA16F, "sl.ctx.DiffuseSh1"},
+        { Encodable::eSpecularSh0,              chi::eFormatRGBA16F, "sl.ctx.SpecularSh0"},
+        { Encodable::eSpecularSh1,              chi::eFormatRGBA16F, "sl.ctx.SpecularSh1"},
+        { Encodable::eShadowdata,               chi::eFormatRGBA16F, "sl.ctx.Shadowdata"},
+        { Encodable::eShadowTransluscency,      chi::eFormatRGBA8UN, "sl.ctx.ShadowTransluscency"},
+    };
+
+    Encodable cast2Encodable(nrd::ResourceType resourceType)
+    {
+        switch (resourceType)
+        {
+        case nrd::ResourceType::IN_DIFF_RADIANCE_HITDIST:   return Encodable::eDiffuseRadianceHitDist;
+        case nrd::ResourceType::IN_SPEC_RADIANCE_HITDIST:   return Encodable::eSpecularRadianceHitDist;
+        case nrd::ResourceType::IN_DIFF_DIRECTION_HITDIST:  return Encodable::eDiffuseDirectionHitDist;
+        case nrd::ResourceType::IN_DIFF_SH0:                return Encodable::eDiffuseSh0;
+        case nrd::ResourceType::IN_DIFF_SH1:                return Encodable::eDiffuseSh1;
+        case nrd::ResourceType::IN_SPEC_SH0:                return Encodable::eSpecularSh0;
+        case nrd::ResourceType::IN_SPEC_SH1:                return Encodable::eSpecularSh1;
+        case nrd::ResourceType::IN_SHADOWDATA:              return Encodable::eShadowdata;
+        case nrd::ResourceType::IN_SHADOW_TRANSLUCENCY:     return Encodable::eShadowTransluscency;
+        }
+        return Encodable::eCount;
+    };
+
+    nrd::ResourceType cast2ResourceType(Encodable encodable)
+    {
+        switch (encodable)
+        {
+        case Encodable::eDiffuseRadianceHitDist:    return nrd::ResourceType::IN_DIFF_RADIANCE_HITDIST;
+        case Encodable::eSpecularRadianceHitDist:   return nrd::ResourceType::IN_SPEC_RADIANCE_HITDIST;
+        case Encodable::eDiffuseDirectionHitDist:   return nrd::ResourceType::IN_DIFF_DIRECTION_HITDIST;
+        case Encodable::eDiffuseSh0:                return nrd::ResourceType::IN_DIFF_SH0;
+        case Encodable::eDiffuseSh1:                return nrd::ResourceType::IN_DIFF_SH1;
+        case Encodable::eSpecularSh0:               return nrd::ResourceType::IN_SPEC_SH0;
+        case Encodable::eSpecularSh1:               return nrd::ResourceType::IN_SPEC_SH1;
+        case Encodable::eShadowdata:                return nrd::ResourceType::IN_SHADOWDATA;
+        case Encodable::eShadowTransluscency:       return nrd::ResourceType::IN_SHADOW_TRANSLUCENCY;
+        }
+        return nrd::ResourceType::MAX_NUM;
+    }
+
+    Decodable selectDecodable(nrd::ResourceType resourceType)
+    {
+        switch (resourceType)
+        {
+        case nrd::ResourceType::OUT_DIFF_RADIANCE_HITDIST:   return Decodable::eDiffuseRadianceHitDist;
+        case nrd::ResourceType::OUT_SPEC_RADIANCE_HITDIST:   return Decodable::eSpecularRadianceHitDist;
+        case nrd::ResourceType::OUT_DIFF_DIRECTION_HITDIST:  return Decodable::eDiffuseDirectionHitDist;
+        case nrd::ResourceType::OUT_DIFF_SH0:                return Decodable::eDiffuseSh0;
+        case nrd::ResourceType::OUT_DIFF_SH1:                return Decodable::eDiffuseSh1;
+        case nrd::ResourceType::OUT_SPEC_SH0:                return Decodable::eSpecularSh0;
+        case nrd::ResourceType::OUT_SPEC_SH1:                return Decodable::eSpecularSh1;
+        case nrd::ResourceType::OUT_SHADOW_TRANSLUCENCY:     return Decodable::eShadowTransluscency;
+        }
+        return Decodable::eCount;
+    };
+
+    struct EncoderCB
+    {
+        uint32_t encodeDiffuseRadianceHitDist;
+        uint32_t encodeSpecularRadianceHitDist;
+        uint32_t encodeDiffuseDirectionHitDist;
+        uint32_t encodeDiffuseSh0;
+        uint32_t encodeDiffuseSh1;
+        uint32_t encodeSpecularSh0;
+        uint32_t encodeSpecularSh1;
+        uint32_t encodeShadowdata;
+        uint32_t encodeShadowTransluscency;
+    };
+
+    struct DecoderCB
+    {
+        uint32_t decodeDiffuseRadianceHitDist;
+        uint32_t decodeSpecularRadianceHitDist;
+        uint32_t decodeDiffuseDirectionHitDist;
+        uint32_t decodeDiffuseSh0;
+        uint32_t decodeDiffuseSh1;
+        uint32_t decodeSpecularSh0;
+        uint32_t decodeSpecularSh1;
+        uint32_t decodeShadowTransluscency;
+    };
+
+using PFunCreateInstance = nrd::Result(const nrd::InstanceCreationDesc& denoiserCreationDesc, nrd::Instance*& denoiser);
+using PFunDestroyInstance = void(nrd::Instance& denoiser);
+using PFunGetLibraryDesc = const nrd::LibraryDesc& ();
+using PFunGetInstanceDesc = const nrd::InstanceDesc& (const nrd::Instance& denoiser);
+using PFunSetCommonSettings = nrd::Result(nrd::Instance& instance, nrd::CommonSettings const& commonSettings);
+using PFunSetDenoiserSettings = nrd::Result(nrd::Instance& instance, nrd::Identifier identifier, const void* denoiserSettings);
+using PFunGetComputeDispatches = nrd::Result(nrd::Instance& instance, const nrd::Identifier* identifiers, uint32_t identifiersNum, const nrd::DispatchDesc*& dispatchDescs, uint32_t& dispatchDescNum);
+
+struct StateVector : std::vector<chi::ResourceState>
+{
+    chi::ResourceState initialState;
+
+    StateVector()
+        : std::vector<chi::ResourceState>{}
+        , initialState{ chi::ResourceState::eUndefined }
+    {}
+
+    StateVector(chi::ResourceState initialState)
+        : std::vector<chi::ResourceState>{}
+        , initialState{ initialState }
+    {}
+
+    void reset()
+    {
+        for (auto& state : *this)
+        {
+            state = initialState;
+        }
+    }
+};
 
 struct NRDInstance
 {
     nrd::CommonSettings prevCommonSettings{};
     std::vector<chi::Resource> permanentTextures;
     std::vector<chi::Resource> transientTextures;
+
+    StateVector permanentTexturesStates{ chi::ResourceState::eStorageRW },
+        transientTexturesStates{},
+        taggedInputBuffersStates{ chi::ResourceState::eStorageRW },
+        taggedOutputBuffersStates{ chi::ResourceState::eTextureRead };
+
+    void resetStateVectors()
+    {
+        permanentTexturesStates.reset();
+        transientTexturesStates.reset();
+        taggedInputBuffersStates.reset();
+        taggedOutputBuffersStates.reset();
+    }
+
+    bool setResourceState(chi::ResourceState resourceState, nrd::ResourceType resourceType, uint32_t indexInPool = 0)
+    {
+        if (resourceType == nrd::ResourceType::PERMANENT_POOL)
+        {
+            permanentTexturesStates[indexInPool] = resourceState;
+            return true;
+        }
+
+        if (resourceType == nrd::ResourceType::TRANSIENT_POOL)
+        {
+            transientTexturesStates[indexInPool] = resourceState;
+            return true;
+        }
+
+        indexInPool = static_cast<uint32_t>(resourceType);
+        if (indexInPool < kNrdInputBufferTagCount)
+        {
+            taggedInputBuffersStates[indexInPool] = resourceState;
+            return true;
+        }
+
+        indexInPool -= kNrdInputBufferTagCount;
+        if (indexInPool < kNrdOutputBufferTagCount)
+        {
+            taggedOutputBuffersStates[indexInPool] = resourceState;
+            return true;
+        }
+
+        return false;
+    }
+
+    chi::ResourceState getResourceState(nrd::ResourceType resourceType, uint32_t indexInPool = 0)
+    {
+        if (resourceType == nrd::ResourceType::PERMANENT_POOL)
+            return permanentTexturesStates[indexInPool];
+
+        if (resourceType == nrd::ResourceType::TRANSIENT_POOL)
+            return transientTexturesStates[indexInPool];
+
+        indexInPool = static_cast<uint32_t>(resourceType);
+        if (indexInPool < kNrdInputBufferTagCount)
+            return taggedInputBuffersStates[indexInPool];
+
+        indexInPool -= kNrdInputBufferTagCount;
+        if (indexInPool < kNrdOutputBufferTagCount)
+            return taggedOutputBuffersStates[indexInPool];
+
+        return chi::ResourceState::eUnknown;
+    }
     std::vector<chi::Kernel> shaders;
-    nrd::Denoiser* denoiser = {};
+    nrd::Instance* denoiser = {};
     uint32_t methodMask = 0;
-    nrd::MethodDesc methodDescs[6];
-    uint32_t methodCount = 0;
-    bool enableAO = false;
-    bool enableDiffuse = false;
-    bool enableSpecular = false;
+    nrd::DenoiserDesc denoiserDescs[6];
+    uint32_t denoiserCount = 0;
+    std::array<bool, static_cast<uint32_t>(Encodable::eCount)> enabledInputResources{};
     bool relax = false;
 };
 
@@ -88,9 +564,8 @@ struct NRDViewport
     NRDInstance* instance{};
     chi::Resource viewZ{};
     chi::Resource mvec{};
-    chi::Resource packedAO{};
-    chi::Resource packedSpec{};
-    chi::Resource packedDiff{};
+
+    std::array<chi::Resource, static_cast<uint32_t>(Encodable::eCount)> inputs{};
     std::string description = "";
 };
 
@@ -99,20 +574,22 @@ namespace nrdsl
 struct NRDContext
 {
     SL_PLUGIN_CONTEXT_CREATE_DESTROY(NRDContext);
+    void onCreateContext() {};
     void onDestroyContext() {};
 
     HMODULE lib{};
+    PFunCreateInstance* createInstance{};
+    PFunDestroyInstance* destroyInstance{};
     PFunGetLibraryDesc* getLibraryDesc{};
-    PFunCreateDenoiser* createDenoiser{};
-    PFunGetDenoiserDesc* getDenoiserDesc{};
-    PFunSetMethodSettings* setMethodSettings{};
+    PFunGetInstanceDesc* getInstanceDesc{};
+    PFunSetCommonSettings* setCommonSettings{};
+    PFunSetDenoiserSettings* setDenoiserSettings{};
     PFunGetComputeDispatches* getComputeDispatches{};
-    PFunDestroyDenoiser* destroyDenoiser{};
 
     operator bool() const
     {
-        return getLibraryDesc && createDenoiser && getDenoiserDesc &&
-            setMethodSettings && getComputeDispatches && destroyDenoiser;
+        return getLibraryDesc && createInstance && getInstanceDesc && setCommonSettings &&
+            setDenoiserSettings && getComputeDispatches && destroyInstance;
     }
 
     chi::Kernel prepareDataKernel = {};
@@ -187,32 +664,28 @@ SL_PLUGIN_DEFINE("sl.nrd", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH),
 
 void destroyNRDViewport(NRDViewport*);
 
-bool slSetConstants(const void* data, uint32_t frameIndex, uint32_t id)
+Result slSetData(const BaseStructure* inputs, CommandBuffer* cmdBuffer)
 {
-    auto& ctx = (*nrdsl::getContext());
-    auto consts = (const sl::NRDConstants*)data;
-    ctx.constsPerViewport.set(frameIndex, id, consts);
-#ifndef SL_PRODUCTION
-    if (consts->methodMask == 0 && !ctx.viewports.empty())
-    {
-        auto viewports = ctx.viewports;
-        auto lambda = [&ctx, viewports](void)->void
-        {
-            for (auto& v : viewports)
-            {
-                destroyNRDViewport(v.second);
-                delete v.second;
-            }
-            ctx.viewports.clear();
+    auto consts = findStruct<NRDConstants>(inputs);
+    auto viewport = findStruct<ViewportHandle>(inputs);
 
-            CHI_VALIDATE(ctx.compute->destroyKernel(ctx.prepareDataKernel));
-            CHI_VALIDATE(ctx.compute->destroyKernel(ctx.packDataKernel));
-        };
-        CHI_VALIDATE(ctx.compute->destroy(lambda));
-        ctx.viewports.clear();
+    if (!consts || !viewport)
+    {
+        SL_LOG_ERROR("Invalid input data");
+        return Result::eErrorMissingInputParameter;
     }
-#endif
-    return true;
+
+    auto& ctx = (*nrdsl::getContext());
+    ctx.constsPerViewport.set(0, *viewport, consts);
+
+    return Result::eOk;
+}
+
+sl::Result slNRDSetConstants(const sl::ViewportHandle& viewport, const sl::NRDConstants& constants)
+{
+    auto v = viewport;
+    v.next = (sl::BaseStructure*)&constants;
+    return slSetData(&v, nullptr);
 }
 
 bool nrdGetConstants(const common::EventData& data, NRDConstants** consts)
@@ -277,7 +750,7 @@ void destroyNRDInstance(NRDInstance* inst)
 {
     auto& ctx = (*nrdsl::getContext());
     SL_LOG_INFO("Destroying NRDContext instance with method mask %u", inst->methodMask);
-    ctx.destroyDenoiser(*inst->denoiser);
+    ctx.destroyInstance(*inst->denoiser);
     
     for (auto& shader : inst->shaders)
     {
@@ -312,9 +785,11 @@ void destroyNRDViewport(NRDViewport* viewport)
 
     CHI_VALIDATE(ctx.compute->destroyResource(viewport->viewZ));
     CHI_VALIDATE(ctx.compute->destroyResource(viewport->mvec));
-    CHI_VALIDATE(ctx.compute->destroyResource(viewport->packedAO));
-    CHI_VALIDATE(ctx.compute->destroyResource(viewport->packedSpec));
-    CHI_VALIDATE(ctx.compute->destroyResource(viewport->packedDiff));
+
+    for (auto& resource : viewport->inputs)
+    {
+        CHI_VALIDATE(ctx.compute->destroyResource(resource));
+    }
 
     ctx.cachedStates.clear();
 }
@@ -373,110 +848,57 @@ Result initializeNRD(chi::CommandList cmdList, const common::EventData& data, co
     auto parameters = api::getContext()->parameters;
 
     uint32_t mask = ctx.nrdConsts->methodMask;
-    uint32_t i = 0;
-    nrd::Method allMethods[] = 
-    { 
-        nrd::Method::REBLUR_DIFFUSE,
-        nrd::Method::REBLUR_DIFFUSE_OCCLUSION,
-        nrd::Method::REBLUR_SPECULAR,
-        nrd::Method::REBLUR_SPECULAR_OCCLUSION,
-        nrd::Method::REBLUR_DIFFUSE_SPECULAR,
-        nrd::Method::REBLUR_DIFFUSE_SPECULAR_OCCLUSION,
-        nrd::Method::REBLUR_DIFFUSE_DIRECTIONAL_OCCLUSION,
-        nrd::Method::SIGMA_SHADOW,
-        nrd::Method::SIGMA_SHADOW_TRANSLUCENCY,
-        nrd::Method::RELAX_DIFFUSE,
-        nrd::Method::RELAX_SPECULAR,
-        nrd::Method::RELAX_DIFFUSE_SPECULAR,
-        nrd::Method::REFERENCE,
-        nrd::Method::SPECULAR_REFLECTION_MV,
-        nrd::Method::SPECULAR_DELTA_MV,
-    };
-    const char* allMethodNames[] =
+    uint32_t denoiserCount = 0;
+
+    auto methods = listMethodsFromMask(mask);
+    for (auto const& method : methods)
     {
-        "REBLUR_DIFFUSE",
-        "REBLUR_DIFFUSE_OCCLUSION",
-        "REBLUR_SPECULAR",
-        "REBLUR_SPECULAR_OCCLUSION",
-        "REBLUR_DIFFUSE_SPECULAR",
-        "REBLUR_DIFFUSE_SPECULAR_OCCLUSION",
-        "REBLUR_DIFFUSE_DIRECTIONAL_OCCLUSION",
-        "SIGMA_SHADOW",
-        "SIGMA_SHADOW_TRANSLUCENCY",
-        "RELAX_DIFFUSE",
-        "RELAX_SPECULAR",
-        "RELAX_DIFFUSE_SPECULAR",
-        "REFERENCE",
-        "SPECULAR_REFLECTION_MV",
-        "SPECULAR_DELTA_MV",
-    };
+        BufferType pname = (BufferType)-1;
 
-    uint32_t methodCount = 0;
-    // In SL we have off method at index 0 so skip that
-    mask = mask >> 1;
-    while (mask)
-    { 
-        if (mask & 0x01)
+        if (method.denoiserClass == DenoiserClass::eRelax)
+            ctx.viewport->instance->relax = true;
+
+        for (auto const& resourceDesc : method.resourceTypeDescs)
         {
-            BufferType pname = (BufferType)-1;
-            switch(allMethods[i])
+            if (!resourceDesc.isOptional)
             {
-                case nrd::Method::RELAX_DIFFUSE_SPECULAR:
-                    ctx.viewport->instance->relax = true;
-                case nrd::Method::REBLUR_DIFFUSE_SPECULAR:
-                    ctx.viewport->instance->enableSpecular = true;
-                    ctx.viewport->instance->enableDiffuse = true;
-                    pname = kBufferTypeDiffuseHitNoisy;
-                    break;
-                case nrd::Method::RELAX_DIFFUSE: 
-                    ctx.viewport->instance->relax = true;
-                case nrd::Method::REBLUR_DIFFUSE: 
-                    pname = kBufferTypeDiffuseHitNoisy;
-                    ctx.viewport->instance->enableDiffuse = true;
-                    break;
-                case nrd::Method::RELAX_SPECULAR:
-                    ctx.viewport->instance->relax = true;
-                case nrd::Method::REBLUR_SPECULAR:
-                    pname = kBufferTypeSpecularHitNoisy;
-                    ctx.viewport->instance->enableSpecular = true;
-                    break;
-                case nrd::Method::SIGMA_SHADOW_TRANSLUCENCY:
-                case nrd::Method::SIGMA_SHADOW:
-                    pname = kBufferTypeShadowNoisy;
-                    break;
-                case nrd::Method::REBLUR_DIFFUSE_OCCLUSION:
-                    pname = kBufferTypeAmbientOcclusionNoisy;
-                    ctx.viewport->instance->enableAO = true;
-                    break;
-            };
- 
-            CommonResource res{};
-            SL_CHECK(getTaggedResource(pname, res, ctx.viewport->id, false, inputs, numInputs));
-            chi::ResourceDescription desc{};
-            CHI_CHECK_RR(ctx.compute->getResourceState(res.getState(), desc.state));
-            CHI_CHECK_RR(ctx.compute->getResourceDescription(res, desc));
-            
-            if (ctx.viewport->instance->denoiser && (ctx.viewport->width != desc.width || ctx.viewport->height != desc.height))
-            {
-                auto viewport = new NRDViewport{};
-                viewport->id = ctx.viewport->id;
-                auto instance = new NRDInstance{};
-                instance->enableAO = ctx.viewport->instance->enableAO;
-                instance->enableSpecular = ctx.viewport->instance->enableSpecular;
-                instance->enableDiffuse = ctx.viewport->instance->enableDiffuse;
-                destroyNRDViewport(ctx.viewport);
-                ctx.viewports[viewport->id] = viewport;
-                ctx.viewport = viewport;
-                ctx.viewport->instances[ctx.nrdConsts->methodMask] = instance;
-                ctx.viewport->instance = instance;
+                pname = convert2BufferType(resourceDesc.resourceType);
+                break;
             }
-
-            ctx.viewport->instance->methodDescs[methodCount++] = nrd::MethodDesc{ allMethods[i], (uint16_t)desc.width, (uint16_t)desc.height };
-            ctx.viewport->width = desc.width;
-            ctx.viewport->height = desc.height;
         }
-        mask = mask >> 1;
-        i++;
+        
+        if (pname == (BufferType)-1)
+            SL_LOG_ERROR("Unable to identify methods resources");
+
+        for (auto const& resourceDesc : method.resourceTypeDescs)
+        {
+            auto encodable = cast2Encodable(resourceDesc.resourceType);
+            if (encodable != Encodable::eCount)
+                ctx.viewport->instance->enabledInputResources[static_cast<uint32_t>(encodable)] = true;
+        }
+
+        CommonResource res{};
+        SL_CHECK(getTaggedResource(pname, res, ctx.viewport->id, false, inputs, numInputs));
+        chi::ResourceDescription desc{};
+        CHI_CHECK_RR(ctx.compute->getResourceState(res.getState(), desc.state));
+        CHI_CHECK_RR(ctx.compute->getResourceDescription(res, desc));
+
+        if (ctx.viewport->instance->denoiser && (ctx.viewport->width != desc.width || ctx.viewport->height != desc.height))
+        {
+            auto viewport = new NRDViewport{};
+            viewport->id = ctx.viewport->id;
+            auto instance = new NRDInstance{};
+            instance->enabledInputResources = ctx.viewport->instance->enabledInputResources;
+            destroyNRDViewport(ctx.viewport);
+            ctx.viewports[viewport->id] = viewport;
+            ctx.viewport = viewport;
+            ctx.viewport->instances[ctx.nrdConsts->methodMask] = instance;
+            ctx.viewport->instance = instance;
+        }
+
+        ctx.viewport->instance->denoiserDescs[denoiserCount++] = nrd::DenoiserDesc{ denoiserCount, method.method, (uint16_t)desc.width, (uint16_t)desc.height };
+        ctx.viewport->width = desc.width;
+        ctx.viewport->height = desc.height;
     }
 
     // Nothing to do, bail out
@@ -500,26 +922,29 @@ Result initializeNRD(chi::CommandList cmdList, const common::EventData& data, co
             CHI_CHECK_RR(ctx.compute->createKernel((void*)nrd_pack_cs, nrd_pack_cs_len, "nrd_pack.cs", "main", ctx.packDataKernel));
         }
     }
-
-    for (uint32_t i = 0; i < methodCount; i++)
+#if 0
+    for (uint32_t i = 0; i < denoiserCount; i++)
     {
-        SL_LOG_HINT("Requested NRDContext method %s (%u,%u) for viewport %u", allMethodNames[(int)ctx.viewport->instance->methodDescs[i].method], ctx.viewport->instance->methodDescs[i].fullResolutionWidth, ctx.viewport->instance->methodDescs[i].fullResolutionHeight, ctx.viewport->id);
-        ctx.viewport->description += extra::format(" - {} ({},{})", allMethodNames[(int)ctx.viewport->instance->methodDescs[i].method], ctx.viewport->instance->methodDescs[i].fullResolutionWidth, ctx.viewport->instance->methodDescs[i].fullResolutionHeight);
+        SL_LOG_HINT("Requested NRDContext method %s (%u,%u) for viewport %u", allMethodNames[(int)ctx.viewport->instance->denoiserDescs[i].method], ctx.viewport->instance->denoiserDescs[i].fullResolutionWidth, ctx.viewport->instance->denoiserDescs[i].fullResolutionHeight, ctx.viewport->id);
+        ctx.viewport->description += extra::format(" - {} ({},{})", allMethodNames[(int)ctx.viewport->instance->denoiserDescs[i].method], ctx.viewport->instance->denoiserDescs[i].fullResolutionWidth, ctx.viewport->instance->denoiserDescs[i].fullResolutionHeight);
     }
-
+#endif 
     ctx.viewport->instance->methodMask = ctx.nrdConsts->methodMask;
-    ctx.viewport->instance->methodCount = methodCount;
+    ctx.viewport->instance->denoiserCount = denoiserCount;
 
-    nrd::DenoiserCreationDesc denoiserCreationDesc = {};
-    denoiserCreationDesc.requestedMethods = ctx.viewport->instance->methodDescs;
-    denoiserCreationDesc.requestedMethodNum = methodCount;
-    if (ctx.createDenoiser(denoiserCreationDesc, ctx.viewport->instance->denoiser) != nrd::Result::SUCCESS)
+    nrd::InstanceCreationDesc instanceCreationDesc = {};
+    instanceCreationDesc.denoisers = ctx.viewport->instance->denoiserDescs;
+    instanceCreationDesc.denoisersNum = ctx.viewport->instance->denoiserCount;
+    if (ctx.createInstance(instanceCreationDesc, ctx.viewport->instance->denoiser) != nrd::Result::SUCCESS)
     {
         return Result::eErrorNRDAPI;
     }
 
-    nrd::DenoiserDesc denoiserDesc = {};
-    denoiserDesc = ctx.getDenoiserDesc(*ctx.viewport->instance->denoiser);
+    ctx.viewport->instance->taggedInputBuffersStates.resize(kNrdInputBufferTagCount, chi::ResourceState::eUndefined);
+    ctx.viewport->instance->taggedOutputBuffersStates.resize(kNrdOutputBufferTagCount, chi::ResourceState::eUndefined);
+
+    nrd::InstanceDesc instanceDesc = {};
+    instanceDesc = ctx.getInstanceDesc(*ctx.viewport->instance->denoiser);
 
     auto convertNRDTextureDesc = [](const nrd::TextureDesc& nrdTexDesc) -> chi::ResourceDescription
     {
@@ -532,31 +957,35 @@ Result initializeNRD(chi::CommandList cmdList, const common::EventData& data, co
         return texDesc;
     };
 
-    ctx.viewport->instance->permanentTextures.resize(denoiserDesc.permanentPoolSize);
-    for (uint32_t texID = 0; texID < denoiserDesc.permanentPoolSize; ++texID)
+    ctx.viewport->instance->permanentTextures.resize(instanceDesc.permanentPoolSize);
+    ctx.viewport->instance->permanentTexturesStates.resize(instanceDesc.permanentPoolSize, chi::ResourceState::eUndefined);
+
+    for (uint32_t texID = 0; texID < instanceDesc.permanentPoolSize; ++texID)
     {
         char buffer[64];
         snprintf(buffer, 64, "sl.ctx.permanentTexture[%d]", texID);
-        auto texDesc = convertNRDTextureDesc(denoiserDesc.permanentPool[texID]);
+        auto texDesc = convertNRDTextureDesc(instanceDesc.permanentPool[texID]);
         CHI_VALIDATE(ctx.compute->createTexture2D(texDesc, ctx.viewport->instance->permanentTextures[texID], buffer));
     }
 
-    ctx.viewport->instance->transientTextures.resize(denoiserDesc.transientPoolSize);
-    for (uint32_t texID = 0; texID < denoiserDesc.transientPoolSize; ++texID)
+    ctx.viewport->instance->transientTextures.resize(instanceDesc.transientPoolSize);
+    ctx.viewport->instance->transientTexturesStates.resize(instanceDesc.transientPoolSize, chi::ResourceState::eUndefined);
+
+    for (uint32_t texID = 0; texID < instanceDesc.transientPoolSize; ++texID)
     {
         char buffer[64];
         snprintf(buffer, 64, "sl.ctx.transientTexture[%d]", texID);
-        auto texDesc = convertNRDTextureDesc(denoiserDesc.transientPool[texID]);
+        auto texDesc = convertNRDTextureDesc(instanceDesc.transientPool[texID]);
         CHI_VALIDATE(ctx.compute->createTexture2D(texDesc, ctx.viewport->instance->transientTextures[texID], buffer));
     }
 
     RenderAPI platform = RenderAPI::eD3D12;
     ctx.compute->getRenderAPI(platform);
     
-    ctx.viewport->instance->shaders.resize(denoiserDesc.pipelineNum);
-    for (uint32_t shaderID = 0; shaderID < denoiserDesc.pipelineNum; ++shaderID)
+    ctx.viewport->instance->shaders.resize(instanceDesc.pipelinesNum);
+    for (uint32_t shaderID = 0; shaderID < instanceDesc.pipelinesNum; ++shaderID)
     {
-        const nrd::PipelineDesc& pipeline = denoiserDesc.pipelines[shaderID];
+        const nrd::PipelineDesc& pipeline = instanceDesc.pipelines[shaderID];
         if (platform == RenderAPI::eVulkan)
         {
             CHI_VALIDATE(ctx.compute->createKernel((void*)pipeline.computeShaderSPIRV.bytecode, (uint32_t)pipeline.computeShaderSPIRV.size, pipeline.shaderFileName, pipeline.shaderEntryPointName, ctx.viewport->instance->shaders[shaderID]));
@@ -584,21 +1013,17 @@ Result initializeNRD(chi::CommandList cmdList, const common::EventData& data, co
     {
         CHI_VALIDATE(ctx.compute->createTexture2D(texDesc, ctx.viewport->mvec, "sl.ctx.mvec"));
     }
-    if (ctx.viewport->instance->enableSpecular && !ctx.viewport->packedSpec)
-    {
-        CHI_VALIDATE(ctx.compute->createTexture2D(texDesc, ctx.viewport->packedSpec, "sl.ctx.packedSpec"));
-    }
-    if (ctx.viewport->instance->enableDiffuse && !ctx.viewport->packedDiff)
-    {
-        CHI_VALIDATE(ctx.compute->createTexture2D(texDesc, ctx.viewport->packedDiff, "sl.ctx.packedDiff"));
-    }
 
-    texDesc.format = chi::eFormatR16F;
-    if (ctx.viewport->instance->enableAO && !ctx.viewport->packedAO)
+    for (auto i = static_cast<uint32_t>(Encodable::eDiffuseRadianceHitDist);
+        i != static_cast<uint32_t>(Encodable::eCount); ++i)
     {
-        CHI_VALIDATE(ctx.compute->createTexture2D(texDesc, ctx.viewport->packedAO, "sl.ctx.packedAO"));
+        if (ctx.viewport->instance->enabledInputResources[i] && !ctx.viewport->inputs[i])
+        {
+            EncodableInfo encodableInfo = kEncodableInfos[i];
+            texDesc.format = encodableInfo.format;
+            CHI_VALIDATE(ctx.compute->createTexture2D(texDesc, ctx.viewport->inputs[i], encodableInfo.debugName));
+        }
     }
-
     return Result::eOk;
 }
 
@@ -621,6 +1046,329 @@ Result nrdBeginEvent(chi::CommandList cmdList, const common::EventData& data, co
     return Result::eOk;
 }
 
+struct CommonResourcePack
+{
+    CommonResource& mvec, &depth, &normalRoughness;
+};
+
+// Prepare data
+sl::Result prepare_data(sl::nrdsl::NRDContext& ctx, CommonResourcePack pack, chi::CommandList cmdList)
+{
+    struct PrepareDataCB
+    {
+        float4x4 clipToPrevClip;
+        float4x4 invProj;
+        float4x4 screenToWorld;
+        float4x4 screenToWorldPrev;
+        float4 sizeAndInvSize;
+        float4 hitDistParams;
+        uint32_t frameId;
+        uint32_t enableWorldMotion;
+        uint32_t enableCheckerboard;
+        uint32_t cameraMotionIncluded;
+        uint32_t relax;
+
+        static_assert(alignof(EncoderCB) == alignof(uint32_t));
+        EncoderCB encoding;
+    };
+    PrepareDataCB cb;
+
+    float w = ctx.viewport->width * ctx.nrdConsts->common.resolutionScale[0];
+    float h = ctx.viewport->height * ctx.nrdConsts->common.resolutionScale[1];
+
+    cb.clipToPrevClip = (ctx.commonConsts->clipToPrevClip);
+    cb.invProj = (ctx.commonConsts->clipToCameraView);
+    cb.screenToWorld = (ctx.nrdConsts->clipToWorld);
+    cb.screenToWorldPrev = (ctx.nrdConsts->clipToWorldPrev);
+    cb.sizeAndInvSize = { w, h, 1.0f / w, 1.0f / h };
+    cb.hitDistParams = { ctx.nrdConsts->reblurSettings.hitDistanceParameters.A, ctx.nrdConsts->reblurSettings.hitDistanceParameters.B,ctx.nrdConsts->reblurSettings.hitDistanceParameters.C, ctx.nrdConsts->reblurSettings.hitDistanceParameters.D };
+    cb.frameId = ctx.viewport->frameIndex;
+    cb.enableWorldMotion = ctx.commonConsts->motionVectors3D;
+    cb.enableCheckerboard = ctx.nrdConsts->reblurSettings.checkerboardMode != NRDCheckerboardMode::OFF;
+    cb.cameraMotionIncluded = ctx.commonConsts->cameraMotionIncluded;
+    cb.relax = ctx.viewport->instance->relax;
+
+    for (auto i = static_cast<uint32_t>(Encodable::eDiffuseRadianceHitDist);
+        i != static_cast<uint32_t>(Encodable::eCount); ++i)
+    {
+        reinterpret_cast<uint32_t*>(&cb.encoding)[i] = static_cast<uint32_t>(ctx.viewport->instance->enabledInputResources[i]);
+    }
+
+    // We can override to allow data pass through for testing
+    json& config = *(json*)api::getContext()->extConfig;
+    if (config.contains("relax"))
+    {
+        // Relax option is just passing through data as it is
+        config.at("relax").get_to(cb.relax);
+    }
+
+    // Prepare
+    {
+        extra::ScopedTasks transitions;
+        chi::ResourceTransition trans[] =
+        {
+            {pack.mvec, chi::ResourceState::eTextureRead, ctx.cachedStates[pack.mvec]},
+            {pack.depth, chi::ResourceState::eTextureRead, ctx.cachedStates[pack.depth]},
+            {ctx.viewport->mvec, chi::ResourceState::eStorageRW, chi::ResourceState::eTextureRead},
+            {ctx.viewport->viewZ, chi::ResourceState::eStorageRW, chi::ResourceState::eTextureRead},
+        };
+        ctx.compute->transitionResources(cmdList, trans, (uint32_t)countof(trans), &transitions);
+
+        CHI_VALIDATE(ctx.compute->bindKernel(ctx.prepareDataKernel));
+        CHI_VALIDATE(ctx.compute->bindConsts(0, 0, &cb, sizeof(PrepareDataCB),
+            3 * (uint32_t)ctx.viewport->instances.size() * (uint32_t)ctx.viewports.size()));
+        CHI_VALIDATE(ctx.compute->bindSampler(1, 0, chi::eSamplerLinearClamp));
+        CHI_VALIDATE(ctx.compute->bindTexture(2, 0, pack.depth));
+        CHI_VALIDATE(ctx.compute->bindTexture(3, 1, pack.mvec));
+        CHI_VALIDATE(ctx.compute->bindRWTexture(4, 0, ctx.viewport->mvec));
+        CHI_VALIDATE(ctx.compute->bindRWTexture(5, 1, ctx.viewport->viewZ));
+        uint32_t grid[] = { ((uint32_t)w + 16 - 1) / 16, ((uint32_t)h + 16 - 1) / 16, 1 };
+        CHI_VALIDATE(ctx.compute->dispatch(grid[0], grid[1], grid[2]));
+    }
+
+    // Pack
+    {
+        extra::ScopedTasks transitions;
+        std::vector<chi::ResourceTransition> trans{
+            {pack.normalRoughness, chi::ResourceState::eTextureRead, ctx.cachedStates[pack.normalRoughness]},
+        };
+
+        for (auto& resource : ctx.viewport->inputs)
+        {
+            trans.push_back({ resource, chi::ResourceState::eStorageRW, chi::ResourceState::eTextureRead });
+        }
+
+        ctx.compute->transitionResources(cmdList, trans.data(), static_cast<uint32_t>(trans.size()), &transitions);
+
+        CHI_VALIDATE(ctx.compute->bindKernel(ctx.packDataKernel));
+        CHI_VALIDATE(ctx.compute->bindConsts(0, 0, &cb, sizeof(PrepareDataCB),
+            3 * (uint32_t)ctx.viewport->instances.size() * (uint32_t)ctx.viewports.size()));
+        CHI_VALIDATE(ctx.compute->bindSampler(1, 0, chi::eSamplerLinearClamp));
+        CHI_VALIDATE(ctx.compute->bindTexture(2, 0, ctx.viewport->viewZ));
+        CHI_VALIDATE(ctx.compute->bindTexture(3, 1, pack.normalRoughness));
+
+        std::vector<CommonResource> commonResources{ static_cast<uint32_t>(Encodable::eCount), CommonResource{} };
+        for (auto i = static_cast<uint32_t>(Encodable::eDiffuseRadianceHitDist);
+            i != static_cast<uint32_t>(Encodable::eCount); ++i)
+        {
+            if (ctx.viewport->instance->enabledInputResources[i])
+            {
+                auto resourceType = cast2ResourceType(static_cast<Encodable>(i));
+                auto bufferType = convert2BufferType(resourceType);
+
+                SL_CHECK(getTaggedResource(bufferType, commonResources[i], ctx.viewport->id));
+                ctx.cacheState(commonResources[i], commonResources[i].getState());
+
+                CHI_VALIDATE(ctx.compute->bindTexture(4 + i, 2 + i, commonResources[i]));
+            }
+        }
+        for (auto i = static_cast<uint32_t>(Encodable::eDiffuseRadianceHitDist);
+            i != static_cast<uint32_t>(Encodable::eCount); ++i)
+        {
+            CHI_VALIDATE(ctx.compute->bindRWTexture(13 + i, i, ctx.viewport->inputs[i]));
+        }
+        if (cb.enableCheckerboard)
+        {
+            w = w / 2.0f;
+        }
+        uint32_t grid[] = { ((uint32_t)w + 16 - 1) / 16, ((uint32_t)h + 16 - 1) / 16, 1 };
+        CHI_VALIDATE(ctx.compute->dispatch(grid[0], grid[1], grid[2]));
+        // transition back ????
+    }
+
+    return Result::eOk;
+}
+
+sl::Result get_resource_info(
+    sl::nrdsl::NRDContext& ctx,
+    nrd::ResourceDesc const& resource,
+    const sl::BaseStructure** inputs,
+    uint32_t numInputs,
+    sl::CommonResource& outResource)
+{
+    switch (resource.type)
+    {
+    case nrd::ResourceType::IN_MV:
+        SL_CHECK(getTaggedResource(kBufferTypeMotionVectors, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::IN_NORMAL_ROUGHNESS:
+        SL_CHECK(getTaggedResource(kBufferTypeNormalRoughness, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::IN_VIEWZ:
+        SL_CHECK(getTaggedResource(kBufferTypeDepth, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::IN_DIFF_RADIANCE_HITDIST:
+        SL_CHECK(getTaggedResource(kBufferTypeInDiffuseRadianceHitDist, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::IN_SPEC_RADIANCE_HITDIST:
+        SL_CHECK(getTaggedResource(kBufferTypeInSpecularRadianceHitDist, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::IN_DIFF_HITDIST:
+        SL_CHECK(getTaggedResource(kBufferTypeInDiffuseHitDist, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::IN_SPEC_HITDIST:
+        SL_CHECK(getTaggedResource(kBufferTypeInSpecularHitDist, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::IN_DIFF_DIRECTION_HITDIST:
+        SL_CHECK(getTaggedResource(kBufferTypeInDiffuseDirectionHitDist, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::IN_DIFF_SH0:
+        SL_CHECK(getTaggedResource(kBufferTypeInDiffuseSH0, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::IN_DIFF_SH1:
+        SL_CHECK(getTaggedResource(kBufferTypeInDiffuseSH1, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::IN_SPEC_SH0:
+        SL_CHECK(getTaggedResource(kBufferTypeInSpecularSH0, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::IN_SPEC_SH1:
+        SL_CHECK(getTaggedResource(kBufferTypeInSpecularSH1, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::IN_DIFF_CONFIDENCE:
+        SL_CHECK(getTaggedResource(kBufferTypeInDiffuseConfidence, outResource, ctx.viewport->id, true, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::IN_SPEC_CONFIDENCE:
+        SL_CHECK(getTaggedResource(kBufferTypeInSpecularConfidence, outResource, ctx.viewport->id, true, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::IN_DISOCCLUSION_THRESHOLD_MIX:
+        SL_CHECK(getTaggedResource(kBufferTypeInDisocclusionThresholdMix, outResource, ctx.viewport->id, true, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::IN_BASECOLOR_METALNESS:
+        SL_CHECK(getTaggedResource(kBufferTypeInBasecolorMetalness, outResource, ctx.viewport->id, true, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::IN_SHADOWDATA:
+        SL_CHECK(getTaggedResource(kBufferTypeInShadowData, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::IN_SHADOW_TRANSLUCENCY:
+        SL_CHECK(getTaggedResource(kBufferTypeInShadowTransluscency, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::IN_RADIANCE:
+        SL_CHECK(getTaggedResource(kBufferTypeInRadiance, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::IN_DELTA_PRIMARY_POS:
+        SL_CHECK(getTaggedResource(kBufferTypeInDeltaPrimaryPos, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::IN_DELTA_SECONDARY_POS:
+        SL_CHECK(getTaggedResource(kBufferTypeInDeltaSecondaryPos, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    }
+
+    switch (resource.type)
+    {
+    case nrd::ResourceType::OUT_DIFF_RADIANCE_HITDIST:
+        SL_CHECK(getTaggedResource(kBufferTypeOutDiffuseRadianceHitDist, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::OUT_SPEC_RADIANCE_HITDIST:
+        SL_CHECK(getTaggedResource(kBufferTypeOutSpecularRadianceHitDist, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::OUT_DIFF_SH0:
+        SL_CHECK(getTaggedResource(kBufferTypeOutDiffuseSH0, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::OUT_DIFF_SH1:
+        SL_CHECK(getTaggedResource(kBufferTypeOutDiffuseSH1, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::OUT_SPEC_SH0:
+        SL_CHECK(getTaggedResource(kBufferTypeOutSpecularSH0, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::OUT_SPEC_SH1:
+        SL_CHECK(getTaggedResource(kBufferTypeOutSpecularSH1, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::OUT_DIFF_HITDIST:
+        SL_CHECK(getTaggedResource(kBufferTypeOutDiffuseHitDist, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::OUT_SPEC_HITDIST:
+        SL_CHECK(getTaggedResource(kBufferTypeOutSpecularHitDist, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::OUT_DIFF_DIRECTION_HITDIST:
+        SL_CHECK(getTaggedResource(kBufferTypeOutDiffuseDirectionHitDist, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::OUT_SHADOW_TRANSLUCENCY:
+        SL_CHECK(getTaggedResource(kBufferTypeOutShadowTransluscency, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::OUT_RADIANCE:
+        SL_CHECK(getTaggedResource(kBufferTypeOutRadiance, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::OUT_REFLECTION_MV:
+        SL_CHECK(getTaggedResource(kBufferTypeOutReflectionMv, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::OUT_DELTA_MV:
+        SL_CHECK(getTaggedResource(kBufferTypeOutDeltaMv, outResource, ctx.viewport->id, false, inputs, numInputs)); return sl::Result::eOk;
+    case nrd::ResourceType::OUT_VALIDATION:
+        SL_CHECK(getTaggedResource(kBufferTypeOutValidation, outResource, ctx.viewport->id, true, inputs, numInputs)); return sl::Result::eOk;
+    }
+
+    if (resource.type == nrd::ResourceType::TRANSIENT_POOL)
+    {
+        outResource = ctx.viewport->instance->transientTextures[resource.indexInPool];
+        return sl::Result::eOk;
+    }
+
+    if (resource.type == nrd::ResourceType::PERMANENT_POOL)
+    {
+        outResource = ctx.viewport->instance->permanentTextures[resource.indexInPool];
+        return sl::Result::eOk;
+    }
+
+    return sl::Result::eErrorInvalidParameter;
+}
+
+Result nrdDispatch(
+    sl::nrdsl::NRDContext& ctx, 
+    chi::CommandList cmdList,  
+    const nrd::DispatchDesc& dispatch, 
+    const sl::BaseStructure** inputs, uint32_t numInputs,
+    uint32_t dispatchDescNum)
+{
+    const nrd::InstanceDesc& denoiserDesc = ctx.getInstanceDesc(*ctx.viewport->instance->denoiser);
+    const nrd::PipelineDesc& pipeline = denoiserDesc.pipelines[dispatch.pipelineIndex];
+
+    extra::ScopedTasks reverseTransitions;
+    std::vector<chi::ResourceTransition> transitions;
+    std::vector<CommonResource> commonResources;
+    commonResources.reserve(32);
+
+    CHI_VALIDATE(ctx.compute->bindKernel(ctx.viewport->instance->shaders[dispatch.pipelineIndex]));
+
+    for (uint32_t samplerID = 0; samplerID < denoiserDesc.samplersNum; ++samplerID)
+    {
+        switch (denoiserDesc.samplers[samplerID])
+        {
+        case nrd::Sampler::NEAREST_CLAMP:
+            CHI_VALIDATE(ctx.compute->bindSampler(samplerID, denoiserDesc.samplersBaseRegisterIndex + samplerID, chi::Sampler::eSamplerPointClamp)); break;
+        case nrd::Sampler::NEAREST_MIRRORED_REPEAT:
+            CHI_VALIDATE(ctx.compute->bindSampler(samplerID, denoiserDesc.samplersBaseRegisterIndex + samplerID, chi::Sampler::eSamplerPointMirror)); break;
+        case nrd::Sampler::LINEAR_CLAMP:
+            CHI_VALIDATE(ctx.compute->bindSampler(samplerID, denoiserDesc.samplersBaseRegisterIndex + samplerID, chi::Sampler::eSamplerLinearClamp)); break;
+        case nrd::Sampler::LINEAR_MIRRORED_REPEAT:
+            CHI_VALIDATE(ctx.compute->bindSampler(samplerID, denoiserDesc.samplersBaseRegisterIndex + samplerID, chi::Sampler::eSamplerLinearMirror)); break;
+        default: SL_LOG_ERROR("Unknown sampler detected");
+        }
+    }
+
+    uint32_t slot = 0, descriptorIdx = 0;
+    for (uint32_t descriptorRangeID = 0; descriptorRangeID < pipeline.resourceRangesNum; ++descriptorRangeID)
+    {
+        const nrd::ResourceRangeDesc& descriptorRange = pipeline.resourceRanges[descriptorRangeID];
+
+        for (uint32_t descriptorID = 0; descriptorID < descriptorRange.descriptorsNum; ++descriptorID)
+        {
+            if (slot >= dispatch.resourcesNum)
+            {
+                SL_LOG_ERROR("Mismatch slot and resourceNum");
+            }
+
+            const nrd::ResourceDesc& resourceDesc = dispatch.resources[slot++];
+            if (resourceDesc.stateNeeded != descriptorRange.descriptorType)
+            {
+                SL_LOG_ERROR("Mismatch stateNeeded and descriptor type");
+            }
+
+            commonResources.push_back({});
+            sl::CommonResource& resource = commonResources.back();
+            if (get_resource_info(ctx, resourceDesc, inputs, numInputs, resource) != Result::eOk)
+            {
+                SL_LOG_ERROR("Unable to find texture for nrd::ResourceType %u", resourceDesc.type);
+            }
+
+            auto transition = [&ctx](nrd::ResourceDesc const& resourceDesc) -> chi::ResourceState {
+                auto from = ctx.viewport->instance->getResourceState(resourceDesc.type, resourceDesc.indexInPool);
+                auto to = resourceDesc.stateNeeded == nrd::DescriptorType::TEXTURE ? chi::ResourceState::eTextureRead : chi::ResourceState::eStorageRW;
+
+                ctx.viewport->instance->setResourceState(to, resourceDesc.type, resourceDesc.indexInPool);
+                return from;
+            };
+
+            chi::ResourceState resourceState = transition(resourceDesc);
+            uint32_t bindingSlot = descriptorRange.baseRegisterIndex + descriptorID;
+            if (descriptorRange.descriptorType == nrd::DescriptorType::TEXTURE)
+            {
+                // TODO: Fix binding pos for VK
+                CHI_VALIDATE(ctx.compute->bindTexture(descriptorIdx++, bindingSlot, resource, resourceDesc.mipOffset, resourceDesc.mipNum));
+                transitions.push_back(chi::ResourceTransition(resource, chi::ResourceState::eTextureRead, resourceState));
+            }
+            else
+            {
+                // TODO: Fix binding pos for VK
+                CHI_VALIDATE(ctx.compute->bindRWTexture(descriptorIdx++, bindingSlot, resource, resourceDesc.mipOffset));
+                transitions.push_back(chi::ResourceTransition(resource, chi::ResourceState::eStorageRW, resourceState));
+            }
+        }
+    }
+
+    CHI_VALIDATE(ctx.compute->bindConsts(descriptorIdx++, denoiserDesc.constantBufferRegisterIndex, (void*)dispatch.constantBufferData, denoiserDesc.constantBufferMaxDataSize, 3 * dispatchDescNum));
+    CHI_VALIDATE(ctx.compute->transitionResources(cmdList, transitions.data(), (uint32_t)transitions.size(), nullptr));
+    CHI_VALIDATE(ctx.compute->dispatch(dispatch.gridWidth, dispatch.gridHeight, 1));
+
+    return sl::Result::eOk;
+}
+
 Result nrdEndEvent(chi::CommandList cmdList, const common::EventData& data, const sl::BaseStructure** inputs, uint32_t numInputs)
 {
     auto& ctx = (*nrdsl::getContext());
@@ -628,12 +1376,13 @@ Result nrdEndEvent(chi::CommandList cmdList, const common::EventData& data, cons
     if (!ctx.viewport || !ctx.viewport->instance) return Result::eErrorMissingInputParameter;
 
     auto parameters = api::getContext()->parameters;
+
+    ctx.viewport->instance->resetStateVectors();
     
     {
         CHI_VALIDATE(ctx.compute->bindSharedState(cmdList));
 #if 1
         CommonResource mvec{}, depth{}, aoIn{}, diffuseIn{}, specularIn{}, normalRoughness{};
-        CommonResource diffuseOut{}, specularOut{}, aoOut{};
 
         SL_CHECK(getTaggedResource(kBufferTypeDepth, depth, ctx.viewport->id, false, inputs, numInputs));
         SL_CHECK(getTaggedResource(kBufferTypeMotionVectors, mvec, ctx.viewport->id, false, inputs, numInputs));
@@ -643,328 +1392,68 @@ Result nrdEndEvent(chi::CommandList cmdList, const common::EventData& data, cons
         ctx.cacheState(mvec, mvec.getState());
         ctx.cacheState(normalRoughness, normalRoughness.getState());
 
-        if (ctx.viewport->instance->enableAO)
-        {
-            SL_CHECK(getTaggedResource(kBufferTypeAmbientOcclusionNoisy, aoIn, ctx.viewport->id, false, inputs, numInputs));
-            SL_CHECK(getTaggedResource(kBufferTypeAmbientOcclusionDenoised, aoOut, ctx.viewport->id, false, inputs, numInputs));
-            ctx.cacheState(aoIn, aoIn.getState());
-            ctx.cacheState(aoOut, aoOut.getState());
-        }
-        if (ctx.viewport->instance->enableDiffuse)
-        {
-            SL_CHECK(getTaggedResource(kBufferTypeDiffuseHitNoisy, diffuseIn, ctx.viewport->id, false, inputs, numInputs));
-            SL_CHECK(getTaggedResource(kBufferTypeDiffuseHitDenoised, diffuseOut, ctx.viewport->id, false, inputs, numInputs));
-            ctx.cacheState(diffuseIn, diffuseIn.getState());
-            ctx.cacheState(diffuseOut, diffuseOut.getState());
-        }
-        if (ctx.viewport->instance->enableSpecular)
-        {
-            SL_CHECK(getTaggedResource(kBufferTypeSpecularHitNoisy, specularIn, ctx.viewport->id, false, inputs, numInputs));
-            SL_CHECK(getTaggedResource(kBufferTypeSpecularHitDenoised, specularOut, ctx.viewport->id, false, inputs, numInputs));
-            ctx.cacheState(specularIn, specularIn.getState());
-            ctx.cacheState(specularOut, specularOut.getState());
-        }
-
-        // Prepare data
-        {
-            struct PrepareDataCB
-            {
-                float4x4 clipToPrevClip;
-                float4x4 invProj;
-                float4x4 screenToWorld;
-                float4x4 screenToWorldPrev;
-                float4 sizeAndInvSize;
-                float4 hitDistParams;
-                uint32_t frameId;
-                uint32_t enableAO;
-                uint32_t enableSpecular;
-                uint32_t enableDiffuse;
-                uint32_t enableWorldMotion;
-                uint32_t enableCheckerboard;
-                uint32_t cameraMotionIncluded;
-                uint32_t relax;
-            };
-            PrepareDataCB cb;
-
-            float w = ctx.viewport->width * ctx.nrdConsts->common.resolutionScale[0];
-            float h = ctx.viewport->height * ctx.nrdConsts->common.resolutionScale[1];
-
-
-            cb.clipToPrevClip = (ctx.commonConsts->clipToPrevClip);
-            cb.invProj = (ctx.commonConsts->clipToCameraView);
-            cb.screenToWorld = (ctx.nrdConsts->clipToWorld);
-            cb.screenToWorldPrev = (ctx.nrdConsts->clipToWorldPrev);
-            cb.sizeAndInvSize = { w, h, 1.0f / w, 1.0f / h };
-            cb.hitDistParams = { ctx.nrdConsts->reblurSettings.hitDistanceParameters.A, ctx.nrdConsts->reblurSettings.hitDistanceParameters.B,ctx.nrdConsts->reblurSettings.hitDistanceParameters.C, ctx.nrdConsts->reblurSettings.hitDistanceParameters.D };
-            cb.frameId = ctx.viewport->frameIndex;
-            cb.enableAO = aoIn;
-            cb.enableSpecular = specularIn;
-            cb.enableDiffuse = diffuseIn;
-            cb.enableWorldMotion = ctx.commonConsts->motionVectors3D;
-            cb.enableCheckerboard = ctx.nrdConsts->reblurSettings.checkerboardMode != NRDCheckerboardMode::OFF;
-            cb.cameraMotionIncluded = ctx.commonConsts->cameraMotionIncluded;
-            cb.relax = ctx.viewport->instance->relax;
-
-            // We can override to allow data pass through for testing
-            json& config = *(json*)api::getContext()->extConfig;
-            if (config.contains("relax"))
-            {
-                // Relax option is just passing through data as it is
-                config.at("relax").get_to(cb.relax);
-            }
-
-            // Prepare
-            {
-                extra::ScopedTasks transitions;
-                chi::ResourceTransition trans[] =
-                {
-                    {mvec, chi::ResourceState::eTextureRead, ctx.cachedStates[mvec]},
-                    {depth, chi::ResourceState::eTextureRead, ctx.cachedStates[depth]},
-                    {ctx.viewport->mvec, chi::ResourceState::eStorageRW, chi::ResourceState::eTextureRead},
-                    {ctx.viewport->viewZ, chi::ResourceState::eStorageRW, chi::ResourceState::eTextureRead},
-                };
-                ctx.compute->transitionResources(cmdList, trans, (uint32_t)countof(trans), &transitions);
-
-                CHI_VALIDATE(ctx.compute->bindKernel(ctx.prepareDataKernel));
-                CHI_VALIDATE(ctx.compute->bindSampler(1, 0, chi::eSamplerLinearClamp));
-                CHI_VALIDATE(ctx.compute->bindTexture(2, 0, depth));
-                CHI_VALIDATE(ctx.compute->bindTexture(3, 1, mvec));
-                CHI_VALIDATE(ctx.compute->bindRWTexture(4, 0, ctx.viewport->mvec));
-                CHI_VALIDATE(ctx.compute->bindRWTexture(5, 1, ctx.viewport->viewZ));
-                CHI_VALIDATE(ctx.compute->bindConsts(0, 0, &cb, sizeof(PrepareDataCB), 3 * (uint32_t)ctx.viewport->instances.size() * (uint32_t)ctx.viewports.size()));
-                uint32_t grid[] = { ((uint32_t)w + 16 - 1) / 16, ((uint32_t)h + 16 - 1) / 16, 1 };
-                CHI_VALIDATE(ctx.compute->dispatch(grid[0], grid[1], grid[2]));
-            }
-
-            // Pack
-            {
-                extra::ScopedTasks transitions;
-                chi::ResourceTransition trans[] =
-                {
-                    {aoIn, chi::ResourceState::eTextureRead, ctx.cachedStates[aoIn]},
-                    {diffuseIn, chi::ResourceState::eTextureRead, ctx.cachedStates[diffuseIn]},
-                    {specularIn, chi::ResourceState::eTextureRead, ctx.cachedStates[specularIn]},
-                    {normalRoughness, chi::ResourceState::eTextureRead, ctx.cachedStates[normalRoughness]},
-                    {ctx.viewport->packedSpec, chi::ResourceState::eStorageRW, chi::ResourceState::eTextureRead},
-                    {ctx.viewport->packedDiff, chi::ResourceState::eStorageRW, chi::ResourceState::eTextureRead},
-                    {ctx.viewport->packedAO, chi::ResourceState::eStorageRW, chi::ResourceState::eTextureRead}
-                };
-                ctx.compute->transitionResources(cmdList, trans, (uint32_t)countof(trans), &transitions);
-
-                CHI_VALIDATE(ctx.compute->bindKernel(ctx.packDataKernel));
-                CHI_VALIDATE(ctx.compute->bindSampler(1, 0, chi::eSamplerLinearClamp));
-                CHI_VALIDATE(ctx.compute->bindTexture(2, 0, ctx.viewport->viewZ));
-                CHI_VALIDATE(ctx.compute->bindTexture(3, 1, normalRoughness));
-                CHI_VALIDATE(ctx.compute->bindTexture(4, 2, diffuseIn));
-                CHI_VALIDATE(ctx.compute->bindTexture(5, 3, specularIn));
-                CHI_VALIDATE(ctx.compute->bindTexture(6, 4, aoIn));
-                CHI_VALIDATE(ctx.compute->bindRWTexture(7, 0, ctx.viewport->packedDiff));
-                CHI_VALIDATE(ctx.compute->bindRWTexture(8, 1, ctx.viewport->packedSpec));
-                CHI_VALIDATE(ctx.compute->bindRWTexture(9, 2, ctx.viewport->packedAO));
-                CHI_VALIDATE(ctx.compute->bindConsts(0, 0, &cb, sizeof(PrepareDataCB), 3 * (uint32_t)ctx.viewport->instances.size() * (uint32_t)ctx.viewports.size()));
-                if (cb.enableCheckerboard)
-                {
-                    w = w / 2.0f;
-                }
-                uint32_t grid[] = { ((uint32_t)w + 16 - 1) / 16, ((uint32_t)h + 16 - 1) / 16, 1 };
-                CHI_VALIDATE(ctx.compute->dispatch(grid[0], grid[1], grid[2]));
-            }
-        }
-
         //SL_LOG_HINT("-----------------------------------------------------------------------------------------------------------------------------------------");
+        // prepare_data();
 
         nrd::CommonSettings commonSettings{};
-        auto tmp = transpose(ctx.commonConsts->cameraViewToClip);
-        memcpy(commonSettings.viewToClipMatrix, &tmp, sizeof(float4x4));
-        memcpy(commonSettings.viewToClipMatrixPrev, ctx.viewport->instance->prevCommonSettings.viewToClipMatrix, sizeof(float4x4));
-        tmp = transpose(ctx.nrdConsts->common.worldToViewMatrix);
-        memcpy(commonSettings.worldToViewMatrix, &tmp, sizeof(float4x4));
-        memcpy(commonSettings.worldToViewMatrixPrev, ctx.viewport->instance->prevCommonSettings.worldToViewMatrix, sizeof(float4x4));
-        memcpy(commonSettings.cameraJitter, &ctx.commonConsts->jitterOffset, sizeof(float2));
+        memcpy(&commonSettings, &ctx.nrdConsts->common, sizeof(nrd::CommonSettings));
 
-        memcpy(commonSettings.motionVectorScale, &ctx.nrdConsts->common.motionVectorScale, sizeof(float2));
-        memcpy(commonSettings.resolutionScale, &ctx.nrdConsts->common.resolutionScale, sizeof(float2));
-        commonSettings.timeDeltaBetweenFrames = ctx.nrdConsts->common.timeDeltaBetweenFrames;
-        commonSettings.denoisingRange = ctx.nrdConsts->common.denoisingRange;
-        commonSettings.disocclusionThreshold = ctx.nrdConsts->common.disocclusionThreshold;
-        commonSettings.splitScreen = ctx.nrdConsts->common.splitScreen;
-        commonSettings.inputSubrectOrigin[0] = depth.getExtent().left;
-        commonSettings.inputSubrectOrigin[1] = depth.getExtent().top;
-        commonSettings.frameIndex = ctx.viewport->frameIndex;
-        commonSettings.accumulationMode = (nrd::AccumulationMode)ctx.nrdConsts->common.accumulationMode;
-        commonSettings.isMotionVectorInWorldSpace = ctx.commonConsts->motionVectors3D == Boolean::eTrue;
-        commonSettings.isHistoryConfidenceInputsAvailable = ctx.nrdConsts->common.isHistoryConfidenceInputsAvailable;
-
+        ctx.setCommonSettings(*ctx.viewport->instance->denoiser, commonSettings);
         ctx.viewport->instance->prevCommonSettings = commonSettings;
 
-        for (uint32_t i = 0; i < ctx.viewport->instance->methodCount; i++)
+        std::vector<nrd::Identifier> identifiers;
+        for (uint32_t i = 0; i < ctx.viewport->instance->denoiserCount; i++)
         {
-            if (ctx.viewport->instance->methodDescs[i].method == nrd::Method::REBLUR_DIFFUSE_SPECULAR)
+            identifiers.push_back(ctx.viewport->instance->denoiserDescs[i].identifier);
+            switch (ctx.viewport->instance->denoiserDescs[i].denoiser)
             {
-                ctx.setMethodSettings(*ctx.viewport->instance->denoiser, ctx.viewport->instance->methodDescs[i].method, &ctx.nrdConsts->reblurSettings);
-            }
-            else if (ctx.viewport->instance->methodDescs[i].method == nrd::Method::REBLUR_DIFFUSE ||
-                ctx.viewport->instance->methodDescs[i].method == nrd::Method::REBLUR_DIFFUSE_OCCLUSION)
-            {
-                ctx.setMethodSettings(*ctx.viewport->instance->denoiser, ctx.viewport->instance->methodDescs[i].method, &ctx.nrdConsts->reblurSettings);
-            }
-            else if (ctx.viewport->instance->methodDescs[i].method == nrd::Method::REBLUR_SPECULAR)
-            {
-                ctx.setMethodSettings(*ctx.viewport->instance->denoiser, ctx.viewport->instance->methodDescs[i].method, &ctx.nrdConsts->reblurSettings);
-            }
-            else if (ctx.viewport->instance->methodDescs[i].method == nrd::Method::RELAX_DIFFUSE_SPECULAR)
-            {
-                ctx.setMethodSettings(*ctx.viewport->instance->denoiser, ctx.viewport->instance->methodDescs[i].method, &ctx.nrdConsts->relaxDiffuseSpecular);
-            }
-            else if (ctx.viewport->instance->methodDescs[i].method == nrd::Method::RELAX_DIFFUSE)
-            {
-                ctx.setMethodSettings(*ctx.viewport->instance->denoiser, ctx.viewport->instance->methodDescs[i].method, &ctx.nrdConsts->relaxDiffuse);
-            }
-            else if (ctx.viewport->instance->methodDescs[i].method == nrd::Method::RELAX_SPECULAR)
-            {
-                ctx.setMethodSettings(*ctx.viewport->instance->denoiser, ctx.viewport->instance->methodDescs[i].method, &ctx.nrdConsts->relaxSpecular);
-            }
-            else
-            {
-                ctx.setMethodSettings(*ctx.viewport->instance->denoiser, ctx.viewport->instance->methodDescs[i].method, &ctx.nrdConsts->sigmaShadow);
+            case nrd::Denoiser::REBLUR_DIFFUSE:
+            case nrd::Denoiser::REBLUR_DIFFUSE_OCCLUSION:
+            case nrd::Denoiser::REBLUR_DIFFUSE_SH:
+            case nrd::Denoiser::REBLUR_SPECULAR:
+            case nrd::Denoiser::REBLUR_SPECULAR_OCCLUSION:
+            case nrd::Denoiser::REBLUR_SPECULAR_SH:
+            case nrd::Denoiser::REBLUR_DIFFUSE_SPECULAR:
+            case nrd::Denoiser::REBLUR_DIFFUSE_SPECULAR_OCCLUSION:
+            case nrd::Denoiser::REBLUR_DIFFUSE_SPECULAR_SH:
+            case nrd::Denoiser::REBLUR_DIFFUSE_DIRECTIONAL_OCCLUSION:
+                ctx.setDenoiserSettings(*ctx.viewport->instance->denoiser, ctx.viewport->instance->denoiserDescs[i].identifier, &ctx.nrdConsts->reblurSettings); break;
+            case nrd::Denoiser::RELAX_DIFFUSE_SPECULAR:
+                ctx.setDenoiserSettings(*ctx.viewport->instance->denoiser, ctx.viewport->instance->denoiserDescs[i].identifier, &ctx.nrdConsts->relaxDiffuseSpecular); break;
+            case nrd::Denoiser::RELAX_DIFFUSE:
+                ctx.setDenoiserSettings(*ctx.viewport->instance->denoiser, ctx.viewport->instance->denoiserDescs[i].identifier, &ctx.nrdConsts->relaxDiffuse); break;
+            case nrd::Denoiser::RELAX_SPECULAR:
+                ctx.setDenoiserSettings(*ctx.viewport->instance->denoiser, ctx.viewport->instance->denoiserDescs[i].identifier, &ctx.nrdConsts->relaxSpecular); break;
+            case nrd::Denoiser::SIGMA_SHADOW:
+            case nrd::Denoiser::SIGMA_SHADOW_TRANSLUCENCY:
+                ctx.setDenoiserSettings(*ctx.viewport->instance->denoiser, ctx.viewport->instance->denoiserDescs[i].identifier, &ctx.nrdConsts->sigmaShadow); break;
+            case nrd::Denoiser::REFERENCE:
+            case nrd::Denoiser::SPECULAR_REFLECTION_MV:
+            case nrd::Denoiser::SPECULAR_DELTA_MV:
+                break;
+            default:
+                SL_LOG_ERROR("Could not find appropriate settings for chosen denoisers.");
             }
         }
 
         const nrd::DispatchDesc* dispatchDescs = nullptr;
         uint32_t dispatchDescNum = 0;
-        NRD_CHECK1(ctx.getComputeDispatches(*ctx.viewport->instance->denoiser, commonSettings, dispatchDescs, dispatchDescNum));
+        NRD_CHECK1(ctx.getComputeDispatches(*ctx.viewport->instance->denoiser, identifiers.data(), static_cast<uint32_t>(identifiers.size()), dispatchDescs, dispatchDescNum));
 
+#if SL_ENABLE_TIMING
         CHI_VALIDATE(ctx.compute->beginPerfSection(cmdList, "sl.nrd"));
+#endif
 
-        const nrd::DenoiserDesc& denoiserDesc = ctx.getDenoiserDesc(*ctx.viewport->instance->denoiser);
         for (uint32_t dispatchID = 0; dispatchID < dispatchDescNum; ++dispatchID)
         {
             const nrd::DispatchDesc& dispatch = dispatchDescs[dispatchID];
-            const nrd::PipelineDesc& pipeline = denoiserDesc.pipelines[dispatch.pipelineIndex];
 
-            extra::ScopedTasks reverseTransitions;
-            std::vector<chi::ResourceTransition> transitions;
-            CHI_VALIDATE(ctx.compute->bindKernel(ctx.viewport->instance->shaders[dispatch.pipelineIndex]));
-
-            for (uint32_t samplerID = 0; samplerID < denoiserDesc.staticSamplerNum; ++samplerID)
-            {
-                const nrd::StaticSamplerDesc& samplerDesc = denoiserDesc.staticSamplers[samplerID];
-                switch (denoiserDesc.staticSamplers[samplerID].sampler)
-                {
-                case nrd::Sampler::NEAREST_CLAMP:
-                    CHI_VALIDATE(ctx.compute->bindSampler(samplerID, samplerDesc.registerIndex, chi::Sampler::eSamplerPointClamp)); break;
-                case nrd::Sampler::NEAREST_MIRRORED_REPEAT:
-                    CHI_VALIDATE(ctx.compute->bindSampler(samplerID, samplerDesc.registerIndex, chi::Sampler::eSamplerPointMirror)); break;
-                case nrd::Sampler::LINEAR_CLAMP:
-                    CHI_VALIDATE(ctx.compute->bindSampler(samplerID, samplerDesc.registerIndex, chi::Sampler::eSamplerLinearClamp)); break;
-                case nrd::Sampler::LINEAR_MIRRORED_REPEAT:
-                    CHI_VALIDATE(ctx.compute->bindSampler(samplerID, samplerDesc.registerIndex, chi::Sampler::eSamplerLinearMirror)); break;
-                default: SL_LOG_ERROR( "Unknown sampler detected");
-                }
-            }
-
-            uint32_t slot = 0;
-            for (uint32_t descriptorRangeID = 0; descriptorRangeID < pipeline.descriptorRangeNum; ++descriptorRangeID)
-            {
-                const nrd::DescriptorRangeDesc& descriptorRange = pipeline.descriptorRanges[descriptorRangeID];
-
-                for (uint32_t descriptorID = 0; descriptorID < descriptorRange.descriptorNum; ++descriptorID)
-                {
-                    if (slot >= dispatch.resourceNum)
-                    {
-                        SL_LOG_ERROR( "Mismatch slot and resourceNum");
-                    }
-                    chi::Resource texture = {};
-                    auto state = chi::ResourceState::eUnknown;
-                    const nrd::Resource& resource = dispatch.resources[slot++];
-                    if (resource.stateNeeded != descriptorRange.descriptorType)
-                    {
-                        SL_LOG_ERROR( "Mismatch stateNeeded and descriptor type");
-                    }
-                    switch (resource.type)
-                    {
-                    case nrd::ResourceType::IN_MV:
-                        texture = ctx.viewport->mvec;
-                        state = chi::ResourceState::eTextureRead;
-                        break;
-                    case nrd::ResourceType::IN_NORMAL_ROUGHNESS:
-                        texture = normalRoughness;
-                        state = ctx.cachedStates[texture];
-                        break;
-                    case nrd::ResourceType::IN_VIEWZ:
-                        texture = ctx.viewport->viewZ;
-                        state = chi::ResourceState::eTextureRead;
-                        break;
-                    case nrd::ResourceType::IN_DIFF_HITDIST:
-                        texture = ctx.viewport->packedAO;
-                        state = chi::ResourceState::eTextureRead;
-                        break;
-                    case nrd::ResourceType::IN_DIFF_RADIANCE_HITDIST:
-                        texture = ctx.viewport->packedDiff;
-                        state = chi::ResourceState::eTextureRead;
-                        break;
-                    case nrd::ResourceType::IN_SPEC_RADIANCE_HITDIST:
-                        texture = ctx.viewport->packedSpec;
-                        state = chi::ResourceState::eTextureRead;
-                        break;
-                    case nrd::ResourceType::IN_SHADOWDATA:
-                        /**/
-                        break;
-                    case nrd::ResourceType::IN_SHADOW_TRANSLUCENCY:
-                        /**/
-                        break;
-                    case nrd::ResourceType::OUT_DIFF_HITDIST:
-                        texture = aoOut;
-                        state = ctx.cachedStates[texture];
-                        break;
-                    case nrd::ResourceType::OUT_DIFF_RADIANCE_HITDIST:
-                        texture = diffuseOut;
-                        state = ctx.cachedStates[texture];
-                        break;
-                    case nrd::ResourceType::OUT_SPEC_RADIANCE_HITDIST:
-                        texture = specularOut;
-                        state = ctx.cachedStates[texture];
-                        break;
-                    case nrd::ResourceType::OUT_SHADOW_TRANSLUCENCY:
-                        /**/
-                        break;
-                    case nrd::ResourceType::TRANSIENT_POOL:
-                        texture = ctx.viewport->instance->transientTextures[resource.indexInPool];
-                        state = chi::ResourceState::eTextureRead;
-                        break;
-                    case nrd::ResourceType::PERMANENT_POOL:
-                        texture = ctx.viewport->instance->permanentTextures[resource.indexInPool];
-                        state = chi::ResourceState::eTextureRead;
-                        break;
-                    };
-                    if (!texture)
-                    {
-                        SL_LOG_ERROR( "Unable to find texture for nrd::ResourceType %u", resource.type);
-                    }
-                    uint32_t bindingSlot = descriptorRange.baseRegisterIndex + descriptorID;
-                    if (descriptorRange.descriptorType == nrd::DescriptorType::TEXTURE)
-                    {
-                        // TODO: Fix binding pos for VK
-                        CHI_VALIDATE(ctx.compute->bindTexture(descriptorRange.descriptorNum, bindingSlot, texture, resource.mipOffset, resource.mipNum));
-                        transitions.push_back(chi::ResourceTransition(texture, chi::ResourceState::eTextureRead, state));
-                    }
-                    else
-                    {
-                        // TODO: Fix binding pos for VK
-                        CHI_VALIDATE(ctx.compute->bindRWTexture(descriptorRange.descriptorNum, bindingSlot, texture, resource.mipOffset));
-                        transitions.push_back(chi::ResourceTransition(texture, chi::ResourceState::eStorageRW, state));
-                    }
-                }
-            }
-
-            // TODO: Fix binding pos for VK
-            CHI_VALIDATE(ctx.compute->bindConsts(0, denoiserDesc.constantBufferDesc.registerIndex, (void*)dispatch.constantBufferData, denoiserDesc.constantBufferDesc.maxDataSize, 3 * dispatchDescNum));
-            CHI_VALIDATE(ctx.compute->transitionResources(cmdList, transitions.data(), (uint32_t)transitions.size(), &reverseTransitions));
-            CHI_VALIDATE(ctx.compute->dispatch(dispatch.gridWidth, dispatch.gridHeight, 1));
-            //SL_LOG_HINT("Dispatch %s", dispatch.name);
+            nrdDispatch(ctx, cmdList, dispatch, inputs, numInputs, dispatchDescNum);
         }
         float ms = 0;
+#if SL_ENABLE_TIMING
         CHI_VALIDATE(ctx.compute->endPerfSection(cmdList, "sl.nrd", ms));
+#endif
 
         parameters->set(sl::param::nrd::kMVecBuffer, ctx.viewport->mvec);
         parameters->set(sl::param::nrd::kViewZBuffer, ctx.viewport->viewZ);
@@ -1102,12 +1591,13 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
         return false;
     }
 
+    ctx.createInstance = (PFunCreateInstance*)GetProcAddress(ctx.lib, "CreateInstance");
+    ctx.destroyInstance = (PFunDestroyInstance*)GetProcAddress(ctx.lib, "DestroyInstance");
     ctx.getLibraryDesc = (PFunGetLibraryDesc*)GetProcAddress(ctx.lib, "GetLibraryDesc");
-    ctx.createDenoiser = (PFunCreateDenoiser*)GetProcAddress(ctx.lib, "CreateDenoiser");
-    ctx.getDenoiserDesc = (PFunGetDenoiserDesc*)GetProcAddress(ctx.lib, "GetDenoiserDesc");
-    ctx.setMethodSettings = (PFunSetMethodSettings*)GetProcAddress(ctx.lib, "SetMethodSettings");
+    ctx.getInstanceDesc = (PFunGetInstanceDesc*)GetProcAddress(ctx.lib, "GetInstanceDesc");
+    ctx.setCommonSettings = (PFunSetCommonSettings*)GetProcAddress(ctx.lib, "SetCommonSettings");
+    ctx.setDenoiserSettings = (PFunSetDenoiserSettings*)GetProcAddress(ctx.lib, "SetDenoiserSettings");
     ctx.getComputeDispatches = (PFunGetComputeDispatches*)GetProcAddress(ctx.lib, "GetComputeDispatches");
-    ctx.destroyDenoiser = (PFunDestroyDenoiser*)GetProcAddress(ctx.lib, "DestroyDenoiser");
 
     if (!ctx)
     {
@@ -1147,9 +1637,11 @@ SL_EXPORT void *slGetPluginFunction(const char *functionName)
     SL_EXPORT_FUNCTION(slOnPluginLoad);
     SL_EXPORT_FUNCTION(slOnPluginShutdown);
     SL_EXPORT_FUNCTION(slOnPluginStartup);
-    SL_EXPORT_FUNCTION(slSetConstants);
+    SL_EXPORT_FUNCTION(slSetData);
     SL_EXPORT_FUNCTION(slAllocateResources);
     SL_EXPORT_FUNCTION(slFreeResources);
+
+    SL_EXPORT_FUNCTION(slNRDSetConstants);
 
     return nullptr;
 }

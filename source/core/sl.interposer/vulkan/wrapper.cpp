@@ -86,6 +86,12 @@ sl::Result processVulkanInterface(const sl::VulkanInfo* extension)
         s_vk.nativeOpticalFlowHWSupport = extension->useNativeOpticalFlowMode;
     }
 
+    s_vk.mapVulkanInstanceAPI(s_vk.instance);
+    s_idt = s_vk.dispatchInstanceMap[s_vk.instance];
+
+    s_vk.mapVulkanDeviceAPI(s_vk.device);
+    s_ddt = s_vk.dispatchDeviceMap[s_vk.device];
+
     // Allow all plugins to access this information
     sl::param::getInterface()->set(sl::param::global::kVulkanTable, &s_vk);
 
@@ -94,11 +100,12 @@ sl::Result processVulkanInterface(const sl::VulkanInfo* extension)
 
 extern "C"
 {
+    // -- Vulkan 1.0 ---
 
     PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice device, const char* pName);
     PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance instance, const char* pName);
 
-    VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkInstance* pInstance)
+    VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkInstance* pInstance)
     {
         if (!loadVulkanLibrary())
         {
@@ -209,7 +216,7 @@ extern "C"
         return VK_SUCCESS;
     }
 
-    VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceExtensionProperties(const char* pLayerName, uint32_t* pPropertyCount, VkExtensionProperties* pProperties)
+    VkResult VKAPI_CALL vkEnumerateInstanceExtensionProperties(const char* pLayerName, uint32_t* pPropertyCount, VkExtensionProperties* pProperties)
     {
         auto lib = loadVulkanLibrary();
         if (!lib)
@@ -221,7 +228,7 @@ extern "C"
         return trampoline(pLayerName, pPropertyCount, pProperties);
     }
 
-    VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceLayerProperties(uint32_t* pPropertyCount, VkLayerProperties* pProperties)
+    VkResult VKAPI_CALL vkEnumerateInstanceLayerProperties(uint32_t* pPropertyCount, VkLayerProperties* pProperties)
     {
         auto lib = loadVulkanLibrary();
         if (!lib)
@@ -233,7 +240,7 @@ extern "C"
         return trampoline(pPropertyCount, pProperties);
     }
 
-    VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkDevice* pDevice)
+    VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkDevice* pDevice)
     {
         auto lib = loadVulkanLibrary();
         if (!lib)
@@ -605,21 +612,6 @@ extern "C"
         s_idt.GetPhysicalDeviceProperties(PhysicalDevice, Properties);
     }
 
-    void VKAPI_CALL vkGetPhysicalDeviceMemoryProperties2(VkPhysicalDevice PhysicalDevice, VkPhysicalDeviceMemoryProperties2* pMemoryProperties)
-    {
-        s_idt.GetPhysicalDeviceMemoryProperties2(PhysicalDevice, pMemoryProperties);
-    }
-
-    void VKAPI_CALL vkGetPhysicalDeviceProperties2KHR(VkPhysicalDevice PhysicalDevice, VkPhysicalDeviceProperties2KHR* Properties)
-    {
-        s_idt.GetPhysicalDeviceProperties2KHR(PhysicalDevice, Properties);
-    }
-
-    void VKAPI_CALL vkGetPhysicalDeviceFeatures2KHR(VkPhysicalDevice PhysicalDevice, VkPhysicalDeviceFeatures2KHR* Features)
-    {
-        s_idt.GetPhysicalDeviceFeatures2KHR(PhysicalDevice, Features);
-    }
-
     void VKAPI_CALL vkGetPhysicalDeviceQueueFamilyProperties(VkPhysicalDevice PhysicalDevice, uint32_t* QueueFamilyPropertyCount, VkQueueFamilyProperties* QueueFamilyProperties)
     {
         s_idt.GetPhysicalDeviceQueueFamilyProperties(PhysicalDevice, QueueFamilyPropertyCount, QueueFamilyProperties);
@@ -629,7 +621,6 @@ extern "C"
     {
         s_idt.GetPhysicalDeviceMemoryProperties(PhysicalDevice, MemoryProperties);
     }
-
 
     void VKAPI_CALL vkDestroyDevice(VkDevice Device, const VkAllocationCallbacks* Allocator)
     {
@@ -1280,25 +1271,464 @@ extern "C"
         s_ddt.CmdExecuteCommands(CommandBuffer, CommandBufferCount, pCommandBuffers);
     }
 
+    // -- Vulkan 1.1 ---
+
+    VkResult VKAPI_CALL vkEnumerateInstanceVersion(uint32_t* pApiVersion)
+    {
+        auto lib = loadVulkanLibrary();
+        if (!lib)
+        {
+            SL_LOG_ERROR( "Failed to load Vulkan library");
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        auto trampoline = (PFN_vkEnumerateInstanceVersion)GetProcAddress(lib, "vkEnumerateInstanceVersion");
+        return trampoline(pApiVersion);
+    }
+
+    VkResult VKAPI_CALL vkBindBufferMemory2(VkDevice device, uint32_t bindInfoCount, const VkBindBufferMemoryInfo* pBindInfos)
+    {
+        return s_ddt.BindBufferMemory2(device, bindInfoCount, pBindInfos);
+    }
+
+    VkResult VKAPI_CALL vkBindImageMemory2(VkDevice device, uint32_t bindInfoCount, const VkBindImageMemoryInfo* pBindInfos)
+    {
+        return s_ddt.BindImageMemory2(device, bindInfoCount, pBindInfos);
+    }
+
+    void VKAPI_CALL vkGetDeviceGroupPeerMemoryFeatures(VkDevice device, uint32_t heapIndex, uint32_t localDeviceIndex, uint32_t remoteDeviceIndex, VkPeerMemoryFeatureFlags* pPeerMemoryFeatures)
+    {
+        s_ddt.GetDeviceGroupPeerMemoryFeatures(device, heapIndex, localDeviceIndex, remoteDeviceIndex, pPeerMemoryFeatures);
+    }
+
+    void VKAPI_CALL vkCmdSetDeviceMask(VkCommandBuffer commandBuffer, uint32_t deviceMask)
+    {
+        s_ddt.CmdSetDeviceMask(commandBuffer, deviceMask);
+    }
+
+    void VKAPI_CALL vkCmdDispatchBase(VkCommandBuffer commandBuffer, uint32_t baseGroupX, uint32_t baseGroupY, uint32_t baseGroupZ, uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ)
+    {
+        s_ddt.CmdDispatchBase(commandBuffer, baseGroupX, baseGroupY, baseGroupZ, groupCountX, groupCountY, groupCountZ);
+    }
+
+    VkResult VKAPI_CALL vkEnumeratePhysicalDeviceGroups(VkInstance instance, uint32_t* pPhysicalDeviceGroupCount, VkPhysicalDeviceGroupProperties* pPhysicalDeviceGroupProperties)
+    {
+        return s_idt.EnumeratePhysicalDeviceGroups(instance, pPhysicalDeviceGroupCount, pPhysicalDeviceGroupProperties);
+    }
+
+    void VKAPI_CALL vkGetImageMemoryRequirements2(VkDevice device, const VkImageMemoryRequirementsInfo2* pInfo, VkMemoryRequirements2* pMemoryRequirements)
+    {
+        s_ddt.GetImageMemoryRequirements2(device, pInfo, pMemoryRequirements);
+    }
+
+    void VKAPI_CALL vkGetBufferMemoryRequirements2(VkDevice device, const VkBufferMemoryRequirementsInfo2* pInfo, VkMemoryRequirements2* pMemoryRequirements)
+    {
+        s_ddt.GetBufferMemoryRequirements2(device, pInfo, pMemoryRequirements);
+    }
+
+    void VKAPI_CALL vkGetImageSparseMemoryRequirements2(VkDevice device, const VkImageSparseMemoryRequirementsInfo2* pInfo, uint32_t* pSparseMemoryRequirementCount, VkSparseImageMemoryRequirements2* pSparseMemoryRequirements)
+    {
+        s_ddt.GetImageSparseMemoryRequirements2(device, pInfo, pSparseMemoryRequirementCount, pSparseMemoryRequirements);
+    }
+
+    void VKAPI_CALL vkGetPhysicalDeviceFeatures2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceFeatures2* pFeatures)
+    {
+        s_idt.GetPhysicalDeviceFeatures2(physicalDevice, pFeatures);
+    }
+
+    void VKAPI_CALL vkGetPhysicalDeviceProperties2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceProperties2* pProperties)
+    {
+        s_idt.GetPhysicalDeviceProperties2(physicalDevice, pProperties);
+    }
+
+    void VKAPI_CALL vkGetPhysicalDeviceFormatProperties2(VkPhysicalDevice physicalDevice, VkFormat format, VkFormatProperties2* pFormatProperties)
+    {
+        s_idt.GetPhysicalDeviceFormatProperties2(physicalDevice, format, pFormatProperties);
+    }
+
+    VkResult VKAPI_CALL vkGetPhysicalDeviceImageFormatProperties2(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceImageFormatInfo2* pImageFormatInfo, VkImageFormatProperties2* pImageFormatProperties)
+    {
+        return s_idt.GetPhysicalDeviceImageFormatProperties2(physicalDevice, pImageFormatInfo, pImageFormatProperties);
+    }
+
+    void VKAPI_CALL vkGetPhysicalDeviceQueueFamilyProperties2(VkPhysicalDevice physicalDevice, uint32_t* pQueueFamilyPropertyCount, VkQueueFamilyProperties2* pQueueFamilyProperties)
+    {
+        s_idt.GetPhysicalDeviceQueueFamilyProperties2(physicalDevice, pQueueFamilyPropertyCount, pQueueFamilyProperties);
+    }
+
+    void VKAPI_CALL vkGetPhysicalDeviceMemoryProperties2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceMemoryProperties2* pMemoryProperties)
+    {
+        s_idt.GetPhysicalDeviceMemoryProperties2(physicalDevice, pMemoryProperties);
+    }
+
+    void VKAPI_CALL vkGetPhysicalDeviceSparseImageFormatProperties2(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceSparseImageFormatInfo2* pFormatInfo, uint32_t* pPropertyCount, VkSparseImageFormatProperties2* pProperties)
+    {
+        s_idt.GetPhysicalDeviceSparseImageFormatProperties2(physicalDevice, pFormatInfo, pPropertyCount, pProperties);
+    }
+
+    void VKAPI_CALL vkTrimCommandPool(VkDevice device, VkCommandPool commandPool, VkCommandPoolTrimFlags flags)
+    {
+        s_ddt.TrimCommandPool(device, commandPool, flags);
+    }
+
+    void VKAPI_CALL vkGetDeviceQueue2(VkDevice device, const VkDeviceQueueInfo2* pQueueInfo, VkQueue* pQueue)
+    {
+        s_ddt.GetDeviceQueue2(device, pQueueInfo, pQueue);
+    }
+
+    VkResult VKAPI_CALL vkCreateSamplerYcbcrConversion(VkDevice device, const VkSamplerYcbcrConversionCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkSamplerYcbcrConversion* pYcbcrConversion)
+    {
+        return s_ddt.CreateSamplerYcbcrConversion(device, pCreateInfo, pAllocator, pYcbcrConversion);
+    }
+
+    void VKAPI_CALL vkDestroySamplerYcbcrConversion(VkDevice device, VkSamplerYcbcrConversion ycbcrConversion, const VkAllocationCallbacks* pAllocator)
+    {
+        s_ddt.DestroySamplerYcbcrConversion(device, ycbcrConversion, pAllocator);
+    }
+
+    VkResult VKAPI_CALL vkCreateDescriptorUpdateTemplate(VkDevice device, const VkDescriptorUpdateTemplateCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkDescriptorUpdateTemplate* pDescriptorUpdateTemplate)
+    {
+        return s_ddt.CreateDescriptorUpdateTemplate(device, pCreateInfo, pAllocator, pDescriptorUpdateTemplate);
+    }
+
+    void VKAPI_CALL vkDestroyDescriptorUpdateTemplate(VkDevice device, VkDescriptorUpdateTemplate descriptorUpdateTemplate, const VkAllocationCallbacks* pAllocator)
+    {
+        s_ddt.DestroyDescriptorUpdateTemplate(device, descriptorUpdateTemplate, pAllocator);
+    }
+
+    void VKAPI_CALL vkUpdateDescriptorSetWithTemplate(VkDevice device, VkDescriptorSet descriptorSet, VkDescriptorUpdateTemplate descriptorUpdateTemplate, const void* pData)
+    {
+        s_ddt.UpdateDescriptorSetWithTemplate(device, descriptorSet, descriptorUpdateTemplate, pData);
+    }
+
+    void VKAPI_CALL vkGetPhysicalDeviceExternalBufferProperties(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceExternalBufferInfo* pExternalBufferInfo, VkExternalBufferProperties* pExternalBufferProperties)
+    {
+        s_idt.GetPhysicalDeviceExternalBufferProperties(physicalDevice, pExternalBufferInfo, pExternalBufferProperties);
+    }
+
+    void VKAPI_CALL vkGetPhysicalDeviceExternalFenceProperties(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceExternalFenceInfo* pExternalFenceInfo, VkExternalFenceProperties* pExternalFenceProperties)
+    {
+        s_idt.GetPhysicalDeviceExternalFenceProperties(physicalDevice, pExternalFenceInfo, pExternalFenceProperties);
+    }
+
+    void VKAPI_CALL vkGetPhysicalDeviceExternalSemaphoreProperties(VkPhysicalDevice physicalDevice, const VkPhysicalDeviceExternalSemaphoreInfo* pExternalSemaphoreInfo, VkExternalSemaphoreProperties* pExternalSemaphoreProperties)
+    {
+        s_idt.GetPhysicalDeviceExternalSemaphoreProperties(physicalDevice, pExternalSemaphoreInfo, pExternalSemaphoreProperties);
+    }
+
+    void VKAPI_CALL vkGetDescriptorSetLayoutSupport(VkDevice device, const VkDescriptorSetLayoutCreateInfo* pCreateInfo, VkDescriptorSetLayoutSupport* pSupport)
+    {
+        s_ddt.GetDescriptorSetLayoutSupport(device, pCreateInfo, pSupport);
+    }
+
+    // -- Vulkan 1.2 ---
+
+    void VKAPI_CALL vkCmdDrawIndirectCount(VkCommandBuffer commandBuffer, VkBuffer buffer, VkDeviceSize offset, VkBuffer countBuffer, VkDeviceSize countBufferOffset, uint32_t maxDrawCount, uint32_t stride)
+    {
+        s_ddt.CmdDrawIndirectCount(commandBuffer, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
+    }
+
+    void VKAPI_CALL vkCmdDrawIndexedIndirectCount(VkCommandBuffer commandBuffer, VkBuffer buffer, VkDeviceSize offset, VkBuffer countBuffer, VkDeviceSize countBufferOffset, uint32_t maxDrawCount, uint32_t stride)
+    {
+        s_ddt.CmdDrawIndexedIndirectCount(commandBuffer, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
+    }
+
+    VkResult VKAPI_CALL vkCreateRenderPass2(VkDevice device, const VkRenderPassCreateInfo2* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkRenderPass* pRenderPass)
+    {
+        return s_ddt.CreateRenderPass2(device, pCreateInfo, pAllocator, pRenderPass);
+    }
+
+    void VKAPI_CALL vkCmdBeginRenderPass2(VkCommandBuffer commandBuffer, const VkRenderPassBeginInfo* pRenderPassBegin, const VkSubpassBeginInfo* pSubpassBeginInfo)
+    {
+        s_ddt.CmdBeginRenderPass2(commandBuffer, pRenderPassBegin, pSubpassBeginInfo);
+    }
+
+    void VKAPI_CALL vkCmdNextSubpass2(VkCommandBuffer commandBuffer, const VkSubpassBeginInfo* pSubpassBeginInfo, const VkSubpassEndInfo* pSubpassEndInfo)
+    {
+        s_ddt.CmdNextSubpass2(commandBuffer, pSubpassBeginInfo, pSubpassEndInfo);
+    }
+
+    void VKAPI_CALL vkCmdEndRenderPass2(VkCommandBuffer commandBuffer, const VkSubpassEndInfo* pSubpassEndInfo)
+    {
+        s_ddt.CmdEndRenderPass2(commandBuffer, pSubpassEndInfo);
+    }
+
+    void VKAPI_CALL vkResetQueryPool(VkDevice device, VkQueryPool queryPool, uint32_t firstQuery, uint32_t queryCount)
+    {
+        s_ddt.ResetQueryPool(device, queryPool, firstQuery, queryCount);
+    }
+
+    VkResult VKAPI_CALL vkGetSemaphoreCounterValue(VkDevice device, VkSemaphore semaphore, uint64_t* pValue)
+    {
+        return s_ddt.GetSemaphoreCounterValue(device, semaphore, pValue);
+    }
+
+    VkResult VKAPI_CALL vkWaitSemaphores(VkDevice device, const VkSemaphoreWaitInfo* pWaitInfo, uint64_t timeout)
+    {
+        return s_ddt.WaitSemaphores(device, pWaitInfo, timeout);
+    }
+
+    VkResult VKAPI_CALL vkSignalSemaphore(VkDevice device, const VkSemaphoreSignalInfo* pSignalInfo)
+    {
+        return s_ddt.SignalSemaphore(device, pSignalInfo);
+    }
+
+    VkDeviceAddress VKAPI_CALL vkGetBufferDeviceAddress(VkDevice device, const VkBufferDeviceAddressInfo* pInfo)
+    {
+        return s_ddt.GetBufferDeviceAddress(device, pInfo);
+    }
+
+    uint64_t VKAPI_CALL vkGetBufferOpaqueCaptureAddress(VkDevice device, const VkBufferDeviceAddressInfo* pInfo)
+    {
+        return s_ddt.GetBufferOpaqueCaptureAddress(device, pInfo);
+    }
+
+    uint64_t VKAPI_CALL vkGetDeviceMemoryOpaqueCaptureAddress(VkDevice device, const VkDeviceMemoryOpaqueCaptureAddressInfo* pInfo)
+    {
+        return s_ddt.GetDeviceMemoryOpaqueCaptureAddress(device, pInfo);
+    }
+
+    // -- Vulkan 1.3 --
+
+    VkResult VKAPI_CALL vkGetPhysicalDeviceToolProperties(VkPhysicalDevice physicalDevice, uint32_t* pToolCount, VkPhysicalDeviceToolProperties* pToolProperties)
+    {
+        auto lib = loadVulkanLibrary();
+        if (!lib)
+        {
+            SL_LOG_ERROR( "Failed to load Vulkan library");
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        auto trampoline = (PFN_vkGetPhysicalDeviceToolProperties)GetProcAddress(lib, "vkGetPhysicalDeviceToolProperties");
+        return trampoline(physicalDevice, pToolCount, pToolProperties);
+    }
+
+    VkResult VKAPI_CALL vkCreatePrivateDataSlot(VkDevice device, const VkPrivateDataSlotCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkPrivateDataSlot* pPrivateDataSlot)
+    {
+        return s_ddt.CreatePrivateDataSlot(device, pCreateInfo, pAllocator, pPrivateDataSlot);
+    }
+
+    void VKAPI_CALL vkDestroyPrivateDataSlot(VkDevice device, VkPrivateDataSlot privateDataSlot, const VkAllocationCallbacks* pAllocator)
+    {
+        s_ddt.DestroyPrivateDataSlot(device, privateDataSlot, pAllocator);
+    }
+
+    VkResult VKAPI_CALL vkSetPrivateData(VkDevice device, VkObjectType objectType, uint64_t objectHandle, VkPrivateDataSlot privateDataSlot, uint64_t data)
+    {
+        return s_ddt.SetPrivateData(device, objectType, objectHandle, privateDataSlot, data);
+    }
+
+    void VKAPI_CALL vkGetPrivateData(VkDevice device, VkObjectType objectType, uint64_t objectHandle, VkPrivateDataSlot privateDataSlot, uint64_t* pData)
+    {
+        s_ddt.GetPrivateData(device, objectType, objectHandle, privateDataSlot, pData);
+    }
+
+    void VKAPI_CALL vkCmdSetEvent2(VkCommandBuffer commandBuffer, VkEvent event, const VkDependencyInfo* pDependencyInfo)
+    {
+        s_ddt.CmdSetEvent2(commandBuffer, event, pDependencyInfo);
+    }
+
+    void VKAPI_CALL vkCmdResetEvent2(VkCommandBuffer commandBuffer, VkEvent event, VkPipelineStageFlags2 stageMask)
+    {
+        s_ddt.CmdResetEvent2(commandBuffer, event, stageMask);
+    }
+
+    void VKAPI_CALL vkCmdWaitEvents2(VkCommandBuffer commandBuffer, uint32_t eventCount, const VkEvent* pEvents, const VkDependencyInfo* pDependencyInfos)
+    {
+        s_ddt.CmdWaitEvents2(commandBuffer, eventCount, pEvents, pDependencyInfos);
+    }
+
+    void VKAPI_CALL vkCmdPipelineBarrier2(VkCommandBuffer commandBuffer, const VkDependencyInfo* pDependencyInfo)
+    {
+        s_ddt.CmdPipelineBarrier2(commandBuffer, pDependencyInfo);
+    }
+
+    void VKAPI_CALL vkCmdWriteTimestamp2(VkCommandBuffer commandBuffer, VkPipelineStageFlags2 stage, VkQueryPool queryPool, uint32_t query)
+    {
+        s_ddt.CmdWriteTimestamp2(commandBuffer, stage, queryPool, query);
+    }
+
+    VkResult VKAPI_CALL vkQueueSubmit2(VkQueue queue, uint32_t submitCount, const VkSubmitInfo2* pSubmits, VkFence fence)
+    {
+        return s_ddt.QueueSubmit2(queue, submitCount, pSubmits, fence);
+    }
+
+    void VKAPI_CALL vkCmdCopyBuffer2(VkCommandBuffer commandBuffer, const VkCopyBufferInfo2* pCopyBufferInfo)
+    {
+        s_ddt.CmdCopyBuffer2(commandBuffer, pCopyBufferInfo);
+    }
+
+    void VKAPI_CALL vkCmdCopyImage2(VkCommandBuffer commandBuffer, const VkCopyImageInfo2* pCopyImageInfo)
+    {
+        s_ddt.CmdCopyImage2(commandBuffer, pCopyImageInfo);
+    }
+
+    void VKAPI_CALL vkCmdCopyBufferToImage2(VkCommandBuffer commandBuffer, const VkCopyBufferToImageInfo2* pCopyBufferToImageInfo)
+    {
+        s_ddt.CmdCopyBufferToImage2(commandBuffer, pCopyBufferToImageInfo);
+    }
+
+    void VKAPI_CALL vkCmdCopyImageToBuffer2(VkCommandBuffer commandBuffer, const VkCopyImageToBufferInfo2* pCopyImageToBufferInfo)
+    {
+        s_ddt.CmdCopyImageToBuffer2(commandBuffer, pCopyImageToBufferInfo);
+    }
+
+    void VKAPI_CALL vkCmdBlitImage2(VkCommandBuffer commandBuffer, const VkBlitImageInfo2* pBlitImageInfo)
+    {
+        s_ddt.CmdBlitImage2(commandBuffer, pBlitImageInfo);
+    }
+
+    void VKAPI_CALL vkCmdResolveImage2(VkCommandBuffer commandBuffer, const VkResolveImageInfo2* pResolveImageInfo)
+    {
+        s_ddt.CmdResolveImage2(commandBuffer, pResolveImageInfo);
+    }
+
+    void VKAPI_CALL vkCmdBeginRendering(VkCommandBuffer commandBuffer, const VkRenderingInfo* pRenderingInfo)
+    {
+        s_ddt.CmdBeginRendering(commandBuffer, pRenderingInfo);
+    }
+
+    void VKAPI_CALL vkCmdEndRendering(VkCommandBuffer commandBuffer)
+    {
+        s_ddt.CmdEndRendering(commandBuffer);
+    }
+
+    void VKAPI_CALL vkCmdSetCullMode(VkCommandBuffer commandBuffer, VkCullModeFlags cullMode)
+    {
+        s_ddt.CmdSetCullMode(commandBuffer, cullMode);
+    }
+
+    void VKAPI_CALL vkCmdSetFrontFace(VkCommandBuffer commandBuffer, VkFrontFace frontFace)
+    {
+        s_ddt.CmdSetFrontFace(commandBuffer, frontFace);
+    }
+
+    void VKAPI_CALL vkCmdSetPrimitiveTopology(VkCommandBuffer commandBuffer, VkPrimitiveTopology primitiveTopology)
+    {
+        s_ddt.CmdSetPrimitiveTopology(commandBuffer, primitiveTopology);
+    }
+
+    void VKAPI_CALL vkCmdSetViewportWithCount(VkCommandBuffer commandBuffer, uint32_t viewportCount, const VkViewport* pViewports)
+    {
+        s_ddt.CmdSetViewportWithCount(commandBuffer, viewportCount, pViewports);
+    }
+
+    void VKAPI_CALL vkCmdSetScissorWithCount(VkCommandBuffer commandBuffer, uint32_t scissorCount, const VkRect2D* pScissors)
+    {
+        s_ddt.CmdSetScissorWithCount(commandBuffer, scissorCount, pScissors);
+    }
+
+    void VKAPI_CALL vkCmdBindVertexBuffers2(VkCommandBuffer commandBuffer, uint32_t firstBinding, uint32_t bindingCount, const VkBuffer* pBuffers, const VkDeviceSize* pOffsets, const VkDeviceSize* pSizes, const VkDeviceSize* pStrides)
+    {
+        s_ddt.CmdBindVertexBuffers2(commandBuffer, firstBinding, bindingCount, pBuffers, pOffsets, pSizes, pStrides);
+    }
+
+    void VKAPI_CALL vkCmdSetDepthTestEnable(VkCommandBuffer commandBuffer, VkBool32 depthTestEnable)
+    {
+        s_ddt.CmdSetDepthTestEnable(commandBuffer, depthTestEnable);
+    }
+
+    void VKAPI_CALL vkCmdSetDepthWriteEnable(VkCommandBuffer commandBuffer, VkBool32 depthWriteEnable)
+    {
+        s_ddt.CmdSetDepthWriteEnable(commandBuffer, depthWriteEnable);
+    }
+
+    void VKAPI_CALL vkCmdSetDepthCompareOp(VkCommandBuffer commandBuffer, VkCompareOp depthCompareOp)
+    {
+        s_ddt.CmdSetDepthCompareOp(commandBuffer, depthCompareOp);
+    }
+
+    void VKAPI_CALL vkCmdSetDepthBoundsTestEnable(VkCommandBuffer commandBuffer, VkBool32 depthBoundsTestEnable)
+    {
+        s_ddt.CmdSetDepthBoundsTestEnable(commandBuffer, depthBoundsTestEnable);
+    }
+
+    void VKAPI_CALL vkCmdSetStencilTestEnable(VkCommandBuffer commandBuffer, VkBool32 stencilTestEnable)
+    {
+        s_ddt.CmdSetStencilTestEnable(commandBuffer, stencilTestEnable);
+    }
+
+    void VKAPI_CALL vkCmdSetStencilOp(VkCommandBuffer commandBuffer, VkStencilFaceFlags faceMask, VkStencilOp failOp, VkStencilOp passOp, VkStencilOp depthFailOp, VkCompareOp compareOp)
+    {
+        s_ddt.CmdSetStencilOp(commandBuffer, faceMask, failOp, passOp, depthFailOp, compareOp);
+    }
+
+    void VKAPI_CALL vkCmdSetRasterizerDiscardEnable(VkCommandBuffer commandBuffer, VkBool32 rasterizerDiscardEnable)
+    {
+        s_ddt.CmdSetRasterizerDiscardEnable(commandBuffer, rasterizerDiscardEnable);
+    }
+
+    void VKAPI_CALL vkCmdSetDepthBiasEnable(VkCommandBuffer commandBuffer, VkBool32 depthBiasEnable)
+    {
+        s_ddt.CmdSetDepthBiasEnable(commandBuffer, depthBiasEnable);
+    }
+
+    void VKAPI_CALL vkCmdSetPrimitiveRestartEnable(VkCommandBuffer commandBuffer, VkBool32 primitiveRestartEnable)
+    {
+        s_ddt.CmdSetPrimitiveRestartEnable(commandBuffer, primitiveRestartEnable);
+    }
+
+    void VKAPI_CALL vkGetDeviceBufferMemoryRequirements(VkDevice device, const VkDeviceBufferMemoryRequirements* pInfo, VkMemoryRequirements2* pMemoryRequirements)
+    {
+        s_ddt.GetDeviceBufferMemoryRequirements(device, pInfo, pMemoryRequirements);
+    }
+
+    void VKAPI_CALL vkGetDeviceImageMemoryRequirements(VkDevice device, const VkDeviceImageMemoryRequirements* pInfo, VkMemoryRequirements2* pMemoryRequirements)
+    {
+        s_ddt.GetDeviceImageMemoryRequirements(device, pInfo, pMemoryRequirements);
+    }
+
+    void VKAPI_CALL vkGetDeviceImageSparseMemoryRequirements(VkDevice device, const VkDeviceImageMemoryRequirements* pInfo, uint32_t* pSparseMemoryRequirementCount, VkSparseImageMemoryRequirements2* pSparseMemoryRequirements)
+    {
+        s_ddt.GetDeviceImageSparseMemoryRequirements(device, pInfo, pSparseMemoryRequirementCount, pSparseMemoryRequirements);
+    }
+
+    // -- VK_KHR_swapchain --
+
     VkResult VKAPI_CALL vkCreateSwapchainKHR(VkDevice Device, const VkSwapchainCreateInfoKHR* CreateInfo, const VkAllocationCallbacks* Allocator, VkSwapchainKHR* Swapchain)
     {
-        const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(sl::FunctionHookID::eVulkan_CreateSwapchainKHR);
         bool skip = false;
-        for (auto [hook, feature] : hooks) ((sl::PFunVkCreateSwapchainKHRBefore*)hook)(Device, CreateInfo, Allocator, Swapchain, skip);
-
         VkResult result = VK_SUCCESS;
+        {
+            const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(sl::FunctionHookID::eVulkan_CreateSwapchainKHR);
+            for (auto [hook, feature] : hooks)
+            {
+                result = ((sl::PFunVkCreateSwapchainKHRBefore*)hook)(Device, CreateInfo, Allocator, Swapchain, skip);
+                if (result != VK_SUCCESS)
+                {
+                    return result;
+                }
+            }
+        }
+
         if (!skip)
         {
             result = s_ddt.CreateSwapchainKHR(Device, CreateInfo, Allocator, Swapchain);
+        }
+
+        {
+            const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooks(sl::FunctionHookID::eVulkan_CreateSwapchainKHR);
+            for (auto [hook, feature] : hooks)
+            {
+                result = ((sl::PFunVkCreateSwapchainKHRAfter*)hook)(Device, CreateInfo, Allocator, Swapchain);
+                if (result != VK_SUCCESS)
+                {
+                    return result;
+                }
+            }
         }
         return result;
     }
 
     void VKAPI_CALL vkDestroySwapchainKHR(VkDevice Device, VkSwapchainKHR Swapchain, const VkAllocationCallbacks* Allocator)
     {
-        const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(sl::FunctionHookID::eVulkan_DestroySwapchainKHR);
         bool skip = false;
-        for (auto [hook, feature] : hooks) ((sl::PFunVkDestroySwapchainKHRBefore*)hook)(Device, Swapchain, Allocator, skip);
+        {
+            const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(sl::FunctionHookID::eVulkan_DestroySwapchainKHR);
+            for (auto [hook, feature] : hooks)
+            {
+                ((sl::PFunVkDestroySwapchainKHRBefore*)hook)(Device, Swapchain, Allocator, skip);
+            }
+        }
+
         if (!skip)
         {
             s_ddt.DestroySwapchainKHR(Device, Swapchain, Allocator);
@@ -1307,11 +1737,20 @@ extern "C"
 
     VkResult VKAPI_CALL vkGetSwapchainImagesKHR(VkDevice Device, VkSwapchainKHR Swapchain, uint32_t* SwapchainImageCount, VkImage* SwapchainImages)
     {
-        const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(sl::FunctionHookID::eVulkan_GetSwapchainImagesKHR);
         bool skip = false;
-        for (auto [hook, feature] : hooks) ((sl::PFunVkGetSwapchainImagesKHRBefore*)hook)(Device, Swapchain, SwapchainImageCount, SwapchainImages, skip);
-
         VkResult result = VK_SUCCESS;
+        {
+            const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(sl::FunctionHookID::eVulkan_GetSwapchainImagesKHR);
+            for (auto [hook, feature] : hooks)
+            {
+                result = ((sl::PFunVkGetSwapchainImagesKHRBefore*)hook)(Device, Swapchain, SwapchainImageCount, SwapchainImages, skip);
+                if (result != VK_SUCCESS)
+                {
+                    return result;
+                }
+            }
+        }
+
         if (!skip)
         {
             result = s_ddt.GetSwapchainImagesKHR(Device, Swapchain, SwapchainImageCount, SwapchainImages);
@@ -1321,16 +1760,18 @@ extern "C"
 
     VkResult VKAPI_CALL vkAcquireNextImageKHR(VkDevice Device, VkSwapchainKHR Swapchain, uint64_t Timeout, VkSemaphore Semaphore, VkFence Fence, uint32_t* ImageIndex)
     {
-        const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(sl::FunctionHookID::eVulkan_AcquireNextImageKHR);
         bool skip = false;
         VkResult result = VK_SUCCESS;
-        for (auto [hook, feature] : hooks)
         {
-            result = ((sl::PFunVkAcquireNextImageKHRBefore*)hook)(Device, Swapchain, Timeout, Semaphore, Fence, ImageIndex, skip);
-            // report error on first fail
-            if (result != VK_SUCCESS)
+            const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(sl::FunctionHookID::eVulkan_AcquireNextImageKHR);
+            for (auto [hook, feature] : hooks)
             {
-                return result;
+                result = ((sl::PFunVkAcquireNextImageKHRBefore*)hook)(Device, Swapchain, Timeout, Semaphore, Fence, ImageIndex, skip);
+                // report error on first fail
+                if (result != VK_SUCCESS)
+                {
+                    return result;
+                }
             }
         }
 
@@ -1343,16 +1784,18 @@ extern "C"
 
     VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue Queue, const VkPresentInfoKHR* PresentInfo)
     {
-        const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(sl::FunctionHookID::eVulkan_Present);
         bool skip = false;
         VkResult result = VK_SUCCESS;
-        for (auto [hook, feature] : hooks)
         {
-            result = ((sl::PFunVkQueuePresentKHRBefore*)hook)(Queue, PresentInfo, skip);
-            // report error on first fail
-            if (result != VK_SUCCESS)
+            const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(sl::FunctionHookID::eVulkan_Present);
+            for (auto [hook, feature] : hooks)
             {
-                return result;
+                result = ((sl::PFunVkQueuePresentKHRBefore*)hook)(Queue, PresentInfo, skip);
+                // report error on first fail
+                if (result != VK_SUCCESS)
+                {
+                    return result;
+                }
             }
         }
 
@@ -1362,6 +1805,8 @@ extern "C"
         }
         return result;
     }
+
+    // -- VK_KHR_win32_surface
 
     VkResult VKAPI_CALL vkGetPhysicalDeviceSurfaceCapabilitiesKHR(VkPhysicalDevice PhysicalDevice, VkSurfaceKHR Surface, VkSurfaceCapabilitiesKHR* SurfaceCapabilities)
     {
@@ -1385,22 +1830,73 @@ extern "C"
 
     VkResult VKAPI_CALL vkCreateWin32SurfaceKHR(VkInstance Instance, const VkWin32SurfaceCreateInfoKHR* CreateInfo, const VkAllocationCallbacks* Allocator, VkSurfaceKHR* Surface)
     {
-        return s_idt.CreateWin32SurfaceKHR(Instance, CreateInfo, Allocator, Surface);
+        bool skip = false;
+        VkResult result = VK_SUCCESS;
+        {
+            const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(sl::FunctionHookID::eVulkan_CreateWin32SurfaceKHR);
+            for (auto [hook, feature] : hooks)
+            {
+                result = ((sl::PFunVkCreateWin32SurfaceKHRBefore*)hook)(Instance, CreateInfo, Allocator, Surface, skip);
+                if (result != VK_SUCCESS)
+                {
+                    return result;
+                }
+            }
+        }
+
+        if (!skip)
+        {
+            result = s_idt.CreateWin32SurfaceKHR(Instance, CreateInfo, Allocator, Surface);
+        }
+
+        {
+            const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooks(sl::FunctionHookID::eVulkan_CreateWin32SurfaceKHR);
+            for (auto [hook, feature] : hooks)
+            {
+                result = ((sl::PFunVkCreateWin32SurfaceKHRAfter*)hook)(Instance, CreateInfo, Allocator, Surface);
+                if (result != VK_SUCCESS)
+                {
+                   return result;
+                }
+            }
+        }
+        return result;
     }
 
     void VKAPI_CALL vkDestroySurfaceKHR(VkInstance Instance, VkSurfaceKHR Surface, const VkAllocationCallbacks* pAllocator)
     {
-        s_idt.DestroySurfaceKHR(Instance, Surface, pAllocator);
+        bool skip = false;
+        {
+            const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(sl::FunctionHookID::eVulkan_DestroySurfaceKHR);
+            for (auto [hook, feature] : hooks)
+            {
+                ((sl::PFunVkDestroySurfaceKHRBefore*)hook)(Instance, Surface, pAllocator, skip);
+            }
+        }
+
+        if (!skip)
+        {
+            s_idt.DestroySurfaceKHR(Instance, Surface, pAllocator);
+        }
     }
+
+    // -- VK_KHR_get_physical_device_properties2
+
+    void VKAPI_CALL vkGetPhysicalDeviceFeatures2KHR(VkPhysicalDevice PhysicalDevice, VkPhysicalDeviceFeatures2KHR* Features)
+    {
+        s_idt.GetPhysicalDeviceFeatures2KHR(PhysicalDevice, Features);
+    }
+
+    void VKAPI_CALL vkGetPhysicalDeviceProperties2KHR(VkPhysicalDevice PhysicalDevice, VkPhysicalDeviceProperties2KHR* Properties)
+    {
+        s_idt.GetPhysicalDeviceProperties2KHR(PhysicalDevice, Properties);
+    }
+
+    // -- VK_KHR_get_memory_requirements2 --
 
     void VKAPI_CALL vkGetImageMemoryRequirements2KHR(VkDevice Device, const VkImageMemoryRequirementsInfo2KHR* Info, VkMemoryRequirements2KHR* MemoryRequirements)
     {
         s_ddt.GetImageMemoryRequirements2KHR(Device, Info, MemoryRequirements);
-    }
-
-    VkDeviceAddress VKAPI_CALL vkGetBufferDeviceAddress(VkDevice Device, const VkBufferDeviceAddressInfo* Info)
-    {
-        return s_ddt.GetBufferDeviceAddress(Device, Info);
     }
 
 #define SL_INTERCEPT(F)          \

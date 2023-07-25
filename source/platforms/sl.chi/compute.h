@@ -147,8 +147,9 @@ enum class ResourceState : uint32_t
     eColorAttachmentRead = 1 << 8,
     eColorAttachmentWrite = 1 << 9,
     eColorAttachmentRW = eColorAttachmentRead | eColorAttachmentWrite,
-    eDepthStencilAttachmentWrite = 1 << 10,
     eDepthStencilAttachmentRead = 1 << 11,
+    eDepthStencilAttachmentWrite = 1 << 10,
+    eDepthStencilAttachmentRW = eDepthStencilAttachmentRead | eDepthStencilAttachmentWrite,
     eCopySource = 1 << 12,
     eCopyDestination = 1 << 13,
     eAccelStructRead = 1 << 14,
@@ -262,6 +263,7 @@ struct ResourceDescription
     ResourceState state = ResourceState::eUnknown;
     uint64_t gpuVirtualAddress = 0;
     ResourceFlags flags = ResourceFlags::eNone;
+    std::string sName;
 };
 
 struct ResourceInfo

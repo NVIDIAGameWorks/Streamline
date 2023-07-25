@@ -121,6 +121,11 @@ void setupSwapchainProxy(T*& swapchain, UINT d3dVersion, const Microsoft::WRL::C
 
     if (swapchainProxy != nullptr)
     {
+        // we're losing the ref to the swapchain here - so we're decrementing the ref count
+        if (swapchain && swapchain != swapchainProxy)
+        {
+            swapchain->Release();
+        }
         swapchain = swapchainProxy;
     }
 }

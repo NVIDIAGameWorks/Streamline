@@ -24,6 +24,7 @@
 
 #include <d3d12.h>
 #include <future>
+#include <array>
 
 #include "source/core/sl.thread/thread.h"
 #include "source/platforms/sl.chi/generic.h"

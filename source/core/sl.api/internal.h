@@ -41,6 +41,8 @@ struct VkDeviceCreateInfo;
 struct VkPresentInfoKHR;
 struct VkSwapchainCreateInfoKHR;
 struct VkAllocationCallbacks;
+struct VkWin32SurfaceCreateInfoKHR;
+struct VkSurfaceKHR_T;
 struct VkSwapchainKHR_T;
 struct VkPhysicalDevice_T;
 struct VkImage_T;
@@ -50,6 +52,7 @@ struct VkQueue_T;
 using VkPhysicalDevice = VkPhysicalDevice_T*;
 using VkDevice = VkDevice_T*;
 using VkInstance = VkInstance_T*;
+using VkSurfaceKHR = VkSurfaceKHR_T*;
 using VkSwapchainKHR = VkSwapchainKHR_T*;
 using VkImage = VkImage_T*;
 using VkFence = VkFence_T*;
@@ -210,9 +213,13 @@ using PFunResourceBarrierAfter = void(ID3D12GraphicsCommandList* pCmdList, UINT 
 
 using PFunVkDeviceWaitIdleBefore = VkResult(VkDevice Device, bool& Skip);
 using PFunVkCreateSwapchainKHRBefore = VkResult(VkDevice Device, const VkSwapchainCreateInfoKHR* CreateInfo, const VkAllocationCallbacks* Allocator, VkSwapchainKHR* Swapchain, bool& Skip);
+using PFunVkCreateSwapchainKHRAfter = VkResult(VkDevice Device, const VkSwapchainCreateInfoKHR* CreateInfo, const VkAllocationCallbacks* Allocator, VkSwapchainKHR* Swapchain);
 using PFunVkGetSwapchainImagesKHRBefore = VkResult(VkDevice Device, VkSwapchainKHR Swapchain, uint32_t* SwapchainImageCount, VkImage* SwapchainImages, bool& Skip);
 using PFunVkAcquireNextImageKHRBefore = VkResult(VkDevice Device, VkSwapchainKHR Swapchain, uint64_t Timeout, VkSemaphore Semaphore, VkFence Fence, uint32_t* ImageIndex, bool& Skip);
 using PFunVkQueuePresentKHRBefore = VkResult(VkQueue Queue, const VkPresentInfoKHR* PresentInfo, bool& Skip);
 using PFunVkDestroySwapchainKHRBefore = void(VkDevice Device, VkSwapchainKHR Swapchain, const VkAllocationCallbacks* Allocator, bool& Skip);
+using PFunVkCreateWin32SurfaceKHRBefore = VkResult(VkInstance Instance, const VkWin32SurfaceCreateInfoKHR* CreateInfo, const VkAllocationCallbacks* Allocator, VkSurfaceKHR* Surface, bool& Skip);
+using PFunVkCreateWin32SurfaceKHRAfter = VkResult(VkInstance Instance, const VkWin32SurfaceCreateInfoKHR* CreateInfo, const VkAllocationCallbacks* Allocator, VkSurfaceKHR* Surface);
+using PFunVkDestroySurfaceKHRBefore = void(VkInstance Instance, VkSurfaceKHR Surface, const VkAllocationCallbacks* Allocator, bool& Skip);
 
 } // namespace sl

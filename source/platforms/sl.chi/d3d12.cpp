@@ -2289,7 +2289,6 @@ ComputeStatus D3D12::getLUIDFromDevice(NVSDK_NGX_LUID *OutId)
 
 ComputeStatus D3D12::beginPerfSection(CommandList cmdList, const char *key, uint32_t node, bool reset)
 {
-#if SL_ENABLE_TIMING
     PerfData* data = {};
     {
         std::scoped_lock lock(m_mutexProfiler);
@@ -2365,13 +2364,11 @@ ComputeStatus D3D12::beginPerfSection(CommandList cmdList, const char *key, uint
     }
 
     ((ID3D12GraphicsCommandList*)cmdList)->EndQuery(data->queryHeap[data->queryIdx], D3D12_QUERY_TYPE_TIMESTAMP, 0);
-#endif
     return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D12::endPerfSection(CommandList cmdList, const char* key, float &avgTimeMS, uint32_t node)
 {
-#if SL_ENABLE_TIMING
     PerfData* data = {};
     {
         std::scoped_lock lock(m_mutexProfiler);
@@ -2386,11 +2383,9 @@ ComputeStatus D3D12::endPerfSection(CommandList cmdList, const char* key, float 
     data->queryIdx = (data->queryIdx + 1) % SL_READBACK_QUEUE_SIZE;
 
     avgTimeMS = (float)data->meter.getMean();
-#else
-    avgTimeMS = 0;
-#endif
     return ComputeStatus::eOk;
 }
+
 
 ComputeStatus D3D12::beginProfiling(CommandList cmdList, uint32_t metadata, const char* marker)
 {

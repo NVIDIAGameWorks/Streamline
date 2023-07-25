@@ -2,6 +2,11 @@ require("vstudio")
 
 local ROOT = "./"
 
+nvcfg = {}
+
+
+
+
 function os.winSdkVersion()
     local reg_arch = iif( os.is64bit(), "\\Wow6432Node\\", "\\" )
     local sdk_version = os.getWindowsRegistry( "HKLM:SOFTWARE" .. reg_arch .."Microsoft\\Microsoft SDKs\\Windows\\v10.0\\ProductVersion" )
@@ -76,11 +81,11 @@ workspace "streamline"
 	filter { "files:**.hlsl" }
 		buildmessage 'Compiling shader %{file.relpath} to DXBC/SPIRV with slang'
         buildcommands {				
-			path.translate("../../external/slang_internal/bin/windows-x64/release/")..'slangc "%{file.relpath}" -entry main -target spirv -o "../../_artifacts/shaders/%{file.basename}.spv"',
-			path.translate("../../external/slang_internal/bin/windows-x64/release/")..'slangc "%{file.relpath}" -profile sm_5_0 -entry main -target dxbc -o "../../_artifacts/shaders/%{file.basename}.cs"',
+			path.translate("../../external/slang/bin/windows-x64/release/")..'slangc "%{file.relpath}" -entry main -target spirv -o "../../_artifacts/shaders/%{file.basename}.spv"',
+			path.translate("../../external/slang/bin/windows-x64/release/")..'slangc "%{file.relpath}" -profile sm_5_0 -entry main -target dxbc -o "../../_artifacts/shaders/%{file.basename}.cs"',
 			'pushd '..path.translate("../../_artifacts/shaders"),
-			path.translate("../../tools/")..'xxd --include "%{file.basename}.spv"  > "%{file.basename}_spv.h"',
-			path.translate("../../tools/")..'xxd --include "%{file.basename}.cs"  > "%{file.basename}_cs.h"',
+			'powershell.exe -ExecutionPolicy Bypass '..path.translate("../../tools/")..'bin2cheader.ps1 -i "%{file.basename}.spv"  > "%{file.basename}_spv.h"',
+			'powershell.exe -ExecutionPolicy Bypass '..path.translate("../../tools/")..'bin2cheader.ps1 -i "%{file.basename}.cs"  > "%{file.basename}_cs.h"',
 			'popd'
 		 }	  
 		 -- One or more outputs resulting from the build (required)
@@ -108,6 +113,7 @@ project "sl.interposer"
 	else
 		prebuildcommands { 'pushd '..path.translate("../../_artifacts"), path.translate("../tools/").."gitVersion.sh", 'popd' }
 	end
+
 
 	files { 
 		"./include/**.h",
@@ -180,8 +186,9 @@ project "sl.compute"
 	staticruntime "off"
 	dependson { "sl.interposer"}
 
+
 	if os.host() == "windows" then
-		if (os.isfile("./external/slang_internal/bin/windows-x64/release/slangc.exe")) then
+		if (os.isfile("./external/slang/bin/windows-x64/release/slangc.exe")) then
 		files {
 			"./shaders/**.hlsl"
 		}
@@ -273,7 +280,7 @@ project "sl.common"
 	vpaths { ["impl"] = {"./source/plugins/sl.common/**.h", "./source/plugins/sl.common/**.cpp" }}
 	--vpaths { ["ngx"] = {"./source/core/ngx/**.h", "./source/core/ngx/**.cpp"}}
 	
-	libdirs {externaldir .."nvapi/amd64",externaldir .."ngx/Lib/Windows_x86_64/x86_64", externaldir .."pix/bin", externaldir .."reflex-sdk-vk/lib"}
+	libdirs {externaldir .."nvapi/amd64",externaldir .."ngx-sdk/Lib/Windows_x86_64", externaldir .."pix/bin", externaldir .."reflex-sdk-vk/lib"}
 	
     links
     {     

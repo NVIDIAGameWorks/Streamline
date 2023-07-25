@@ -937,15 +937,15 @@ Result slGetFeatureRequirements(sl::Feature feature, sl::FeatureRequirements& re
             requirements.vkFeatures13 = (const char**)data.second;
         }
         // Additional queues?
-        if (cfg.contains("/external/vk/device/queues/graphics/count"_json_pointer))
+        if (cfg.contains("/vk/device/queues/graphics/count"_json_pointer))
         {
             requirements.vkNumGraphicsQueuesRequired = cfg["vk"]["device"]["queues"]["graphics"]["count"];
         }
-        if (cfg.contains("/external/vk/device/queues/compute/count"_json_pointer))
+        if (cfg.contains("/vk/device/queues/compute/count"_json_pointer))
         {
             requirements.vkNumComputeQueuesRequired = cfg["vk"]["device"]["queues"]["compute"]["count"];
         }
-        if (cfg.contains("/external/vk/device/queues/opticalflow/count"_json_pointer))
+        if (cfg.contains("/vk/device/queues/opticalflow/count"_json_pointer))
         {
             if (requirements.structVersion >= kStructVersion2)
             {

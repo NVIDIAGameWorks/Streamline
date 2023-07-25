@@ -28,15 +28,54 @@ namespace sl
 //! Real-Time Denoiser
 constexpr Feature kFeatureNRD = 1;
 
+// inputs
+constexpr BufferType kBufferTypeInDiffuseRadianceHitDist =      FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 0);
+constexpr BufferType kBufferTypeInSpecularRadianceHitDist =     FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 1);
+constexpr BufferType kBufferTypeInDiffuseHitDist =              FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 2);
+constexpr BufferType kBufferTypeInSpecularHitDist =             FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 3);
+constexpr BufferType kBufferTypeInDiffuseDirectionHitDist =     FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 4);
+constexpr BufferType kBufferTypeInDiffuseSH0 =                  FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 5);
+constexpr BufferType kBufferTypeInDiffuseSH1 =                  FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 6);
+constexpr BufferType kBufferTypeInSpecularSH0 =                 FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 7);
+constexpr BufferType kBufferTypeInSpecularSH1 =                 FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 8);
+constexpr BufferType kBufferTypeInDiffuseConfidence =           FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 9);
+constexpr BufferType kBufferTypeInSpecularConfidence =          FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 10);
+constexpr BufferType kBufferTypeInDisocclusionThresholdMix =    FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 11);
+constexpr BufferType kBufferTypeInBasecolorMetalness =          FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 12);
+constexpr BufferType kBufferTypeInShadowData =                  FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 13);
+constexpr BufferType kBufferTypeInShadowTransluscency =         FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 14);
+constexpr BufferType kBufferTypeInRadiance =                    FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 15);
+constexpr BufferType kBufferTypeInDeltaPrimaryPos =             FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 16);
+constexpr BufferType kBufferTypeInDeltaSecondaryPos =           FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 17);
+
+// ouputs
+constexpr BufferType kBufferTypeOutDiffuseRadianceHitDist =     FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 18);
+constexpr BufferType kBufferTypeOutSpecularRadianceHitDist =    FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 19);
+constexpr BufferType kBufferTypeOutDiffuseSH0 =                 FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 20);
+constexpr BufferType kBufferTypeOutDiffuseSH1 =                 FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 21);
+constexpr BufferType kBufferTypeOutSpecularSH0 =                FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 22);
+constexpr BufferType kBufferTypeOutSpecularSH1 =                FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 23);
+constexpr BufferType kBufferTypeOutDiffuseHitDist =             FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 24);
+constexpr BufferType kBufferTypeOutSpecularHitDist =            FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 25);
+constexpr BufferType kBufferTypeOutDiffuseDirectionHitDist =    FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 26);
+constexpr BufferType kBufferTypeOutShadowTransluscency =        FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 27);
+constexpr BufferType kBufferTypeOutRadiance =                   FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 28);
+constexpr BufferType kBufferTypeOutReflectionMv =               FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 29);
+constexpr BufferType kBufferTypeOutDeltaMv =                    FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 30);
+constexpr BufferType kBufferTypeOutValidation =                 FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 31);
+
 enum class NRDMethods : uint32_t
 {
     eOff,
     eReblurDiffuse,
     eReblurDiffuseOcclusion,
+    eReblurDiffuseSh,
     eReblurSpecular,
     eReblurSpecularOcclusion,
+    eReblurSpecularSh,
     eReblurDiffuseSpecular,
     eReblurDiffuseSpecularOcclusion,
+    eReblurDiffuseSpecularSh,
     eReblurDiffuseDirectionalOcclusion,
     eSigmaShadow,
     eSigmaShadowTranslucency,
@@ -85,6 +124,20 @@ enum class NRDAccumulationMode : uint8_t
     MAX_NUM
 };
 
+enum class NRDHitDistanceReconstructionMode : uint8_t
+{
+    // Probabilistic split at primary hit is not used, hence hit distance is always valid (reconstruction is not needed)
+    OFF,
+
+    // If hit distance is invalid due to probabilistic sampling, reconstruct using 3x3 neighbors
+    AREA_3X3,
+
+    // If hit distance is invalid due to probabilistic sampling, reconstruct using 5x5 neighbors
+    AREA_5X5,
+
+    MAX_NUM
+};
+
 enum class NRDPrePassMode
 {
     // Pre-pass is disabled
@@ -99,32 +152,85 @@ enum class NRDPrePassMode
 
 struct NRDCommonSettings
 {
-    // World-space to camera-space matrix
-    float4x4 worldToViewMatrix = {};
+    // Matrix requirements:
+    //     - usage - vector is a column
+    //     - layout - column-major
+    //     - non jittered!
+    // LH / RH projection matrix (INF far plane is supported) with non-swizzled rows, i.e. clip-space depth = z / w
+    float viewToClipMatrix[16] = {};
 
-    // If "isMotionVectorInWorldSpace = true" will be used as "MV * motionVectorScale.xyy"
-    float motionVectorScale[2] = { 1.0f, 1.0f };
+    // Previous projection matrix
+    float viewToClipMatrixPrev[16] = {};
+
+    // World-space to camera-space matrix
+    float worldToViewMatrix[16] = {};
+
+    // If coordinate system moves with the camera, camera delta must be included to reflect camera motion
+    float worldToViewMatrixPrev[16] = {};
+
+    // (Optional) Previous world-space to current world-space matrix. It is for virtual normals, where a coordinate
+    // system of the virtual space changes frame to frame, such as in a case of animated intermediary reflecting
+    // surfaces when primary surface replacement is used for them.
+    float worldPrevToWorldMatrix[16] = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f
+    };
+
+    // used as "IN_MV * motionVectorScale" (use .z = 0 for 2D screen-space motion)
+    float motionVectorScale[3] = { 1.0f, 1.0f, 0.0f };
+
+    // [-0.5; 0.5] - sampleUv = pixelUv + cameraJitter
+    float cameraJitter[2] = {};
+    float cameraJitterPrev[2] = {};
 
     // (0; 1] - dynamic resolution scaling
     float resolutionScale[2] = { 1.0f, 1.0f };
+    float resolutionScalePrev[2] = { 1.0f, 1.0f };
 
     // (ms) - user provided if > 0, otherwise - tracked internally
     float timeDeltaBetweenFrames = 0.0f;
 
-    // (m) > 0 - use TLAS or tracing range
-    float denoisingRange = 1e7f;
+    // (units) > 0 - use TLAS or tracing range (max value = NRD_FP16_MAX / NRD_FP16_VIEWZ_SCALE - 1 = 524031)
+    float denoisingRange = 500000.0f;
 
-    // (normalized %)
+    // (normalized %) - if relative distance difference is greater than threshold, history gets reset (0.5-2.5% works well)
     float disocclusionThreshold = 0.01f;
+
+    // (normalized %) - alternative disocclusion threshold, which is mixed to based on IN_DISOCCLUSION_THRESHOLD_MIX
+    float disocclusionThresholdAlternate = 0.05f;
 
     // [0; 1] - enables "noisy input / denoised output" comparison
     float splitScreen = 0.0f;
 
+    // For internal needs
+    float debug = 0.0f;
+
+    // (pixels) - data rectangle origin in ALL input textures
+    uint32_t inputSubrectOrigin[2] = {};
+
+    // A consecutive number
+    uint32_t frameIndex = 0;
+
     // To reset history set to RESTART / CLEAR_AND_RESTART for one frame
     NRDAccumulationMode accumulationMode = NRDAccumulationMode::CONTINUE;
 
-    // If "true" IN_DIFF_CONFIDENCE and IN_SPEC_CONFIDENCE are provided
-    bool isHistoryConfidenceInputsAvailable = false;
+    // If "true" IN_MV is 3D motion in world-space (0 should be everywhere if the scene is static),
+    // otherwise it's 2D (+ optional Z delta) screen-space motion (0 should be everywhere if the camera doesn't move) (recommended value = true)
+    bool isMotionVectorInWorldSpace = false;
+
+    // If "true" IN_DIFF_CONFIDENCE and IN_SPEC_CONFIDENCE are available
+    bool isHistoryConfidenceAvailable = false;
+
+    // If "true" IN_DISOCCLUSION_THRESHOLD_MIX is available
+    bool isDisocclusionThresholdMixAvailable = false;
+
+    // If "true" IN_BASECOLOR_METALNESS is available
+    bool isBaseColorMetalnessAvailable = false;
+
+    // Enables debug overlay in OUT_VALIDATION, requires "DenoiserCreationDesc::allowValidation = true"
+    bool enableValidation = false;
 };
 
 // "Normalized hit distance" = saturate( "hit distance" / f ), where:
@@ -205,28 +311,34 @@ const uint32_t REBLUR_MAX_HISTORY_FRAME_NUM = 63;
 
 struct NRDReblurSettings
 {
-    NRDLobeTrimmingParameters lobeTrimmingParameters = {};
     NRDHitDistanceParameters hitDistanceParameters = {};
     NRDAntilagIntensitySettings antilagIntensitySettings = {};
     NRDAntilagHitDistanceSettings antilagHitDistanceSettings = {};
 
-    // [0; REBLUR_MAX_HISTORY_FRAME_NUM]
-    uint32_t maxAccumulatedFrameNum = 31;
+    // [0; REBLUR_MAX_HISTORY_FRAME_NUM] - maximum number of linearly accumulated frames (= FPS * "time of accumulation")
+    uint32_t maxAccumulatedFrameNum = 30;
 
-    // (pixels) - base (worst case) denoising radius
-    float blurRadius = 30.0f;
+    // [0; REBLUR_MAX_HISTORY_FRAME_NUM] - maximum number of linearly accumulated frames in fast history (less than "maxAccumulatedFrameNum")
+    uint32_t maxFastAccumulatedFrameNum = 6;
 
-    // (normalized %) - defines base blur radius shrinking when number of accumulated frames increases
-    float minConvergedStateBaseRadiusScale = 0.25f;
+    // [0; REBLUR_MAX_HISTORY_FRAME_NUM] - number of reconstructed frames after history reset (less than "maxFastAccumulatedFrameNum")
+    uint32_t historyFixFrameNum = 3;
 
-    // [0; 10] - adaptive radius scale, comes into play if the algorithm detects boiling
-    float maxAdaptiveRadiusScale = 5.0f;
+    // (pixels) - pre-accumulation spatial reuse pass blur radius (0 = disabled, must be used in case of probabilistic sampling)
+    float diffusePrepassBlurRadius = 30.0f;
+    float specularPrepassBlurRadius = 50.0f;
+
+    // (pixels) - base denoising radius (30 is a baseline for 1440p)
+    float blurRadius = 15.0f;
+
+    // (pixels) - base stride between samples in history reconstruction pass
+    float historyFixStrideBetweenSamples = 14.0f;
 
     // (normalized %) - base fraction of diffuse or specular lobe angle used to drive normal based rejection
-    float lobeAngleFraction = 0.1f;
+    float lobeAngleFraction = 0.13f;
 
     // (normalized %) - base fraction of center roughness used to drive roughness based rejection
-    float roughnessFraction = 0.05f;
+    float roughnessFraction = 0.15f;
 
     // [0; 1] - if roughness < this, temporal accumulation becomes responsive and driven by roughness (useful for animated water)
     float responsiveAccumulationRoughnessThreshold = 0.0f;
@@ -234,28 +346,22 @@ struct NRDReblurSettings
     // (normalized %) - stabilizes output, more stabilization improves antilag (clean signals can use lower values)
     float stabilizationStrength = 1.0f;
 
-    // (normalized %) - aggresiveness of history reconstruction in disoccluded regions (0 - no reconstruction)
-    float historyFixStrength = 1.0f;
-
     // (normalized %) - represents maximum allowed deviation from local tangent plane
     float planeDistanceSensitivity = 0.005f;
 
-    // (normalized %) - adds a portion of input to the output of spatial passes
-    float inputMix = 0.0f;
+    // IN_MV = lerp(IN_MV, specularMotion, smoothstep(specularProbabilityThresholdsForMvModification[0], specularProbabilityThresholdsForMvModification[1], specularProbability))
+    float specularProbabilityThresholdsForMvModification[2] = { 0.5f, 0.9f };
 
-    // [0.01; 0.1] - default is tuned for 0.5rpp for the worst case
-    float residualNoiseLevel = 0.03f;
-
-    // If checkerboarding is enabled, defines the orientation of even numbered frames
+    // If not OFF and used for DIFFUSE_SPECULAR, defines diffuse orientation, specular orientation is the opposite
     NRDCheckerboardMode checkerboardMode = NRDCheckerboardMode::OFF;
 
-    // Enables a spatial reuse pass before the accumulation pass
-    NRDPrePassMode prePassMode = NRDPrePassMode::SIMPLE;
+    // Must be used only in case of probabilistic sampling (not checkerboarding), when a pixel can be skipped and have "0" (invalid) hit distance
+    NRDHitDistanceReconstructionMode hitDistanceReconstructionMode = NRDHitDistanceReconstructionMode::OFF;
 
     // Adds bias in case of badly defined signals, but tries to fight with fireflies
     bool enableAntiFirefly = false;
 
-    // Turns off spatial filtering, more aggressive accumulation
+    // Turns off spatial filtering and virtual motion based specular tracking
     bool enableReferenceAccumulation = false;
 
     // Boosts performance by sacrificing IQ
@@ -423,4 +529,23 @@ SL_STRUCT(NRDConstants, StructType({ 0x616b9345, 0xf235, 0x40f3, { 0x8e, 0xa7, 0
     NRDSigmaShadowSettings sigmaShadow;
 };
 
+}
+
+//! Sets NRD options
+//!
+//! Call this method to provide constants for NRD, change mode etc.
+//!
+//! @param viewport Specified viewport we are working with
+//! @param options Specifies NRD constants to use
+//! @return sl::ResultCode::eOk if successful, error code otherwise (see sl_result.h for details)
+//!
+//! This method is NOT thread safe.
+using PFun_slNRDSetConstants = sl::Result(const sl::ViewportHandle& viewport, const sl::NRDConstants& constants);
+
+//! HELPERS
+//!
+inline sl::Result slNRDSetConstants(const sl::ViewportHandle& viewport, const sl::NRDConstants& constants)
+{
+    SL_FEATURE_FUN_IMPORT_STATIC(sl::kFeatureNRD, slNRDSetConstants);
+    return s_slNRDSetConstants(viewport, constants);
 }

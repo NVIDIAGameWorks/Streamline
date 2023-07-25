@@ -50,10 +50,10 @@
 #pragma comment(lib,"shlwapi.lib")
 #endif
 
-#include "external/ngx/Include/nvsdk_ngx.h"
-#include "external/ngx/Include/nvsdk_ngx_helpers.h"
-#include "external/ngx/Include/nvsdk_ngx_helpers_vk.h"
-#include "external/ngx/Include/nvsdk_ngx_defs.h"
+#include "external/ngx-sdk/include/nvsdk_ngx.h"
+#include "external/ngx-sdk/include/nvsdk_ngx_helpers.h"
+#include "external/ngx-sdk/include/nvsdk_ngx_helpers_vk.h"
+#include "external/ngx-sdk/include/nvsdk_ngx_defs.h"
 #include "external/json/include/nlohmann/json.hpp"
 using json = nlohmann::json;
 
@@ -116,6 +116,7 @@ struct CommonEntryContext
 {
     SL_PLUGIN_CONTEXT_CREATE_DESTROY(CommonEntryContext);
 
+    void onCreateContext() {};
     void onDestroyContext() {};
 
     bool needNGX = false;

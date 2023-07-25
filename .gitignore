@@ -3,7 +3,6 @@ _artifacts/
 _sdk/
 _public/
 docs/pages/*
-external/*
 copy.bat
 mr.bat
 fb.bat

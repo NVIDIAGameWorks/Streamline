@@ -66,6 +66,7 @@ struct UIStats
 struct NISContext
 {
     SL_PLUGIN_CONTEXT_CREATE_DESTROY(NISContext);
+    void onCreateContext() {};
     void onDestroyContext() {};
 
     common::PFunRegisterEvaluateCallbacks* registerEvaluateCallbacks{};
@@ -320,7 +321,9 @@ Result nisEndEvaluation(chi::CommandList cmdList, const common::EventData& data,
         }
     }
 
+#if SL_ENABLE_TIMING
     CHI_VALIDATE(ctx.compute->beginPerfSection(cmdList, "sl.nis"));
+#endif
 
     extra::ScopedTasks revTransitions;
     chi::ResourceTransition transitions[] =
@@ -344,7 +347,9 @@ Result nisEndEvaluation(chi::CommandList cmdList, const common::EventData& data,
     CHI_VALIDATE(ctx.compute->dispatch(UINT(std::ceil(outDesc.width / float(ctx.blockWidth))), UINT(std::ceil(outDesc.height / float(ctx.blockHeight))), 1));
 
     float ms = 0;
+#if SL_ENABLE_TIMING
     CHI_VALIDATE(ctx.compute->endPerfSection(cmdList, "sl.nis", ms));
+#endif
 
     auto parameters = api::getContext()->parameters;
 

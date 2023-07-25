@@ -23,6 +23,7 @@
 #pragma once
 
 #include "sl_consts.h"
+#include <vector>
 
 // Forward declarations matching MS and VK specs
 using HRESULT = long;
@@ -100,6 +101,7 @@ SL_STRUCT(DLSSGOptions, StructType({ 0xfac5f1cb, 0x2dfd, 0x4f36, { 0xa1, 0xe6, 0
 
     //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
 };
+
 
 enum class DLSSGStatus : uint32_t
 {

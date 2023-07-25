@@ -654,86 +654,114 @@ inline VkImageLayout toVkImageLayout(ResourceState state)
 {
     switch (state)
     {
-        case ResourceState::eUndefined: return VK_IMAGE_LAYOUT_UNDEFINED;
+        default:
         case ResourceState::eGeneral: return VK_IMAGE_LAYOUT_GENERAL;
-        case ResourceState::eVertexBuffer: return VK_IMAGE_LAYOUT_GENERAL;
-        case ResourceState::eIndexBuffer: return VK_IMAGE_LAYOUT_GENERAL;
-        case ResourceState::eConstantBuffer: return VK_IMAGE_LAYOUT_GENERAL;
-        case ResourceState::eArgumentBuffer: return VK_IMAGE_LAYOUT_GENERAL;
         case ResourceState::eTextureRead: return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        case ResourceState::eStorageRead: return VK_IMAGE_LAYOUT_GENERAL;
-        case ResourceState::eStorageWrite: return VK_IMAGE_LAYOUT_GENERAL;
-        case ResourceState::eStorageRW: return VK_IMAGE_LAYOUT_GENERAL;
-        case ResourceState::eColorAttachmentRead: return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        case ResourceState::eColorAttachmentWrite: return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        case ResourceState::eDepthStencilAttachmentWrite: return VK_IMAGE_LAYOUT_GENERAL;
+        case ResourceState::eColorAttachmentRead:
+        case ResourceState::eColorAttachmentWrite:
+        case ResourceState::eColorAttachmentRW: return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         case ResourceState::eDepthStencilAttachmentRead: return VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-        case ResourceState::eCopySource: return VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        case ResourceState::eCopyDestination: return VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        case ResourceState::eAccelStructRead: return VK_IMAGE_LAYOUT_GENERAL;
-        case ResourceState::eAccelStructWrite: return VK_IMAGE_LAYOUT_GENERAL;
-        case ResourceState::eResolveSource: return VK_IMAGE_LAYOUT_GENERAL;
-        case ResourceState::eResolveDestination: return VK_IMAGE_LAYOUT_GENERAL;
+        case ResourceState::eDepthStencilAttachmentWrite:
+        case ResourceState::eDepthStencilAttachmentRW: return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        case ResourceState::eCopySource:
+        case ResourceState::eResolveSource: return VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        case ResourceState::eCopyDestination:
+        case ResourceState::eResolveDestination: return VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         case ResourceState::ePresent: return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    };
-    return VK_IMAGE_LAYOUT_GENERAL;
+        case ResourceState::eUndefined: return VK_IMAGE_LAYOUT_UNDEFINED;
+    }
 };
 
 VkAccessFlags toVkAccessFlags(ResourceState state)
 {
-    VkAccessFlags flags = 0;
-
     switch (state)
     {
-    case ResourceState::eVertexBuffer: return VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
-    case ResourceState::eIndexBuffer: return VK_ACCESS_INDEX_READ_BIT;
-    case ResourceState::eConstantBuffer: return VK_ACCESS_UNIFORM_READ_BIT;
-    case ResourceState::eArgumentBuffer: return VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
-    case ResourceState::eTextureRead: return VK_ACCESS_SHADER_READ_BIT;
-    case ResourceState::eStorageRead: return VK_ACCESS_SHADER_READ_BIT;
-    case ResourceState::eStorageWrite: return VK_ACCESS_SHADER_WRITE_BIT;
-    case ResourceState::eStorageRW: return VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-    case ResourceState::eColorAttachmentRead: return VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
-    case ResourceState::eColorAttachmentWrite: return VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    case ResourceState::eDepthStencilAttachmentWrite: return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    case ResourceState::eDepthStencilAttachmentRead: return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
-    case ResourceState::eCopySource: return VK_ACCESS_TRANSFER_READ_BIT;
-    case ResourceState::eCopyDestination: return VK_ACCESS_TRANSFER_WRITE_BIT;
-    case ResourceState::eAccelStructRead: return VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
-    case ResourceState::eAccelStructWrite: return VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-    case ResourceState::eResolveSource: return VK_ACCESS_TRANSFER_READ_BIT;
-    case ResourceState::eResolveDestination: return VK_ACCESS_TRANSFER_WRITE_BIT;
-    };
-    return flags;
+        case ResourceState::eVertexBuffer: return VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
+        case ResourceState::eIndexBuffer: return VK_ACCESS_INDEX_READ_BIT;
+        case ResourceState::eConstantBuffer: return VK_ACCESS_UNIFORM_READ_BIT;
+        case ResourceState::eArgumentBuffer: return VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+        case ResourceState::eTextureRead: return VK_ACCESS_SHADER_READ_BIT;
+        case ResourceState::eStorageRead: return VK_ACCESS_SHADER_READ_BIT;
+        case ResourceState::eStorageWrite: return VK_ACCESS_SHADER_WRITE_BIT;
+        case ResourceState::eStorageRW: return VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        case ResourceState::eColorAttachmentRead: return VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
+        case ResourceState::eColorAttachmentWrite: return VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        case ResourceState::eColorAttachmentRW: return VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        case ResourceState::eDepthStencilAttachmentRead: return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+        case ResourceState::eDepthStencilAttachmentWrite: return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        case ResourceState::eDepthStencilAttachmentRW: return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        case ResourceState::eCopySource: return VK_ACCESS_TRANSFER_READ_BIT;
+        case ResourceState::eCopyDestination: return VK_ACCESS_TRANSFER_WRITE_BIT;
+        case ResourceState::eAccelStructRead: return VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+        case ResourceState::eAccelStructWrite: return VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+        case ResourceState::eResolveSource: return VK_ACCESS_TRANSFER_READ_BIT;
+        case ResourceState::eResolveDestination: return VK_ACCESS_TRANSFER_WRITE_BIT;
+        default: return 0;
+    }
+}
+
+VkImageAspectFlags toVkAspectFlags(uint32_t nativeFormat)
+{
+    switch (nativeFormat)
+    {
+        case VK_FORMAT_D16_UNORM:
+        case VK_FORMAT_D32_SFLOAT: return VK_IMAGE_ASPECT_DEPTH_BIT;
+        case VK_FORMAT_D24_UNORM_S8_UINT: return VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+        case VK_FORMAT_S8_UINT: return VK_IMAGE_ASPECT_STENCIL_BIT;
+        default: return VK_IMAGE_ASPECT_COLOR_BIT;
+    }
 }
 
 ComputeStatus Vulkan::getResourceState(uint32_t states, ResourceState& resourceStates)
 {
-    resourceStates = ResourceState::eUndefined;
-    
-    if(states & VK_IMAGE_LAYOUT_GENERAL) resourceStates = ResourceState::eGeneral;
-    if(states & VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) resourceStates |= ResourceState::eTextureRead;
-    if(states & VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) resourceStates |= ResourceState::eColorAttachmentWrite;
-    if(states & VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL) resourceStates |= ResourceState::eDepthStencilAttachmentRead;
-    if(states & VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) resourceStates |= ResourceState::eCopySource;
-    if(states & VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) resourceStates |= ResourceState::eCopyDestination;
-    if(states & VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) resourceStates |= ResourceState::ePresent;
-    
+    switch (states)
+    {
+        case VK_IMAGE_LAYOUT_UNDEFINED:
+            resourceStates = ResourceState::eUndefined;
+            break;
+        default:
+        case VK_IMAGE_LAYOUT_GENERAL:
+            resourceStates = ResourceState::eGeneral;
+            break;
+        case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+            resourceStates = ResourceState::eColorAttachmentRW;
+            break;
+        case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
+        case VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL:
+        case VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL:
+        case VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL:
+        case VK_IMAGE_LAYOUT_STENCIL_ATTACHMENT_OPTIMAL:
+            resourceStates = ResourceState::eDepthStencilAttachmentRW;
+            break;
+        case VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL:
+        case VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL:
+        case VK_IMAGE_LAYOUT_STENCIL_READ_ONLY_OPTIMAL:
+            resourceStates = ResourceState::eDepthStencilAttachmentRead;
+            break;
+        case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+            resourceStates = ResourceState::eTextureRead;
+            break;
+        case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+            resourceStates = ResourceState::eCopySource;
+            break;
+        case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+            resourceStates = ResourceState::eCopyDestination;
+            break;
+        case VK_IMAGE_LAYOUT_PREINITIALIZED:
+            resourceStates = ResourceState::eGenericRead;
+            break;
+        case VK_IMAGE_LAYOUT_PRESENT_SRC_KHR:
+        case VK_IMAGE_LAYOUT_SHARED_PRESENT_KHR:
+            resourceStates = ResourceState::ePresent;
+            break;
+    }
+
     return ComputeStatus::eOk;
 }
 
 ComputeStatus Vulkan::getNativeResourceState(ResourceState states, uint32_t& resourceStates)
 {
-    resourceStates = VK_IMAGE_LAYOUT_UNDEFINED;
-
-    if (states & ResourceState::eGeneral) resourceStates = VK_IMAGE_LAYOUT_GENERAL;
-    if (states & ResourceState::eTextureRead) resourceStates |= VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    if (states & ResourceState::eColorAttachmentRead) resourceStates |= VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    if (states & ResourceState::eColorAttachmentWrite) resourceStates |= VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    if (states & ResourceState::eDepthStencilAttachmentRead) resourceStates |= VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-    if (states & ResourceState::eCopySource) resourceStates |= VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    if (states & ResourceState::eCopyDestination) resourceStates |= VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    if (states & ResourceState::ePresent) resourceStates |= VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    resourceStates = toVkImageLayout(states);
 
     return ComputeStatus::eOk;
 }
@@ -1721,7 +1749,7 @@ ComputeStatus Vulkan::createTexture2DResourceSharedImpl(ResourceDescription &res
     else
     {
         resDesc.flags &= ~ResourceFlags::eDepthStencilAttachment;
-        resDesc.state &= ~(ResourceState::eDepthStencilAttachmentRead | ResourceState::eDepthStencilAttachmentWrite);
+        resDesc.state &= ~ResourceState::eDepthStencilAttachmentRW;
     }
     if (isFormatSupported(resDesc.format, VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT))
     {
@@ -1846,7 +1874,7 @@ ComputeStatus Vulkan::createTexture2DResourceSharedImpl(ResourceDescription &res
         texViewCreateInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
         texViewCreateInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
         texViewCreateInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-        texViewCreateInfo.subresourceRange.aspectMask = resDesc.flags & ResourceFlags::eDepthStencilAttachment ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+        texViewCreateInfo.subresourceRange.aspectMask = toVkAspectFlags(resDesc.nativeFormat);
         texViewCreateInfo.subresourceRange.baseMipLevel = 0;
         texViewCreateInfo.subresourceRange.levelCount = 1;
         texViewCreateInfo.subresourceRange.baseArrayLayer = 0;
@@ -2102,7 +2130,7 @@ ComputeStatus Vulkan::copyHostToDeviceTexture(CommandList InCmdList, uint64_t In
             VK_QUEUE_FAMILY_IGNORED,
             VK_QUEUE_FAMILY_IGNORED,
             dst,
-            {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
+            {toVkAspectFlags(dstResource->nativeFormat), 0, 1, 0, 1}
         };
         m_ddt.CmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &transferBarrier);
     }
@@ -2112,7 +2140,7 @@ ComputeStatus Vulkan::copyHostToDeviceTexture(CommandList InCmdList, uint64_t In
 
     // Copy from staging to texture
     VkBufferImageCopy buffImageCopyRegions{};
-    buffImageCopyRegions.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    buffImageCopyRegions.imageSubresource.aspectMask = toVkAspectFlags(dstResource->nativeFormat);
     buffImageCopyRegions.imageSubresource.layerCount = 1;
     buffImageCopyRegions.imageExtent = { desc.width, desc.height, 1 };
     m_ddt.CmdCopyBufferToImage(commandBuffer, scratch, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &buffImageCopyRegions);
@@ -2128,7 +2156,7 @@ ComputeStatus Vulkan::copyHostToDeviceTexture(CommandList InCmdList, uint64_t In
             VK_QUEUE_FAMILY_IGNORED,
             VK_QUEUE_FAMILY_IGNORED,
             dst,
-            {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
+            {toVkAspectFlags(dstResource->nativeFormat), 0, 1, 0, 1}
         };
         m_ddt.CmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &useBarrier);
     }
@@ -2173,7 +2201,7 @@ ComputeStatus Vulkan::insertGPUBarrier(CommandList InCmdList, Resource InResourc
                 VK_QUEUE_FAMILY_IGNORED,
                 VK_QUEUE_FAMILY_IGNORED,
                 (VkImage)inResourceVK->native,
-                { VK_IMAGE_ASPECT_COLOR_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}
+                { toVkAspectFlags(inResourceVK->nativeFormat), 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}
             };
 
             m_ddt.CmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, 0, 0, 0, 1, &memoryBarrier);
@@ -2220,7 +2248,6 @@ ComputeStatus Vulkan::transitionResourceImpl(CommandList cmdList, const Resource
         }
         else
         {
-            bool depth = (transitions[i].from & ResourceState::eDepthStencilAttachmentRead) != 0 || (transitions[i].to & ResourceState::eDepthStencilAttachmentRead) != 0;
             VkImageMemoryBarrier barrier{};
             barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
             barrier.pNext = nullptr;
@@ -2231,7 +2258,7 @@ ComputeStatus Vulkan::transitionResourceImpl(CommandList cmdList, const Resource
             barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier.image = (VkImage)info->native;
-            barrier.subresourceRange.aspectMask = depth ? VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+            barrier.subresourceRange.aspectMask = toVkAspectFlags(info->nativeFormat);
             barrier.subresourceRange.baseArrayLayer = 0;
             barrier.subresourceRange.baseMipLevel = 0;
             barrier.subresourceRange.levelCount = VK_REMAINING_MIP_LEVELS;
@@ -2298,7 +2325,7 @@ ComputeStatus Vulkan::getResourceDescription(Resource resource, ResourceDescript
         else
         {
             resDesc.flags &= ~ResourceFlags::eDepthStencilAttachment;
-            resDesc.state &= ~(ResourceState::eDepthStencilAttachmentRead | ResourceState::eDepthStencilAttachmentWrite);
+            resDesc.state &= ~ResourceState::eDepthStencilAttachmentRW;
         }
         if (isFormatSupported(resDesc.format, VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT))
         {
@@ -2524,18 +2551,12 @@ ComputeStatus Vulkan::copyResource(CommandList InCmdList, Resource InDstResource
     {
         VkImageCopy copyRegion = 
         { 
-            { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
+            { toVkAspectFlags(src->nativeFormat), 0, 0, 1 },
             {0,0,0},
-            { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
+            { toVkAspectFlags(dst->nativeFormat), 0, 0, 1 },
             {0, 0, 0},
             {desc.width, desc.height, 1}
         };
-        bool depth = desc.flags & ResourceFlags::eDepthStencilAttachment;
-        if (depth)
-        {
-            copyRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-            copyRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-        }
         m_ddt.CmdCopyImage((VkCommandBuffer)InCmdList, (VkImage)src->native, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, (VkImage)dst->native, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
     }
 
@@ -2598,7 +2619,7 @@ ComputeStatus Vulkan::clearView(CommandList InCmdList, Resource InResource, cons
         clearColor.float32[2] = Color.z;
         clearColor.float32[3] = Color.w;
         VkImageSubresourceRange subresourceRange;
-        subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        subresourceRange.aspectMask = toVkAspectFlags(vkResource->nativeFormat);
         subresourceRange.baseMipLevel = 0;
         subresourceRange.levelCount = 1;
         subresourceRange.baseArrayLayer = 0;
@@ -2848,7 +2869,6 @@ ComputeStatus Vulkan::copyBufferToReadbackBuffer(CommandList InCmdList, Resource
 
 ComputeStatus Vulkan::beginPerfSection(CommandList cmdList, const char *key, unsigned int node, bool reset)
 {
-#if SL_ENABLE_TIMING
     std::scoped_lock lock(m_mutexProfiler);
     auto Section = m_SectionPerfMap[node].find(key);
     if (Section == m_SectionPerfMap[node].end())
@@ -2907,13 +2927,11 @@ ComputeStatus Vulkan::beginPerfSection(CommandList cmdList, const char *key, uns
     }
 
     m_ddt.CmdWriteTimestamp(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, Data.QueryPool[Data.QueryIdx], 0);
-#endif
     return ComputeStatus::eOk;
 }
 
 ComputeStatus Vulkan::endPerfSection(CommandList cmdList, const char *key, float &avgTimeMS, unsigned int node)
 {
-#if SL_ENABLE_TIMING
     std::scoped_lock lock(m_mutexProfiler);
     auto Section = m_SectionPerfMap[node].find(key);
     if (Section == m_SectionPerfMap[node].end())
@@ -2928,9 +2946,6 @@ ComputeStatus Vulkan::endPerfSection(CommandList cmdList, const char *key, float
 
     avgTimeMS = Data.NumExecutedQueries ? Data.AccumulatedTimeMS / Data.NumExecutedQueries : 0;
     //OutAvgTimeMS = Data.Times.empty() ? 0.0f : (float)Data.Times[Data.Times.size() / 2];
-#else
-    avgTimeMS = 0;
-#endif
     return ComputeStatus::eOk;
 }
 
@@ -2998,12 +3013,12 @@ ComputeStatus Vulkan::getNativeFormat(Format format, NativeFormat& native)
         case eFormatRG16UN:     native = VK_FORMAT_R16G16_UNORM; break;
         case eFormatR32UI:      native = VK_FORMAT_R32_UINT; break;
         case eFormatRG32UI:     native = VK_FORMAT_R32G32_UINT; break;
-        case eFormatRG32F:     native = VK_FORMAT_R32G32_SFLOAT; break;
+        case eFormatRG32F:      native = VK_FORMAT_R32G32_SFLOAT; break;
         case eFormatSRGBA8UN:   native = VK_FORMAT_R8G8B8A8_SRGB; break;
         case eFormatSBGRA8UN:   native = VK_FORMAT_B8G8R8A8_SRGB; break;
         case eFormatD24S8:      native = VK_FORMAT_D24_UNORM_S8_UINT; break;
-        case eFormatD32S32:      native = VK_FORMAT_D32_SFLOAT; break;
-        case eFormatR32F:      native = VK_FORMAT_R32_SFLOAT; break;
+        case eFormatD32S32:     native = VK_FORMAT_D32_SFLOAT; break;
+        case eFormatR32F:       native = VK_FORMAT_R32_SFLOAT; break;
         case eFormatE5M3: assert(false);
     }
     

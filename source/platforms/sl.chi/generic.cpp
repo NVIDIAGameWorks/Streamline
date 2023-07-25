@@ -669,6 +669,11 @@ ComputeStatus Generic::createBuffer(const ResourceDescription& CreateResourceDes
     ResourceDescription ResourceDesc = CreateResourceDesc;
     ResourceDesc.flags |= ResourceFlags::eRawOrStructuredBuffer | ResourceFlags::eConstantBuffer;
 
+    // if we don't have any name at all - grab at least this one
+    if (ResourceDesc.sName.size() == 0)
+    {
+        ResourceDesc.sName = InFriendlyName;
+    }
     CHI_CHECK(createBufferResourceImpl(ResourceDesc, OutResource, ResourceDesc.state));
 
     manageVRAM(OutResource, VRAMOperation::eAlloc);
@@ -701,6 +706,11 @@ ComputeStatus Generic::createTexture2DResourceShared(const ResourceDescription& 
         getFormat(resourceDesc.nativeFormat, resourceDesc.format);
     }
 
+    // if we don't have any name at all - grab at least this one
+    if (resourceDesc.sName.size() == 0)
+    {
+        resourceDesc.sName = InFriendlyName;
+    }
     CHI_CHECK(createTexture2DResourceSharedImpl(resourceDesc, OutResource, UseNativeFormat, resourceDesc.state));
 
     manageVRAM(OutResource, VRAMOperation::eAlloc);

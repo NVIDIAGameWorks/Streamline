@@ -1,4 +1,4 @@
-# Streamline (SL) - Version 2.1.0
+# Streamline (SL) - Version 2.1.1
 
 Streamline is an open-sourced cross-IHV solution that simplifies integration of the latest NVIDIA and other independent hardware vendors’ super resolution technologies into applications and games. This framework allows developers to easily implement one single integration and enable multiple super-resolution technologies and other graphics effects supported by the hardware vendor.
 
@@ -73,13 +73,7 @@ Obviously, `sl.dlss_g.dll` cannot be built from source and thus the prebuilt cop
 
 #### (Optional) Compiling Shaders
 
-Most users will not need to compile shaders as they are provided pre-compiled.  If you need to compile HLSL shaders for your own plugin, you will need to place slang in the .\external\slang_internal folder and xxd in the .\tools folder.  Then any *.hlsl files in the .\shaders folder will be compiled at build time.  Without these tools in place, the precompiled versions of the shaders in `_artifacts\shaders\` will be used, even if the source shaders are edited.
-
-Additionally, if you would like to recompile the shaders for the NIS plugin, you will need to have Python 3 installed and in the path.
-
-Slang may be found at https://github.com/shader-slang/slang
-
-xxd may be found at https://sourceforge.net/projects/xxd-for-windows/
+If you would like to recompile the shaders for the NIS plugin, you will need to have Python 3 installed and in the path.
 
 ## SDK Packaging
 

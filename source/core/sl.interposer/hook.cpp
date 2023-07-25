@@ -82,6 +82,7 @@ if (config.contains(#a))                                                        
                     SL_EXTRACT_CONFIG_FLAG(forceProxies);
                     SL_EXTRACT_CONFIG_FLAG(forceNonNVDA);
                     SL_EXTRACT_CONFIG_FLAG(trackEngineAllocations);
+                    SL_EXTRACT_CONFIG_FLAG(enableD3D12DebugLayer);
 
                     if (m_config.trackEngineAllocations)
                     {

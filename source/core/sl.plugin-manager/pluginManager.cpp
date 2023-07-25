@@ -1345,6 +1345,8 @@ PluginManager::PluginManager()
     FUNCTION_HOOK_ID_MAP_ENTRY(Vulkan_GetSwapchainImagesKHR);
     FUNCTION_HOOK_ID_MAP_ENTRY(Vulkan_AcquireNextImageKHR);
     FUNCTION_HOOK_ID_MAP_ENTRY(Vulkan_DeviceWaitIdle);
+    FUNCTION_HOOK_ID_MAP_ENTRY(Vulkan_CreateWin32SurfaceKHR);
+    FUNCTION_HOOK_ID_MAP_ENTRY(Vulkan_DestroySurfaceKHR);
 
     assert((size_t)FunctionHookID::eMaxNum == m_functionHookIDMap.size());
 

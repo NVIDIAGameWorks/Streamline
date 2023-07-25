@@ -2,7 +2,7 @@
 Streamline - Manual Hooking
 =======================
 
-Version 2.1.0
+Version 2.1.1
 =======
 
 The automated global hooking is a great way to quickly enable SL features in any application. However, this can lead to unnecessary overhead caused by the entire API redirection through SL proxies and problems with tools and 3rd party libraries which do not expect to receive SL proxies as inputs.
@@ -67,6 +67,9 @@ enum class FunctionHookID : uint32_t
     eVulkan_DestroySwapchainKHR,
     eVulkan_GetSwapchainImagesKHR,
     eVulkan_AcquireNextImageKHR,
+    eVulkan_DeviceWaitIdle,
+    eVulkan_CreateWin32SurfaceKHR,
+    eVulkan_DestroySurfaceKHR,
 
     eMaxNum
 };

@@ -31,13 +31,16 @@ IF NOT "%1"=="" (
 mkdir %dest%\include
 mkdir %dest%\lib\x64
 mkdir %dest%\bin\x64
-mkdir %dest%\doc
+mkdir %dest%\docs
+mkdir %dest%\docs\media
 mkdir %dest%\symbols
 mkdir %dest%\scripts
 
-copy %src%\docs\ProgrammingGuide*.md %dest%\doc
-copy %src%\docs\RTX*.* %dest%\doc
-copy %src%\docs\Streamline*.pdf %dest%\doc
+copy %src%\docs\ProgrammingGuide*.md %dest%\docs
+copy %src%\docs\RTX*.* %dest%\docs
+copy %src%\docs\Streamline*.pdf %dest%\docs
+copy %src%\docs\Debug*.md %dest%\docs
+copy %src%\docs\media\*.* %dest%\docs\media
 
 copy %src%\include\sl.h %dest%\include
 copy %src%\include\sl_*.h %dest%\include
@@ -46,8 +49,13 @@ copy _artifacts\sl.interposer\%cfg%_x64\sl.interposer.lib %dest%\lib\x64\ /Y
 
 del _sdk\bin\x64\*.* /F /Q
 
-copy bin\x64\nvngx_dlss.dll %dest%\bin\x64 /Y
 copy .\README.md %dest%\bin\x64 /Y
+
+IF "%cfg%"=="Production" (
+    copy bin\x64\nvngx_dlss.dll %dest%\bin\x64 /Y
+) ELSE (
+    copy bin\x64\development\nvngx_dlss.dll %dest%\bin\x64 /Y
+)
 
 IF "%cfg%"=="Debug" (
     copy external\nrd\Lib\Debug\*.dll %dest%\bin\x64 /Y

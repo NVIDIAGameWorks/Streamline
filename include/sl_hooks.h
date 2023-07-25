@@ -71,6 +71,8 @@ enum class FunctionHookID : uint32_t
     eVulkan_GetSwapchainImagesKHR,
     eVulkan_AcquireNextImageKHR,
     eVulkan_DeviceWaitIdle,
+    eVulkan_CreateWin32SurfaceKHR,
+    eVulkan_DestroySurfaceKHR,
 
     eMaxNum
 };
@@ -101,6 +103,8 @@ inline const char* getFunctionHookIDAsStr(FunctionHookID v)
         SL_CASE_STR(FunctionHookID::eVulkan_GetSwapchainImagesKHR);
         SL_CASE_STR(FunctionHookID::eVulkan_AcquireNextImageKHR);
         SL_CASE_STR(FunctionHookID::eVulkan_DeviceWaitIdle);
+        SL_CASE_STR(FunctionHookID::eVulkan_CreateWin32SurfaceKHR);
+        SL_CASE_STR(FunctionHookID::eVulkan_DestroySurfaceKHR);
     };
     return "Unknown";
 }

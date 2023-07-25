@@ -55,6 +55,9 @@ struct TemplateContext
 {
     SL_PLUGIN_CONTEXT_CREATE_DESTROY(TemplateContext);
 
+    // Called when plugin is loaded, do any custom constructor initialization here
+    void onCreateContext() {};
+
     // Called when plugin is unloaded, destroy any objects on heap here
     void onDestroyContext() {};
 

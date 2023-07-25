@@ -79,6 +79,7 @@ struct InterposerConfig
     bool forceProxies = false;
     bool forceNonNVDA = false;
     bool trackEngineAllocations = false;
+    bool enableD3D12DebugLayer = false;
     float logMessageDelayMs = 5000.0f;
     uint32_t logLevel = 2;
     std::string logPath{};

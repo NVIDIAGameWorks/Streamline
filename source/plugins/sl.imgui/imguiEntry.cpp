@@ -64,6 +64,7 @@ namespace imgui
 struct IMGUIContext
 {
     SL_PLUGIN_CONTEXT_CREATE_DESTROY(IMGUIContext);
+    void onCreateContext() {};
 
     // Called when plugin is unloaded, destroy any objects on heap here
     void onDestroyContext() 

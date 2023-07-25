@@ -49,10 +49,10 @@
 #include "_artifacts/shaders/mvec_spv.h"
 #include "_artifacts/gitVersion.h"
 
-#include "external/ngx/Include/nvsdk_ngx.h"
-#include "external/ngx/Include/nvsdk_ngx_helpers.h"
-#include "external/ngx/Include/nvsdk_ngx_helpers_vk.h"
-#include "external/ngx/Include/nvsdk_ngx_defs.h"
+#include "external/ngx-sdk/include/nvsdk_ngx.h"
+#include "external/ngx-sdk/include/nvsdk_ngx_helpers.h"
+#include "external/ngx-sdk/include/nvsdk_ngx_helpers_vk.h"
+#include "external/ngx-sdk/include/nvsdk_ngx_defs.h"
 
 using json = nlohmann::json;
 
@@ -89,6 +89,7 @@ namespace dlss
 struct DLSSContext
 {
     SL_PLUGIN_CONTEXT_CREATE_DESTROY(DLSSContext);
+    void onCreateContext() {};
     void onDestroyContext() {};
 
     std::future<bool> initLambda;
@@ -387,7 +388,7 @@ Result dlssBeginEvent(chi::CommandList pCmdList, const common::EventData& data, 
                 CommonResource exposure = {};
                 getTaggedResource(kBufferTypeExposure, exposure, ctx.viewport->id, true, inputs, numInputs);
 
-                if ((sl::kStructVersion2 >= 2 && ctx.viewport->consts.useAutoExposure) || !exposure)
+                if ((ctx.viewport->consts.structVersion >= sl::kStructVersion2 && ctx.viewport->consts.useAutoExposure) || !exposure)
                 {
                     dlssCreateFlags |= NVSDK_NGX_DLSS_Feature_Flags_AutoExposure;
                 }
@@ -552,7 +553,9 @@ Result dlssEndEvent(chi::CommandList pCmdList, const common::EventData& data, co
             // Depending if camera motion is provided or not we can use input directly or not
             auto mvecIn = mvec;
 
+#if SL_ENABLE_TIMING
             CHI_VALIDATE(ctx.compute->beginPerfSection(pCmdList, "sl.dlss"));
+#endif
 
             {
                 ctx.cacheState(colorIn, colorIn.getState());
@@ -723,7 +726,9 @@ Result dlssEndEvent(chi::CommandList pCmdList, const common::EventData& data, co
                 }
 
                 float ms = 0;
+#if SL_ENABLE_TIMING
                 CHI_VALIDATE(ctx.compute->endPerfSection(pCmdList, "sl.dlss", ms));
+#endif
 
 #ifndef SL_PRODUCTION
                 /*static std::string s_stats;

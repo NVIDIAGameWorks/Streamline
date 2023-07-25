@@ -1529,7 +1529,6 @@ ComputeStatus D3D11::getLUIDFromDevice(NVSDK_NGX_LUID *OutId)
 
 ComputeStatus D3D11::beginPerfSection(CommandList cmdList, const char *key, unsigned int node, bool reset)
 {
-#if SL_ENABLE_TIMING
     PerfData* data = {};
     {
         std::scoped_lock lock(m_mutexProfiler);
@@ -1565,13 +1564,11 @@ ComputeStatus D3D11::beginPerfSection(CommandList cmdList, const char *key, unsi
     auto context = (ID3D11DeviceContext*)cmdList;
     context->Begin(data->queryDisjoint);
     context->End(data->queryBegin);
-#endif
     return ComputeStatus::eOk;
 }
 
 ComputeStatus D3D11::endPerfSection(CommandList cmdList, const char* key, float &avgTimeMS, unsigned int node)
 {
-#if SL_ENABLE_TIMING
     PerfData* data = {};
     {
         std::scoped_lock lock(m_mutexProfiler);
@@ -1631,9 +1628,6 @@ ComputeStatus D3D11::endPerfSection(CommandList cmdList, const char* key, float 
     {
         SL_LOG_WARN("D3D11 time-stamp timed out");
     }
-#else
-    avgTimeMS = 0;
-#endif
     return ComputeStatus::eOk;
 }
 

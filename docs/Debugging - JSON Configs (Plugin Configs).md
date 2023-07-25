@@ -1,4 +1,4 @@
-# Debugging
+# Debugging with JSON Configs
 > **NOTE:**
 > This document applies to non-production, development builds only.  JSON configuration is disabled in production builds.
 > Additionally, you will need to turn off any checks for signed libraries when loading Streamline libraries in order to be able to load the non-production libraries.

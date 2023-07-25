@@ -191,6 +191,7 @@ SL_STRUCT(ResourceAllocationDesc, StructType({ 0xbb57e5, 0x49a2, 0x4c23, { 0xa5,
     //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
 };
 
+
 //! Native resource
 //! 
 //! {3A9D70CF-2418-4B72-8391-13F8721C7261}

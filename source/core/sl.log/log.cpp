@@ -287,23 +287,27 @@ struct Log : ILog
             logMessage = oss.str() + "[streamline][" + prefix[type] + "]" + f + ":" + std::to_string(line) + "[" + std::string(func) + "] ";
 
             // Safety in case map grows too big like 10K unique messages (which is highly unlikely ever to happen but ...)
-            if (m_logTimes.size() > 10000)
+            // However if verbose logging is on allow all messages
+            if (m_logLevel != LogLevel::eVerbose)
             {
-                m_logTimes.clear();
-            }
-            auto id = m_hash(message);
-            auto lastLogTime = m_logTimes[id];
-            if (lastLogTime.time_since_epoch().count() > 0)
-            {
-                // Already logged before, make sure not to spam the log
-                std::chrono::duration<float, std::milli> diff = std::chrono::system_clock::now() - lastLogTime;
-                if (diff.count() < m_messageDelayMs)
+                if (m_logTimes.size() > 10000)
                 {
-                    // Show frequent messages every 'messageDelayMs'
-                    return;
+                    m_logTimes.clear();
                 }
+                auto id = m_hash(message);
+                auto lastLogTime = m_logTimes[id];
+                if (lastLogTime.time_since_epoch().count() > 0)
+                {
+                    // Already logged before, make sure not to spam the log
+                    std::chrono::duration<float, std::milli> diff = std::chrono::system_clock::now() - lastLogTime;
+                    if (diff.count() < m_messageDelayMs)
+                    {
+                        // Show frequent messages every 'messageDelayMs'
+                        return;
+                    }
+                }
+                m_logTimes[id] = std::chrono::system_clock::now();
             }
-            m_logTimes[id] = std::chrono::system_clock::now();
 
             logMessage += message;
 

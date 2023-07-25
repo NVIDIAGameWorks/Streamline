@@ -33,9 +33,6 @@ EXPORTS
 	vkGetPhysicalDeviceFormatProperties
 	vkGetPhysicalDeviceImageFormatProperties
 	vkGetPhysicalDeviceProperties
-	vkGetPhysicalDeviceMemoryProperties2
-	vkGetPhysicalDeviceProperties2KHR
-	vkGetPhysicalDeviceFeatures2KHR
 	vkGetPhysicalDeviceQueueFamilyProperties
 	vkGetPhysicalDeviceMemoryProperties
 	vkDestroyDevice
@@ -161,6 +158,84 @@ EXPORTS
 	vkCmdNextSubpass
 	vkCmdEndRenderPass
 	vkCmdExecuteCommands
+	vkEnumerateInstanceVersion
+	vkBindBufferMemory2
+	vkBindImageMemory2
+	vkGetDeviceGroupPeerMemoryFeatures
+	vkCmdSetDeviceMask
+	vkCmdDispatchBase
+	vkEnumeratePhysicalDeviceGroups
+	vkGetImageMemoryRequirements2
+	vkGetBufferMemoryRequirements2
+	vkGetImageSparseMemoryRequirements2
+	vkGetPhysicalDeviceFeatures2
+	vkGetPhysicalDeviceProperties2
+	vkGetPhysicalDeviceFormatProperties2
+	vkGetPhysicalDeviceImageFormatProperties2
+	vkGetPhysicalDeviceQueueFamilyProperties2
+	vkGetPhysicalDeviceMemoryProperties2
+	vkGetPhysicalDeviceSparseImageFormatProperties2
+	vkTrimCommandPool
+	vkGetDeviceQueue2
+	vkCreateSamplerYcbcrConversion
+	vkDestroySamplerYcbcrConversion
+	vkCreateDescriptorUpdateTemplate
+	vkDestroyDescriptorUpdateTemplate
+	vkUpdateDescriptorSetWithTemplate
+	vkGetPhysicalDeviceExternalBufferProperties
+	vkGetPhysicalDeviceExternalFenceProperties
+	vkGetPhysicalDeviceExternalSemaphoreProperties
+	vkGetDescriptorSetLayoutSupport
+	vkCmdDrawIndirectCount
+	vkCmdDrawIndexedIndirectCount
+	vkCreateRenderPass2
+	vkCmdBeginRenderPass2
+	vkCmdNextSubpass2
+	vkCmdEndRenderPass2
+	vkResetQueryPool
+	vkGetSemaphoreCounterValue
+	vkWaitSemaphores
+	vkSignalSemaphore
+	vkGetBufferDeviceAddress
+	vkGetBufferOpaqueCaptureAddress
+	vkGetDeviceMemoryOpaqueCaptureAddress
+	vkGetPhysicalDeviceToolProperties
+	vkCreatePrivateDataSlot
+	vkDestroyPrivateDataSlot
+	vkSetPrivateData
+	vkGetPrivateData
+	vkCmdSetEvent2
+	vkCmdResetEvent2
+	vkCmdWaitEvents2
+	vkCmdPipelineBarrier2
+	vkCmdWriteTimestamp2
+	vkQueueSubmit2
+	vkCmdCopyBuffer2
+	vkCmdCopyImage2
+	vkCmdCopyBufferToImage2
+	vkCmdCopyImageToBuffer2
+	vkCmdBlitImage2
+	vkCmdResolveImage2
+	vkCmdBeginRendering
+	vkCmdEndRendering
+	vkCmdSetCullMode
+	vkCmdSetFrontFace
+	vkCmdSetPrimitiveTopology
+	vkCmdSetViewportWithCount
+	vkCmdSetScissorWithCount
+	vkCmdBindVertexBuffers2
+	vkCmdSetDepthTestEnable
+	vkCmdSetDepthWriteEnable
+	vkCmdSetDepthCompareOp
+	vkCmdSetDepthBoundsTestEnable
+	vkCmdSetStencilTestEnable
+	vkCmdSetStencilOp
+	vkCmdSetRasterizerDiscardEnable
+	vkCmdSetDepthBiasEnable
+	vkCmdSetPrimitiveRestartEnable
+	vkGetDeviceBufferMemoryRequirements
+	vkGetDeviceImageMemoryRequirements
+	vkGetDeviceImageSparseMemoryRequirements
 	vkCreateSwapchainKHR
 	vkDestroySwapchainKHR
 	vkGetSwapchainImagesKHR
@@ -172,8 +247,9 @@ EXPORTS
 	vkGetPhysicalDeviceSurfacePresentModesKHR
 	vkCreateWin32SurfaceKHR
 	vkDestroySurfaceKHR
+	vkGetPhysicalDeviceFeatures2KHR
+	vkGetPhysicalDeviceProperties2KHR
 	vkGetImageMemoryRequirements2KHR
-	vkGetBufferDeviceAddress
 
 	; SL
 	slInit

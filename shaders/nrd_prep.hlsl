@@ -1,6 +1,7 @@
 #define NRD_COMPILER_DXC
 #define NRD_USE_OCT_NORMAL_ENCODING 0
 #define NRD_USE_MATERIAL_ID 0
+#include "../external/nrd/Shaders/Include/NRDEncoding.hlsli"
 #include "../external/nrd/Shaders/Include/NRD.hlsli"
 
 [[vk::binding(0)]] cbuffer shaderConsts : register(b0)

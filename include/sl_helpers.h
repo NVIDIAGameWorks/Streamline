@@ -24,6 +24,8 @@
 
 #include <string.h>
 
+#define FEATURE_SPECIFIC_BUFFER_TYPE_ID(feature, number) feature << 24 | number
+
 #include "sl.h"
 #include "sl_consts.h"
 #include "sl_reflex.h"

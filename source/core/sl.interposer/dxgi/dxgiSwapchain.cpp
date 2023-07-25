@@ -48,7 +48,8 @@ DXGISwapChain::DXGISwapChain(ID3D11Device* device, IDXGISwapChain* original) :
 {
     assert(m_base != nullptr && m_d3dDevice != nullptr);
     m_d3dDevice->AddRef();
-    m_base->AddRef();    
+    m_base->AddRef();
+    m_cachedHostSDKVersion = sl::plugin_manager::getInterface()->getHostSDKVersion();
 }
 
 DXGISwapChain::DXGISwapChain(ID3D12Device* device, IDXGISwapChain* original) :
@@ -59,7 +60,8 @@ DXGISwapChain::DXGISwapChain(ID3D12Device* device, IDXGISwapChain* original) :
 {
     assert(m_base != nullptr && m_d3dDevice != nullptr);
     m_d3dDevice->AddRef();
-    m_base->AddRef();    
+    m_base->AddRef();
+    m_cachedHostSDKVersion = sl::plugin_manager::getInterface()->getHostSDKVersion();
 }
 
 bool DXGISwapChain::checkAndUpgradeInterface(REFIID riid)
@@ -125,7 +127,6 @@ HRESULT STDMETHODCALLTYPE DXGISwapChain::QueryInterface(REFIID riid, void** ppvO
 
 ULONG   STDMETHODCALLTYPE DXGISwapChain::AddRef()
 {
-    m_base->AddRef();
     return ++m_refCount;
 }
 
@@ -143,13 +144,21 @@ ULONG   STDMETHODCALLTYPE DXGISwapChain::Release()
         SL_EXCEPTION_HANDLE_END_RETURN(-1)
     }
 
-    auto refOrigSC = m_base->Release();
     auto ref = --m_refCount;
     if (ref > 0)
     {
         return ref;
     }
 
+    ULONG refOrigSC = 12345;
+    // legacy behaviour - streamline before that version used to NOT decrement refcount here
+    // for legacy apps we do AddRef() + Release() so we could print the refOrigSC value
+    if (m_cachedHostSDKVersion <= sl::Version(2, 1, 0))
+    {
+        SL_LOG_INFO("Legacy behaviour for apps using SL <= 2.1 - issuing an extra AddRef() for the native swap chain");
+        refOrigSC = m_base->AddRef();
+    }
+    refOrigSC = m_base->Release();
     // Release the explicit reference to device that was added in the DXGISwapChain constructor above
     auto refOrig = m_d3dDevice->Release();
 
