@@ -144,8 +144,27 @@ constexpr BufferType kBufferTypeTransparencyAndCompositionMaskHint = 37;
 //! 
 using Feature = uint32_t;
 
+//! Deep Learning Super Sampling
+constexpr Feature kFeatureDLSS = 0;
+
+//! Real-Time Denoiser
+constexpr Feature kFeatureNRD = 1;
+
+//! NVIDIA Image Scaling
+constexpr Feature kFeatureNIS = 2;
+
+//! Low-Latency
+constexpr Feature kFeatureReflex = 3;
+
+//! DLSS Frame Generation
+constexpr Feature kFeatureDLSS_G = 1000;
+
+//! DLSS Ray Reconstruction
+constexpr Feature kFeatureDLSS_RR = 1001;
+
 // ImGUI 
 constexpr Feature kFeatureImGUI = 9999;
+
 //! Common feature, NOT intended to be used directly
 constexpr Feature kFeatureCommon = UINT_MAX;
 
@@ -191,6 +210,22 @@ SL_STRUCT(ResourceAllocationDesc, StructType({ 0xbb57e5, 0x49a2, 0x4c23, { 0xa5,
     //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
 };
 
+
+//! Subresource range information, for Vulkan resources
+//! 
+//! {8D4C316C-D402-4524-89A7-14E79E638E3A}
+SL_STRUCT(SubresourceRange, StructType({ 0x8d4c316c, 0xd402, 0x4524, { 0x89, 0xa7, 0x14, 0xe7, 0x9e, 0x63, 0x8e, 0x3a } }), kStructVersion1)
+    //! Vulkan subresource aspectMask
+    uint32_t aspectMask;
+    //! Vulkan subresource baseMipLevel
+    uint32_t baseMipLevel;
+    //! Vulkan subresource levelCount
+    uint32_t levelCount;
+    //! Vulkan subresource baseArrayLayer
+    uint32_t baseArrayLayer;
+    //! Vulkan subresource layerCount
+    uint32_t layerCount;
+};
 
 //! Native resource
 //! 

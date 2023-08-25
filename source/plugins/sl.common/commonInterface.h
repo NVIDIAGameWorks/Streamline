@@ -26,6 +26,7 @@
 
 #include "include/sl.h"
 #include "include/sl_helpers.h"
+#include "commonDRSInterface.h"
 
 #define NVAPI_VALIDATE_RF(f) {auto r = f; if(r != NVAPI_OK) { SL_LOG_ERROR( "%s failed error %d", #f, r); return false;} };
 
@@ -229,6 +230,7 @@ struct PluginInfo
     uint32_t minGPUArchitecture{}; 
     bool needsNGX{};
     bool needsDX11On12{};
+    bool needsDRS{};
     std::vector<std::pair<BufferType, ResourceLifecycle>> requiredTags;
     std::vector<std::string> vkInstanceExtensions;
     std::vector<std::string> vkDeviceExtensions;

@@ -42,6 +42,7 @@ using Device = void*;
 using PhysicalDevice = void*;
 using Instance = void*;
 using Resource = sl::Resource*;
+using SubresourceRange = sl::SubresourceRange*;
 using ResourceView = void*;
 using Kernel = size_t;
 using CommandList = void*;

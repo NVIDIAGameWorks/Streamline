@@ -145,7 +145,15 @@ struct DLSSContext
                     CHI_CHECK_RV(compute->getResourceDescription(res, desc));
                     ngx.Resource.ImageViewInfo.ImageView = (VkImageView)res->view;
                     ngx.Resource.ImageViewInfo.Image = (VkImage)res->native;
-                    ngx.Resource.ImageViewInfo.SubresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS };
+                    sl::SubresourceRange* subresource = findStruct<SubresourceRange>(res);
+                    if (subresource)
+                    {
+                        ngx.Resource.ImageViewInfo.SubresourceRange = { subresource->aspectMask, subresource->baseMipLevel, subresource->levelCount, subresource->baseArrayLayer, subresource->layerCount };
+                    }
+                    else
+                    {
+                        ngx.Resource.ImageViewInfo.SubresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS };
+                    }
                     ngx.Resource.ImageViewInfo.Format = (VkFormat)desc.nativeFormat;
                     ngx.Resource.ImageViewInfo.Width = desc.width;
                     ngx.Resource.ImageViewInfo.Height = desc.height;

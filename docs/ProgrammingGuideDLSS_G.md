@@ -4,7 +4,7 @@ Streamline - DLSS-G
 
 NVIDIA DLSS Frame Generation (“DLSS-FG” or “DLSS-G”) is an AI based technology that infers frames based on rendered frames coming from a game engine or rendering pipeline. This document explains how to integrate DLSS-G into a renderer.
 
-Version 2.0
+Version 2.2.0
 =======
 
 ### 0.0 Integration checklist
@@ -18,14 +18,14 @@ Common constants and frame index are provided for **each frame** using slSetCons
 All tagged buffers are valid at frame present time, and they are not re-used for other purposes | Section 5.0 |
 Buffers to be tagged with unique id 0 | Section 5.0 |
 Make sure that frame index provided with the common constants is matching the presented frame | Section 8.0 |
-Inputs are passed into Streamline look correct, as well as camera matrices and dynamic objects | [SL ImGUI guide](./Debugging%20-%20SL%20ImGUI%20(Realtime%20Data%20Inspection).md) |
+Inputs are passed into Streamline look correct, as well as camera matrices and dynamic objects | [SL ImGUI guide](<Debugging - SL ImGUI (Realtime Data Inspection).md>) |
 Application checks the signature of sl.interposer.dll to make sure it is a genuine NVIDIA library | [Streamline programming guide, section 2.1.1](./ProgrammingGuide.md#211-security) |
 Requirements for Dynamic Resolution are met (if the game supports Dynamic Resolution)  | Section 10.0 |
 DLSS-G is turned off (by setting `sl::DLSSGOptions::mode` to `sl::DLSSGMode::eOff`) when the game is paused, loading, in menu and in general NOT rendering game frames and also when modifying resolution & full-screen vs windowed mode | Section 12.0 |
 Swap chain is recreated every time DLSS-G is turned on or off (by changing `sl::DLSSGOptions::mode`) to avoid unnecessary performance overhead when DLSS-G is switched off | Section 19.0 |
 Reduce the amount of motion blur; when DLSS-G enabled, halve the distance/magnitude of motion blur | Section 14.0 |
 Reflex is properly integrated (see checklist in Reflex Programming Guide) | Section 8.0 |
-In-game UI for enabling/disabling DLSS-G is implemented | [RTX UI Guidelines](./RTX%20UI%20Developer%20Guidelines.pdf) |
+In-game UI for enabling/disabling DLSS-G is implemented | [RTX UI Guidelines](<RTX UI Developer Guidelines.pdf>) |
 Only full production non-watermarked libraries are packaged in the release build | N/A |
 No errors or unexpected warnings in Streamline and DLSS-G log files while running the feature | N/A |
 
@@ -342,7 +342,7 @@ For more details please see [reflex guide](ProgrammingGuideReflex.md)
 
 ### 9.0 DLSS-G DEVELOPMENT HOTKEYS
 
-When using non-production (development) builds of `sl.dlss_g.dll`, there are numerous hotkeys available, all of which can be remapped using the remapping methods described in [debugging](Debugging.md)
+When using non-production (development) builds of `sl.dlss_g.dll`, there are numerous hotkeys available, all of which can be remapped using the remapping methods described in [debugging](<Debugging - JSON Configs (Plugin Configs).md>)
 
 * `"dlssg-sync"` (default `VK_END`)
   * Toggle delaying the presentation of the next frame to experiment with mimimizing latency
@@ -650,3 +650,59 @@ For the additional implementation details please check out the Streamline sample
 
 > NOTE:
 > When DLSS-G is turned on the overhead from rendering to an off-screen target is negligible considering the overall frame rate boost provided by the feature.
+
+### 20.0 DLSS-FG INDICATOR TEXT
+
+DLSS-FG can render on-screen indicator text when the feature is enabled. Developers may find this helpful for confirming DLSS-FG is executing.
+
+The indicator supports all build variants, including production.
+
+The indicator is configured via the Windows Registry and contains 3 levels: `{0, 1, 2}` for `{off, minimal, detailed}`.
+
+**Example .reg file setting the level to detailed:**
+
+```
+[HKEY_LOCAL_MACHINE\SOFTWARE\NVIDIA Corporation\Global\NGXCore]
+"DLSSG_IndicatorText"=dword:00000002
+```
+
+### 21.0 AUTO SCENE CHANGE DETECTION
+
+Auto Scene Change Detection (ASCD) intelligently annotates the reset flag during input frame pair sequences.
+
+ASCD is enabled in all DLSS-FG build variants, executes on every frame pair, and supports all graphics platforms.
+
+#### 21.1 INPUT DATA
+
+ASCD uses the camera forward, right, and up vectors passed into Streamline via `sl_consts.h`. These are stitched into a 3x3 camera rotation matrix such that:
+
+```
+[ cameraRight[0] cameraUp[0] cameraForward[0] ]
+[ cameraRight[1] cameraUp[1] cameraForward[1] ]
+[ cameraRight[2] cameraUp[2] cameraForward[2] ]
+```
+
+It is important that this matrix is orthonormal, i.e. the transpose of the matrix should equal the inverse. ASCD will only run if the orthonormal property is true. If the orthonormal check fails, ASCD is entirely disabled. Logs for DLSS-FG will show additional detail to debug incorrect input data.
+
+#### 21.2 VIEWING STATUS
+
+In all variants the detector status can be visualized with the detailed DLSS_G Indicator Text.
+
+The mode will be
+* Enabled
+* Disabled
+* Disabled (Invalid Input Data)
+
+In developer builds, ASCD can be toggled with `Shift+F9`. In developer builds, an additional ignore_reset_flag option simulates pure dependence on ASCD `Shift+F10`.
+
+In cases where input camera data is incorrect, ASCD will report failure to the logs every frame. Log messages can be resolved by updating the camera inputs or disabling ASCD temporarily with the keybind.
+
+#### 21.3 DEVELOPER HINTS
+
+In developer DLSS-FG variants ASCD displays on-screen hints for:
+
+1. Scene change detected without the reset flag.
+2. Scene change detected with the reset flag.
+3. No scene change detected with the reset flag.
+
+The hints present as text blurbs in the center of screen, messages in the DLSS-FG log file, and in scenario 1, a screen goldenrod yellow tint.

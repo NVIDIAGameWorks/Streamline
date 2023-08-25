@@ -36,8 +36,8 @@ struct StructType
     unsigned short data3;
     unsigned char  data4[8];
 
-    inline bool operator==(const StructType& rhs) const { return memcmp(this, &rhs, sizeof(this)) == 0; }
-    inline bool operator!=(const StructType& rhs) const { return memcmp(this, &rhs, sizeof(this)) != 0; }
+    inline bool operator==(const StructType& rhs) const { return memcmp(this, &rhs, sizeof(*this)) == 0; }
+    inline bool operator!=(const StructType& rhs) const { return memcmp(this, &rhs, sizeof(*this)) != 0; }
 };
 
 //! SL is using typed and versioned structures which can be chained or not.

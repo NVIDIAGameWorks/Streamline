@@ -44,6 +44,7 @@ constexpr const char* kPluginManagerInterface = "sl.param.global.pluginManagerIn
 constexpr const char* kOTAInterface = "sl.param.global.otaInterface";
 constexpr const char* kNGXContext = "sl.param.global.ngxContext";
 constexpr const char* kNGXContextD3D12 = "sl.param.global.ngxContextD3D12";
+constexpr const char* kDRSContext = "sl.param.global.drsContext";
 constexpr const char* kSwapchainBufferCount = "sl.param.global.swapchainbuffercount";
 constexpr const char* kDebugMode = "sl.param.global.dbgMode";
 constexpr const char* kPFunGetTag = "sl.param.global.getTag";
@@ -130,6 +131,12 @@ namespace imgui
 {
 constexpr const char* kInterface = "sl.param.imgui.interface";
 }
+
+namespace dlss_d
+{
+constexpr const char* kCurrentFrame = "sl.param.dlss_d.frame";
+}
+
 struct IParameters
 {
     virtual void set(const char* key, bool value) = 0;

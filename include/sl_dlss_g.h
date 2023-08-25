@@ -32,9 +32,6 @@ enum VkResult : int;
 namespace sl
 {
 
-//! DLSS Frame Generation
-constexpr Feature kFeatureDLSS_G = 1000;
-
 enum class DLSSGMode : uint32_t
 {
     eOff,

@@ -25,9 +25,6 @@
 namespace sl
 {
 
-//! NVIDIA Image Scaling
-constexpr Feature kFeatureNIS = 2;
-
 enum class NISMode : uint32_t
 {
     eOff,

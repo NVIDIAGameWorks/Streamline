@@ -32,7 +32,6 @@
 #include "sl_dlss.h"
 #include "sl_nis.h"
 #include "sl_nrd.h"
-#include "sl_dlss_g.h"
 
 namespace sl
 {
@@ -243,6 +242,7 @@ inline const char* getFeatureAsStr(Feature f)
         SL_CASE_STR(kFeatureDLSS_G);
         SL_CASE_STR(kFeatureImGUI);
         SL_CASE_STR(kFeatureCommon);
+        SL_CASE_STR(kFeatureDLSS_RR);
     }
     return "Unknown";
 }
@@ -260,6 +260,7 @@ inline const char* getFeatureFilenameAsStrNoSL(Feature f)
         case kFeatureDLSS_G: return "dlss_g";
         case kFeatureImGUI: return "imgui";
         case kFeatureCommon: return "common";
+        case kFeatureDLSS_RR: return "dlss_d";
         default: return "Unknown";
     }
 }

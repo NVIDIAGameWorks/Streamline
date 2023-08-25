@@ -25,9 +25,6 @@
 namespace sl
 {
 
-//! Real-Time Denoiser
-constexpr Feature kFeatureNRD = 1;
-
 // inputs
 constexpr BufferType kBufferTypeInDiffuseRadianceHitDist =      FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 0);
 constexpr BufferType kBufferTypeInSpecularRadianceHitDist =     FEATURE_SPECIFIC_BUFFER_TYPE_ID(kFeatureNRD, 1);

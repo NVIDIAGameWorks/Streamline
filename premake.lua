@@ -4,6 +4,9 @@ local ROOT = "./"
 
 nvcfg = {}
 
+nvcfg.SL_BUILD_DLSS_DN = true
+
+
 
 
 
@@ -435,4 +438,5 @@ project "sl.imgui"
 
 	links { "d3d12.lib", "vulkan-1.lib"}
 	
+
 group ""

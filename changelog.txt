@@ -1,0 +1,14 @@
+======== Release 2.2.0 Entries ========
+
+    * Added support for multiple viewports to the sl.nis plugin.
+
+    * Added a new structure `sl::SubresourceRange` for specifying Vulkan subresource range information.
+
+    * Moved SL Feature ID definitions to a central location in `sl.h`.
+
+    * Added support for DLSS Ray Reconstruction with a new plugin: `sl.dlss_d`.
+
+    * Fixed a bug where only the first 8 bytes of child-classes of `sl::StructType` would be used for comparison operators.
+
+    * Added support for DLSS Frame Generation Auto Scene Change Detection.
+      See section 21.0 "Auto Scene Change Detection" in `ProgrammingGuideDLSS_G.md` for more information.

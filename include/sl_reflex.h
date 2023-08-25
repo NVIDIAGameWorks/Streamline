@@ -25,9 +25,6 @@
 namespace sl
 {
 
-//! Low-Latency
-constexpr Feature kFeatureReflex = 3;
-
 enum ReflexMode
 {
     eOff,

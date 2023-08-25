@@ -25,9 +25,6 @@
 namespace sl
 {
 
-//! Deep Learning Super Sampling
-constexpr Feature kFeatureDLSS = 0;
-
 enum class DLSSMode : uint32_t
 {
     eOff,

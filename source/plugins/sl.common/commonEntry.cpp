@@ -41,6 +41,8 @@
 #include "source/platforms/sl.chi/vulkan.h"
 #include "source/platforms/sl.chi/capture.h"
 #include "source/plugins/sl.common/commonInterface.h"
+#include "source/plugins/sl.common/commonDRSInterface.h"
+#include "source/plugins/sl.common/drs.h"
 #include "_artifacts/gitVersion.h"
 
 #ifdef SL_WINDOWS
@@ -121,11 +123,14 @@ struct CommonEntryContext
 
     bool needNGX = false;
     bool needDX11On12 = false;
+    bool needDRS = false;
 
     std::unordered_set<BufferTagInfo, BufferTagInfoHash> requiredTags{};
     
     NGXContextStandard ngxContext{};    // Regular context based on requested API from the host
     NGXContextD3D12 ngxContextD3D12{};  // Special context for plugins which run d3d11 on d3d12
+
+    DRSContext drsContext{};            // DRS context for plugins which use d3dreg keys
 
     common::SystemCaps* caps{};
 
@@ -1025,6 +1030,7 @@ void updateCommonEmbeddedJSONConfig(void* jsonConfig, const common::PluginInfo& 
     {
         ctx.needNGX |= info.needsNGX;
         ctx.needDX11On12 |= info.needsDX11On12;
+        ctx.needDRS |= info.needsDRS;
     }
 }
 
@@ -1303,6 +1309,29 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
             SL_LOG_WARN("Failed to initialize NGX, any SL feature requiring NGX will be unloaded and disabled");
         }
     }
+    if (ctx.needDRS)
+    {
+        // DRS initialization
+        SL_LOG_INFO("At least one plugin requires DRS, trying to initialize ...");
+
+        // Reset our flag until we see if DRS can be initialized correctly
+        ctx.needDRS = false;
+        bool drsStatus = drs::drsInit();
+        if (drsStatus)
+        {
+            ctx.needDRS = true;
+            SL_LOG_HINT("DRS loaded - app id %u", appId);
+
+            // Provide DRS context to other plugins
+            ctx.drsContext.drsReadKey = drs::drsReadKey;
+            ctx.drsContext.drsReadKeyString = drs::drsReadKeyString;
+            parameters->set(param::global::kDRSContext, &ctx.drsContext);
+        }
+        else
+        {
+            SL_LOG_WARN("Failed to initialize DRS");
+        }
+    }
 
     return true;
 }
@@ -1358,6 +1387,12 @@ void slOnPluginShutdown()
             NVSDK_NGX_VULKAN_Shutdown1(nullptr);
         }
         ctx.needNGX = false;
+    }
+
+    if (ctx.needDRS)
+    {
+        drs::drsShutdown();
+        ctx.needDRS = false;
     }
 
     // Common shutdown

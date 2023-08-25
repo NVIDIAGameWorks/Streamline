@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -118,6 +118,8 @@ struct NISContext
 };
 }
 
+constexpr uint32_t kMaxNumViewports = 4;
+
 const char* JSON = R"json(
 {
     "id" : 2,
@@ -219,6 +221,10 @@ bool initializeNIS(chi::CommandList cmdList, const common::EventData& data)
 Result nisBeginEvaluation(chi::CommandList cmdList, const common::EventData& data, const sl::BaseStructure** inputs, uint32_t numInputs)
 {
     auto& ctx = (*nis::getContext());
+    if (ctx.viewports.size() > (size_t)kMaxNumViewports)
+    {
+        SL_LOG_WARN("Exceeded max number (%u) of allowed viewports for NIS", kMaxNumViewports);
+    }
     auto& viewport = ctx.viewports[data.id];
     viewport.id = data.id;
 
@@ -265,6 +271,7 @@ Result nisEndEvaluation(chi::CommandList cmdList, const common::EventData& data,
     auto inExtent = colorIn.getExtent();
     auto outExtent = colorOut.getExtent();
 
+    // get resource states and descriptors
     chi::ResourceDescription inDesc{};
     CHI_VALIDATE(ctx.compute->getResourceState(colorIn.getState(), inDesc.state));
     CHI_VALIDATE(ctx.compute->getResourceDescription(colorIn, inDesc));
@@ -282,14 +289,23 @@ Result nisEndEvaluation(chi::CommandList cmdList, const common::EventData& data,
         outExtent.height = outDesc.height;
     }
 
-    float sharpness = consts.sharpness;
-    NISHDRMode hdrMode = consts.hdrMode == NISHDR::eLinear ? NISHDRMode::Linear :
-        consts.hdrMode == NISHDR::ePQ ? NISHDRMode::PQ : NISHDRMode::None;
 
     uint32_t viewPortsSupport = inExtent.width != inDesc.width || inExtent.height != inDesc.height ||
         outExtent.width != outDesc.width || outExtent.height != outDesc.height;
 
-    chi::Kernel kernel = ctx.getKernel(consts.mode, viewPortsSupport, consts.hdrMode);
+    float sharpness = consts.sharpness;
+    NISHDR hdrMode = consts.hdrMode;
+
+    // if hdr is enabled then enable viewports
+    if (hdrMode == NISHDR::eLinear || hdrMode == NISHDR::ePQ)
+    {
+        viewPortsSupport = true;
+    }
+
+    NISHDRMode nisHdrMode = hdrMode == NISHDR::eLinear ? NISHDRMode::Linear :
+        hdrMode == NISHDR::ePQ ? NISHDRMode::PQ : NISHDRMode::None;
+
+    chi::Kernel kernel = ctx.getKernel(consts.mode, viewPortsSupport, hdrMode);
     if (!kernel)
     {
         SL_LOG_ERROR( "Failed to find NISContext shader permutation mode: %d viewportSupport: %d, hdrMode: %d", consts.mode, viewPortsSupport, consts.hdrMode);
@@ -303,7 +319,7 @@ Result nisEndEvaluation(chi::CommandList cmdList, const common::EventData& data,
         if (!NVScalerUpdateConfig(ctx.config, sharpness,
             inExtent.left, inExtent.top, inExtent.width, inExtent.height, inDesc.width, inDesc.height,
             outExtent.left, outExtent.top, outExtent.width, outExtent.height, outDesc.width, outDesc.height,
-            hdrMode))
+            nisHdrMode))
         {
             SL_LOG_ERROR( "NVScaler configuration error, scale out of bounds or textures width/height with zero value");
             return Result::eErrorInvalidParameter;
@@ -314,7 +330,7 @@ Result nisEndEvaluation(chi::CommandList cmdList, const common::EventData& data,
         // Sharpening only (no upscaling)
         if (!NVSharpenUpdateConfig(ctx.config, sharpness,
             inExtent.left, inExtent.top, inExtent.width, inExtent.height, inDesc.width, inDesc.height,
-            outExtent.left, outExtent.top, hdrMode))
+            outExtent.left, outExtent.top, nisHdrMode))
         {
             SL_LOG_ERROR( "NVSharpen configuration error, textures width/height width zero value");
             return Result::eErrorInvalidParameter;
@@ -325,17 +341,17 @@ Result nisEndEvaluation(chi::CommandList cmdList, const common::EventData& data,
     CHI_VALIDATE(ctx.compute->beginPerfSection(cmdList, "sl.nis"));
 #endif
 
+    // Resource state already obtained and stored in resource description
     extra::ScopedTasks revTransitions;
-    chi::ResourceTransition transitions[] =
-    {
+    std::vector<chi::ResourceTransition> transitions {
         {colorIn, chi::ResourceState::eTextureRead, inDesc.state},
         {colorOut, chi::ResourceState::eStorageRW, outDesc.state}
     };
-    ctx.compute->transitionResources(cmdList, transitions, (uint32_t)countof(transitions), &revTransitions);
+    ctx.compute->transitionResources(cmdList, transitions.data(), (uint32_t)(transitions.size()), &revTransitions);
 
     CHI_VALIDATE(ctx.compute->bindSharedState(cmdList));
     CHI_VALIDATE(ctx.compute->bindKernel(kernel));
-    CHI_VALIDATE(ctx.compute->bindConsts(0, 0, &ctx.config, sizeof(ctx.config), 3));
+    CHI_VALIDATE(ctx.compute->bindConsts(0, 0, &ctx.config, sizeof(ctx.config), kMaxNumViewports * 3));
     CHI_VALIDATE(ctx.compute->bindSampler(1, 0, chi::eSamplerLinearClamp));
     CHI_VALIDATE(ctx.compute->bindTexture(2, 0, colorIn));
     CHI_VALIDATE(ctx.compute->bindRWTexture(3, 0, colorOut));

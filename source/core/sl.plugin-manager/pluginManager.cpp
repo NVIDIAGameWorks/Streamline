@@ -132,7 +132,8 @@ public:
             kFeatureNIS,
             kFeatureReflex,
             kFeatureDLSS_G,
-            kFeatureImGUI
+            kFeatureImGUI,
+            kFeatureDLSS_RR,
         };
 
         // Allow override via JSON config file
