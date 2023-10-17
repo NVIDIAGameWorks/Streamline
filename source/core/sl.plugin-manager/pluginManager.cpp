@@ -284,8 +284,8 @@ private:
         HMODULE lib{};
         json config{};
         std::string name{};
-        std::string filename{};
-        std::string fullpath{};
+        fs::path filename{};
+        fs::path fullpath{};
         std::string paramNamespace{};
         api::PFuncOnPluginStartup* onStartup{};
         api::PFuncOnPluginShutdown* onShutdown{};
@@ -506,8 +506,8 @@ bool PluginManager::loadPlugin(const fs::path pluginFullPath, Plugin **ppPlugin)
     }
 
     Plugin *plugin = new Plugin();
-    plugin->fullpath = pluginFullPath.string();
-    plugin->filename = pluginFullPath.stem().string();
+    plugin->fullpath = pluginFullPath;
+    plugin->filename = pluginFullPath.stem();
     plugin->lib = mod;
     plugin->getFunction = reinterpret_cast<api::PFuncGetPluginFunction*>(GetProcAddress(mod, "slGetPluginFunction"));
     if (plugin->getFunction)
@@ -516,7 +516,7 @@ bool PluginManager::loadPlugin(const fs::path pluginFullPath, Plugin **ppPlugin)
     }
     if (!plugin->getFunction || !plugin->onLoad)
     {
-        SL_LOG_ERROR( "Ignoring '%s' since it does not contain proper API", plugin->filename.c_str());
+        SL_LOG_ERROR( "Ignoring '%ls' since it does not contain proper API", plugin->filename.wstring().c_str());
         freePlugin(&plugin);
         return false;
     }
@@ -536,7 +536,7 @@ bool PluginManager::loadPlugin(const fs::path pluginFullPath, Plugin **ppPlugin)
         const char* pluginJSONText{};
         if (!plugin->onLoad(parameters, loaderJSONStr.c_str(), &pluginJSONText))
         {
-            SL_LOG_ERROR( "Ignoring '%s' since core API 'onPluginLoad' failed", plugin->filename.c_str());
+            SL_LOG_ERROR( "Ignoring '%ls' since core API 'onPluginLoad' failed", plugin->filename.wstring().c_str());
             freePlugin(&plugin);
             return false;
         }
@@ -613,7 +613,7 @@ Result PluginManager::mapPlugins(std::vector<std::wstring>& files)
             {
                 if (p->id == plugin->id)
                 {
-                    SL_LOG_INFO("Detected two plugins with the same id %s - %s", p->filename.c_str(), plugin->filename.c_str());
+                    SL_LOG_INFO("Detected two plugins with the same id %ls - %ls", p->filename.wstring().c_str(), plugin->filename.wstring().c_str());
                     duplicatedPluginById = p;
                 }
             }
@@ -686,7 +686,7 @@ Result PluginManager::mapPlugins(std::vector<std::wstring>& files)
                         freePlugin(&duplicatedPluginById);
                         if (!loadPlugin(fullPath, &duplicatedPluginById))
                         {
-                            SL_LOG_ERROR("Failed to reload plugin file: %s it loaded before, so what happened!?", fullPath.c_str());
+                            SL_LOG_ERROR("Failed to reload plugin file: %ls it loaded before, so what happened!?", fullPath.wstring().c_str());
                             m_plugins.erase(it);
                             continue;
                         }
@@ -771,7 +771,7 @@ Result PluginManager::mapPlugins(std::vector<std::wstring>& files)
         }
         else
         {
-            SL_LOG_WARN("Failed to load plugin '%S' - last error %s", pluginFullPath.c_str(), std::system_category().message(GetLastError()).c_str());
+            SL_LOG_WARN("Failed to load plugin '%ls' - last error %s", pluginFullPath.wstring().c_str(), std::system_category().message(GetLastError()).c_str());
         }
     };
 

@@ -47,6 +47,7 @@
 
 #include "_artifacts/shaders/mvec_cs.h"
 #include "_artifacts/shaders/mvec_spv.h"
+#include "_artifacts/json/dlss_json.h"
 #include "_artifacts/gitVersion.h"
 
 #include "external/ngx-sdk/include/nvsdk_ngx.h"
@@ -169,23 +170,11 @@ struct DLSSContext
 
 constexpr uint32_t kMaxNumViewports = 4;
 
-const char* JSON = R"json(
-{
-    "id" : 0,
-    "priority" : 100,
-    "required_plugins" : ["sl.common"],
-    "name" : "sl.dlss",
-    "namespace" : "dlss",
-    "rhi" : ["d3d11", "d3d12", "vk"],
-    "hooks" :
-    [
-    ]
-}
-)json";
+static std::string JSON = std::string(dlss_json, &dlss_json[dlss_json_len]);
 
 void updateEmbeddedJSON(json& config);
 
-SL_PLUGIN_DEFINE("sl.dlss", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON, updateEmbeddedJSON, dlss, DLSSContext)
+SL_PLUGIN_DEFINE("sl.dlss", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON.c_str(), updateEmbeddedJSON, dlss, DLSSContext)
 
 void updateEmbeddedJSON(json& config)
 {

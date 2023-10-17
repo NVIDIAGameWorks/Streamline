@@ -1,0 +1,13 @@
+// These are the hooks we need to do whatever our plugin is trying to do
+{
+    "id" : 3,
+    "priority" : 100,
+    "name" : "sl.reflex",
+    "namespace" : "reflex",
+    "required_plugins" : ["sl.common"],
+    "incompatible_plugins" : ["sl.latency"],
+    "rhi" : ["d3d11", "d3d12", "vk"],
+    "hooks" :
+    [
+    ]
+}

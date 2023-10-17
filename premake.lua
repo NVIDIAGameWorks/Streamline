@@ -35,7 +35,8 @@ workspace "streamline"
 
 	includedirs 
 	{ 
-		".", ROOT		
+		".", ROOT,
+		externaldir .. "json/include/"	
 	}
    	 
 	if os.host() == "windows" then
@@ -95,6 +96,19 @@ workspace "streamline"
 		 buildoutputs { ROOT .. "_artifacts/shaders/%{file.basename}.spv", ROOT .. "_artifacts/shaders/%{file.basename}.cs" }	  
 		 -- One or more additional dependencies for this build command (optional)
 		 --buildinputs { 'path/to/file1.ext', 'path/to/file2.ext' }
+	
+	filter { "files:**.json" }
+		buildmessage 'Compiling %{file.relpath} to %{file.basename}_json.h'
+		buildcommands {
+			'copy "%{file.relpath}" "../../_artifacts/json/%{file.name}"',
+			'pushd '..path.translate("../../_artifacts/json"),
+			'powershell.exe -ExecutionPolicy Bypass '..path.translate("../../tools/")..'bin2cheader.ps1 -i "%{file.basename}.json"  > "../../_artifacts/json/%{file.basename}_json.h"',
+			'popd'
+		}
+		-- One or more outputs resulting from the build (required)
+		buildoutputs { ROOT .. "_artifacts/json/%{file.basename}.json"}	  
+		-- One or more additional dependencies for this build command (optional)
+		-- buildinputs { 'path/to/file1.ext', 'path/to/file2.ext' }
 
 	filter {}
 
@@ -272,8 +286,9 @@ project "sl.common"
 
 	files { 
 		"./source/core/sl.extra/**.cpp",		
+		"./source/plugins/sl.common/**.json",
 		"./source/plugins/sl.common/**.h", 
-		"./source/plugins/sl.common/**.cpp", 				
+		"./source/plugins/sl.common/**.cpp",
 		"./source/core/ngx/**.h",
 		"./source/core/ngx/**.cpp",		
 		"./source/core/sl.ota/**.cpp",
@@ -308,8 +323,9 @@ if (os.isdir("./source/plugins/sl.dlss_g")) then
 		pluginBasicSetup("dlss_g")
 
 		files { 
+			"./source/plugins/sl.dlss_g/**.json",
 			"./source/plugins/sl.dlss_g/**.h", 
-			"./source/plugins/sl.dlss_g/**.cpp", 		
+			"./source/plugins/sl.dlss_g/**.cpp",
 		}
 
 		links {"external/nvapi/amd64/nvapi64.lib"}
@@ -330,8 +346,9 @@ project "sl.dlss"
 	files { 
 		"./source/core/ngx/**.h",
 		"./source/core/ngx/**.cpp",		
-		"./source/plugins/sl.dlss/**.h", 
-		"./source/plugins/sl.dlss/**.cpp"		
+		"./source/plugins/sl.dlss/**.json",
+		"./source/plugins/sl.dlss/**.h",
+		"./source/plugins/sl.dlss/**.cpp"
 	}
 
 	vpaths { ["impl"] = {"./source/plugins/sl.dlss/**.h", "./source/plugins/sl.dlss/**.cpp" }}
@@ -349,8 +366,9 @@ project "sl.nrd"
 	pluginBasicSetup("nrd")
 	
 	files { 
-		"./source/plugins/sl.nrd/**.h", 
-		"./source/plugins/sl.nrd/**.cpp"		
+		"./source/plugins/sl.nrd/**.json",
+		"./source/plugins/sl.nrd/**.h",
+		"./source/plugins/sl.nrd/**.cpp"
 	}
 
 	vpaths { ["impl"] = {"./source/plugins/sl.nrd/**.h", "./source/plugins/sl.nrd/**.cpp" }}
@@ -367,8 +385,9 @@ project "sl.reflex"
 	pluginBasicSetup("reflex")
 	
 	files { 
-		"./source/plugins/sl.reflex/**.h", 
-		"./source/plugins/sl.reflex/**.cpp"		
+		"./source/plugins/sl.reflex/**.json", 
+		"./source/plugins/sl.reflex/**.h",
+		"./source/plugins/sl.reflex/**.cpp"
 	}
 
 	vpaths { ["impl"] = {"./source/plugins/sl.reflex/**.h", "./source/plugins/sl.reflex/**.cpp" }}
@@ -383,8 +402,9 @@ project "sl.template"
 	pluginBasicSetup("template")
 	
 	files { 
-		"./source/plugins/sl.template/**.h", 
-		"./source/plugins/sl.template/**.cpp"		
+		"./source/plugins/sl.template/**.json",
+		"./source/plugins/sl.template/**.h",
+		"./source/plugins/sl.template/**.cpp"
 	}
 
 	vpaths { ["impl"] = {"./source/plugins/sl.template/**.h", "./source/plugins/sl.template/**.cpp" }}
@@ -401,6 +421,7 @@ project "sl.nis"
 	pluginBasicSetup("nis")
 
 	files {
+		"./source/plugins/sl.nis/**.json",
 		"./source/plugins/sl.nis/**.h",
 		"./source/plugins/sl.nis/**.cpp"
 	}
@@ -418,6 +439,7 @@ project "sl.imgui"
 	pluginBasicSetup("nis")
 
 	files {
+		"./source/plugins/sl.imgui/**.json",
 		"./source/plugins/sl.imgui/**.h",
 		"./source/plugins/sl.imgui/**.cpp",
 		"./external/imgui/imgui*.cpp",

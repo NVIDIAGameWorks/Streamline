@@ -109,6 +109,24 @@ T* findStruct(void* ptr)
     return (T*)base;
 }
 
+//! Find a struct of type T, but stop the search if we find a struct of type S
+template<typename T, typename S>
+T* findStruct(void* ptr)
+{
+    auto base = static_cast<const BaseStructure*>(ptr);
+    while (base && base->structType != T::s_structType)
+    {
+        base = base->next;
+
+        // If we find a struct of type S, we know should stop the search
+        if (base->structType == S::s_structType)
+        {
+            return nullptr;
+        }
+    }
+    return (T*)base;
+}
+
 template<typename T>
 T* findStruct(const void** ptr, uint32_t count)
 {

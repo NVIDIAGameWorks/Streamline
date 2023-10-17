@@ -1,4 +1,4 @@
-# Streamline (SL) - Version 2.2.0
+# Streamline (SL) - Version 2.2.1
 
 Streamline is an open-sourced cross-IHV solution that simplifies integration of the latest NVIDIA and other independent hardware vendors’ super resolution technologies into applications and games. This framework allows developers to easily implement one single integration and enable multiple super-resolution technologies and other graphics effects supported by the hardware vendor.
 
@@ -83,7 +83,10 @@ The packaged SDK can be found in the generated `_sdk` folder.
 
 ## Debugging
 
-Please read [Debugging.md](docs/Debugging.md) to learn how to debug and troubleshoot issues.
+Streamline offers several ways to debug and troubleshoot issues. Please see the following pages for more information.
+* Using SL ImGui: [Debugging - SL ImGUI (Realtime Data Inspection).md](docs/Debugging - SL ImGUI %28Realtime Data Inspection%29.md)
+* Using JSON configuration files: [Debugging - JSON Configs (Plugin Configs).md](docs/Debugging - JSON Configs %28Plugin Configs%29.md)
+* Using NRD's validation layer: [Debugging - NRD.md](docs/Debugging - NRD.md)
 
 ## General Programming Guide
 

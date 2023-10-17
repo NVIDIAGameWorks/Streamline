@@ -1,0 +1,54 @@
+// These are the hooks we need to track resources
+{
+    "id" : -1,
+    "priority" : 0,
+    "name" : "sl.common",
+    "namespace" : "common",
+    "rhi" : ["d3d11", "d3d12", "vk"],
+    "hooks" :
+    [
+        {
+            "class": "Vulkan",
+            "target" : "Present",
+            "replacement" : "slHookVkPresent",
+            "base" : "before"
+        },
+        {
+            "class": "Vulkan",
+            "target" : "CmdBindPipeline",
+            "replacement" : "slHookVkCmdBindPipeline",
+            "base" : "after"
+        },
+        {
+            "class": "Vulkan",
+            "target" : "CmdBindDescriptorSets",
+            "replacement" : "slHookVkCmdBindDescriptorSets",
+            "base" : "after"
+        },
+        {
+            "class": "Vulkan",
+            "target" : "BeginCommandBuffer",
+            "replacement" : "slHookVkBeginCommandBuffer",
+            "base" : "after"
+        },
+
+        {
+            "class": "IDXGISwapChain",
+            "target" : "ResizeBuffers",
+            "replacement" : "slHookResizeSwapChainPre",
+            "base" : "before"
+        },
+        {
+            "class": "IDXGISwapChain",
+            "target" : "Present",
+            "replacement" : "slHookPresent",
+            "base" : "before"
+        },
+        {
+            "class": "IDXGISwapChain",
+            "target" : "Present1",
+            "replacement" : "slHookPresent1",
+            "base" : "before"
+        }
+    ]
+}

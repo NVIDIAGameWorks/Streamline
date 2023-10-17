@@ -24,7 +24,7 @@
 
 #include <string.h>
 
-#define FEATURE_SPECIFIC_BUFFER_TYPE_ID(feature, number) feature << 24 | number
+#define FEATURE_SPECIFIC_BUFFER_TYPE_ID(feature, number) feature << 16 | number
 
 #include "sl.h"
 #include "sl_consts.h"
@@ -227,6 +227,21 @@ inline const char* getBufferTypeAsStr(BufferType buf)
         SL_CASE_STR(kBufferTypeOpaqueColor);
         SL_CASE_STR(kBufferTypeReactiveMaskHint);
         SL_CASE_STR(kBufferTypeTransparencyAndCompositionMaskHint);
+        SL_CASE_STR(kBufferTypeReflectedAlbedo);
+        SL_CASE_STR(kBufferTypeColorBeforeParticles);
+        SL_CASE_STR(kBufferTypeColorBeforeTransparency);
+        SL_CASE_STR(kBufferTypeColorBeforeFog);
+        SL_CASE_STR(kBufferTypeSpecularHitDistance);
+        SL_CASE_STR(kBufferTypeSpecularRayDirectionHitDistance);
+        SL_CASE_STR(kBufferTypeSpecularRayDirection);
+        SL_CASE_STR(kBufferTypeDiffuseHitDistance);
+        SL_CASE_STR(kBufferTypeDiffuseRayDirectionHitDistance);
+        SL_CASE_STR(kBufferTypeDiffuseRayDirection);
+        SL_CASE_STR(kBufferTypeHiResDepth);
+        SL_CASE_STR(kBufferTypeLinearDepth);
+        SL_CASE_STR(kBufferTypeBidirectionalDistortionField);
+        SL_CASE_STR(kBufferTypeTransparencyLayer);
+        SL_CASE_STR(kBufferTypeTransparencyLayerOpacity);
     };
     return "Unknown";
 }

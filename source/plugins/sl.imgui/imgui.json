@@ -1,0 +1,12 @@
+// These are the hooks we need to do whatever our plugin is trying to do
+{
+    "id" : 9999,
+    "priority" : 1,
+    "required_plugins" : ["sl.common"],
+    "name" : "sl.imgui",
+    "namespace" : "imgui",
+    "rhi" : ["d3d12"],
+    "hooks" :
+    [
+    ]
+}

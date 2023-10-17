@@ -80,10 +80,7 @@ void onLoad(api::Context* ctx, const char* loaderJSON, const char* embeddedJSON)
             stream >> loader;
         }
 
-        {
-            std::istringstream stream(embeddedJSON);
-            stream >> config;
-        }
+        config = json::parse(embeddedJSON, nullptr, /* allow exceptions: */ true, /* ignore comments: */ true);
 
         auto pluginVersion = api::getContext()->pluginVersion;
         auto apiVersion = api::getContext()->apiVersion;

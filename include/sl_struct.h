@@ -117,14 +117,14 @@ struct BaseStructure
 #define SL_STRUCT(name, guid, version)                                      \
 struct name : public BaseStructure                                          \
 {                                                                           \
-    name##() : BaseStructure(guid, version){}                               \
+    name() : BaseStructure(guid, version){}                                 \
     constexpr static StructType s_structType = guid;                        \
 
 #define SL_STRUCT_PROTECTED(name, guid, version)                            \
 struct name : public BaseStructure                                          \
 {                                                                           \
 protected:                                                                  \
-    name##() : BaseStructure(guid, version){}                               \
+    name() : BaseStructure(guid, version){}                                 \
 public:                                                                     \
     constexpr static StructType s_structType = guid;                        \
 

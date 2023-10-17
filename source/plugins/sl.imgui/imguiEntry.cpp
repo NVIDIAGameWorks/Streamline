@@ -39,6 +39,7 @@
 #include "external/imgui/imgui_internal.h"
 #include "external/implot/implot.h"
 #include "_artifacts/gitVersion.h"
+#include "_artifacts/json/imgui_json.h"
 #include "source/plugins/sl.imgui/imguiTypes.h"
 #include "source/plugins/sl.imgui/input.h"
 #include "source/plugins/sl.imgui/imgui.h"
@@ -98,34 +99,11 @@ struct IMGUIContext
 
 void updateEmbeddedJSON(json& config);
 
-//! These are the hooks we need to do whatever our plugin is trying to do
-//! 
-//! See pluginManager.h for the full list of currently supported hooks
-//! 
-//! Hooks are registered and executed by their priority. If it is important 
-//! for your plugin to run before/after some other plugin please check the 
-//! priorities listed by the plugin manager in the log during the startup.
-//!
-//! IMPORTANT: Please note that priority '0' is reserved for the sl.common plugin.
-//! 
-//! IMPORTANT: Please note that id must be provided and it has to match the Feature enum we assign for this plugin
-//!
-static const char* JSON = R"json(
-{
-    "id" : 9999,
-    "priority" : 1,
-    "required_plugins" : ["sl.common"],
-    "name" : "sl.imgui",
-    "namespace" : "imgui",
-    "rhi" : ["d3d12"],
-    "hooks" :
-    [
-    ]
-}
-)json";
+//! Embedded JSON, containing information about the plugin and the hooks it requires.
+static std::string JSON = std::string(imgui_json, &imgui_json[imgui_json_len]);
 
 //! Define our plugin, make sure to update version numbers in versions.h
-SL_PLUGIN_DEFINE("sl.imgui", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON, updateEmbeddedJSON, imgui, IMGUIContext)
+SL_PLUGIN_DEFINE("sl.imgui", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON.c_str(), updateEmbeddedJSON, imgui, IMGUIContext)
 
 namespace imgui
 {

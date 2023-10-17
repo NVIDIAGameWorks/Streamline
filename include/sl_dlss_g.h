@@ -36,6 +36,7 @@ enum class DLSSGMode : uint32_t
 {
     eOff,
     eOn,
+    eAuto,
     eCount
 };
 

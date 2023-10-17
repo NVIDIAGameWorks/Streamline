@@ -4,7 +4,7 @@ Streamline - NRD (Beta)
 
 >The focus of this guide is on using Streamline to integrate NVIDIA Real-Time Denoisers (NRD) into an application.  For more information about NRD itself, please visit the [NVIDIA Developer NRD Page](https://developer.nvidia.com/rtx/ray-tracing/rt-denoisers)
 
-Version 2.2.0
+Version 2.2.1
 =======
 
 ### 1.0 INITIALIZE AND SHUTDOWN

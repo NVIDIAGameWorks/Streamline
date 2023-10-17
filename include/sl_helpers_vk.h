@@ -28,7 +28,7 @@
 namespace sl
 {
 
-#define SL_VK_FEATURE(n) if(strcmp(featureNames[i], #n) == 0) features.##n = VK_TRUE;
+#define SL_VK_FEATURE(n) if(strcmp(featureNames[i], #n) == 0) features.n = VK_TRUE;
 
 inline VkPhysicalDeviceVulkan12Features getVkPhysicalDeviceVulkan12Features(uint32_t featureCount, const char** featureNames)
 {

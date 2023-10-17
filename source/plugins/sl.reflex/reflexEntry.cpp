@@ -36,6 +36,7 @@
 #include "source/plugins/sl.common/commonInterface.h"
 #include "source/plugins/sl.reflex/pclstats.h"
 #include "source/plugins/sl.imgui/imgui.h"
+#include "_artifacts/json/reflex_json.h"
 #include "_artifacts/gitVersion.h"
 #include "external/nvapi/nvapi.h"
 #include "external/json/include/nlohmann/json.hpp"
@@ -107,35 +108,13 @@ struct LatencyContext
 };
 }
 
-//! These are the hooks we need to do whatever our plugin is trying to do
-//! 
-//! See pluginManager.h for the full list of currently supported hooks
-//! 
-//! Hooks are registered and executed by their priority. If it is important 
-//! for your plugin to run before/after some other plugin please check the 
-//! priorities listed by the plugin manager in the log during the startup.
-//!
-//! IMPORTANT: Please note that priority '0' is reserved for the sl.common plugin.
-//!
-static const char* JSON = R"json(
-{
-    "id" : 3,
-    "priority" : 100,
-    "name" : "sl.reflex",
-    "namespace" : "reflex",
-    "required_plugins" : ["sl.common"],
-    "incompatible_plugins" : ["sl.latency"],
-    "rhi" : ["d3d11", "d3d12", "vk"],
-    "hooks" :
-    [
-    ]
-}
-)json";
+//! Embedded JSON, containing information about the plugin and the hooks it requires.
+static std::string JSON = std::string(reflex_json, &reflex_json[reflex_json_len]);
 
 void updateEmbeddedJSON(json& config);
 
 //! Define our plugin, make sure to update version numbers in versions.h
-SL_PLUGIN_DEFINE("sl.reflex", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON, updateEmbeddedJSON, reflex, LatencyContext)
+SL_PLUGIN_DEFINE("sl.reflex", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON.c_str(), updateEmbeddedJSON, reflex, LatencyContext)
 
 //! Figure out if we are supported on the current hardware or not
 //! 

@@ -47,6 +47,7 @@
 #include "_artifacts/shaders/nrd_pack_cs.h"
 #include "_artifacts/shaders/nrd_prep_spv.h"
 #include "_artifacts/shaders/nrd_pack_spv.h"
+#include "_artifacts/json/nrd_json.h"
 #include "_artifacts/gitVersion.h"
 
 #define NRD_CHECK(f) {nrd::Result r = f;if(r != nrd::Result::SUCCESS) { SL_LOG_ERROR( "%s failed error %u",#f,r); return false;}};
@@ -630,19 +631,7 @@ struct NRDContext
 };
 }
 
-const char* JSON = R"json(
-{
-    "id" : 1,
-    "priority" : 100,
-    "name" : "sl.nrd",
-    "namespace" : "nrd",
-    "required_plugins" : ["sl.common"],
-    "rhi" : ["d3d11", "d3d12", "vk"],
-    "hooks" :
-    [
-    ]
-}
-)json";
+static std::string JSON = std::string(nrd_json, &nrd_json[nrd_json_len]);
 
 void updateEmbeddedJSON(json& config)
 {
@@ -660,7 +649,7 @@ void updateEmbeddedJSON(json& config)
     }
 }
 
-SL_PLUGIN_DEFINE("sl.nrd", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON, updateEmbeddedJSON, nrdsl, NRDContext)
+SL_PLUGIN_DEFINE("sl.nrd", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON.c_str(), updateEmbeddedJSON, nrdsl, NRDContext)
 
 void destroyNRDViewport(NRDViewport*);
 

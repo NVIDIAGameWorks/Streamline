@@ -1,0 +1,11 @@
+{
+    "id" : 0,
+    "priority" : 100,
+    "required_plugins" : ["sl.common"],
+    "name" : "sl.dlss",
+    "namespace" : "dlss",
+    "rhi" : ["d3d11", "d3d12", "vk"],
+    "hooks" :
+    [
+    ]
+}

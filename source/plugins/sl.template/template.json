@@ -1,0 +1,50 @@
+// These are the hooks we need to do whatever our plugin is trying to do
+//
+// See pluginManager.h for the full list of currently supported hooks
+//
+// Hooks are registered and executed by their priority. If it is important for
+// your plugin to run before/after some other plugin, please check the
+// priorities listed by the plugin manager in the log during the startup.
+//
+// Note that this file will be embedded at compile time, and cannot be used for
+// configuration at runtime
+
+{
+    // id must match the sl::Feature constant in sl.h or sl_template.h. For
+    // example, sl.dlss has id 0, hence kFeatureDLSS = 0
+    // 
+    // IMPORTANT: Please note that id must be provided and must match the
+    // Feature constant assigned for this plugin
+    "id": 65535,
+    
+    // Priority defines the order that plugins will be executed in (lower
+    // priorities first).
+    //
+    // IMPORTANT: Please note that priority '0' is reserved for the sl.common
+    // plugin.
+    "priority": 100,
+    
+    // Rename this to the name of your plugin (e.g. sl.dlss). This value is what
+    // other plugins will use to refer to your plugin
+    "name": "sl.template",
+    
+    // Rename this to the namespace used for parameters used by your plugin
+    "namespace": "template",
+    
+    // The following lists can be used to specify dependencies or
+    // incompatibilities with other plugins
+    "required_plugins": ["sl.some_plugin_we_depend_on"],
+    "exclusive_hooks": ["IDXGISwapChain_SomeFunctionNobodyElseCanUse"],
+    "incompatible_plugins": ["sl.some_plugin_we_are_not_compatible_with"],
+    
+    "rhi": ["d3d11", "d3d12", "vk"],
+    
+    "hooks": [
+        {
+            "class": "IDXGISwapChain",
+            "target": "Present",
+            "replacement": "slHookPresent",
+            "base": "before"
+        }
+    ]
+}

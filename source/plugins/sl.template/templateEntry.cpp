@@ -34,6 +34,7 @@
 #include "source/plugins/sl.common/commonInterface.h"
 #include "external/nvapi/nvapi.h"
 #include "external/json/include/nlohmann/json.hpp"
+#include "_artifacts/json/template_json.h"
 #include "_artifacts/gitVersion.h"
 
 using json = nlohmann::json;
@@ -95,52 +96,12 @@ struct TemplateContext
 
 void updateEmbeddedJSON(json& config);
 
-//! These are the hooks we need to do whatever our plugin is trying to do
-//! 
-//! See pluginManager.h for the full list of currently supported hooks
-//! 
-//! Hooks are registered and executed by their priority. If it is important 
-//! for your plugin to run before/after some other plugin please check the 
-//! priorities listed by the plugin manager in the log during the startup.
-//!
-//! IMPORTANT: Please note that priority '0' is reserved for the sl.common plugin.
-//! 
-//! IMPORTANT: Please note that id must be provided and it has to match the Feature enum we assign for this plugin
-//!
-static const char* JSON = R"json(
-{
-    "comment_id" : "id must match the sl::Feature enum in sl.h or sl_template.h, for example sl.dlss has id 0 hence eDLSS = 0",
-    "id" : 65535,
-    "comment_priority" : "plugins are executed in the order of their priority so keep that in mind",
-    "priority" : 100,
-    
-    "comment_name" : "rename this to the name of your plugin (ex: sl.nis). This value is what other plugins will use to refer to your plugin",
-    "name" : "sl.template",
-
-    "comment_namespace" : "rename this to the namespace used for parameters used by your plugin",
-    "namespace" : "template",
-    
-    "comment_optional_dependencies" : "the following lists can be used to specify dependencies, incompatibilities with other plugin(s)",
-    "required_plugins" : ["sl.some_plugin_we_depend_on"],
-    "exclusive_hooks" : ["IDXGISwapChain_SomeFunctionNobodyElseCanUse"],
-    "incompatible_plugins" : ["sl.some_plugin_we_are_not_compatible_with"],
-    
-    "rhi" : ["d3d11", "d3d12", "vk"],
-    
-    "hooks" :
-    [
-        {
-            "class": "IDXGISwapChain",
-            "target" : "Present",
-            "replacement" : "slHookPresent",
-            "base" : "before"
-        }
-    ]
-}
-)json";
+//! Embedded JSON, containing information about the plugin and the hooks it requires.
+//! See template.json
+static std::string JSON = std::string(template_json, &template_json[template_json_len]);
 
 //! Define our plugin, make sure to update version numbers in versions.h
-SL_PLUGIN_DEFINE("sl.template", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON, updateEmbeddedJSON, tmpl, TemplateContext)
+SL_PLUGIN_DEFINE("sl.template", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON.c_str(), updateEmbeddedJSON, tmpl, TemplateContext)
 
 //! Set constants for our plugin (if any, this is optional and should be thread safe)
 Result slSetConstants(const void* data, uint32_t frameIndex, uint32_t id)

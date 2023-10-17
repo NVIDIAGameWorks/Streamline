@@ -23,6 +23,8 @@
 #pragma once
 
 #include <stdint.h>
+#include <assert.h>
+#include <string>
 
 #define SL_ENUM_OPERATORS_64(T)                                                         \
 inline bool operator&(T a, T b)                                                         \
@@ -154,11 +156,10 @@ enum Boolean : char
     eInvalid
 };
 
-
 //! Common constants, all parameters must be provided unless they are marked as optional
 //! 
 //! {DCD35AD7-4E4A-4BAD-A90C-E0C49EB23AFE}
-SL_STRUCT(Constants, StructType({ 0xdcd35ad7, 0x4e4a, 0x4bad, { 0xa9, 0xc, 0xe0, 0xc4, 0x9e, 0xb2, 0x3a, 0xfe } }), kStructVersion1)
+SL_STRUCT(Constants, StructType({ 0xdcd35ad7, 0x4e4a, 0x4bad, { 0xa9, 0xc, 0xe0, 0xc4, 0x9e, 0xb2, 0x3a, 0xfe } }), kStructVersion2)
     //! IMPORTANT: All matrices are row major (see float4x4 definition) and
     //! must NOT contain temporal AA jitter offset (if any). Any jitter offset
     //! should be provided as the additional parameter Constants::jitterOffset (see below)
@@ -218,6 +219,20 @@ SL_STRUCT(Constants, StructType({ 0xdcd35ad7, 0x4e4a, 0x4bad, { 0xa9, 0xc, 0xe0,
     Boolean motionVectorsDilated = Boolean::eFalse;
     //! Specifies if motion vectors are jittered or not.
     Boolean motionVectorsJittered = Boolean::eFalse;
+
+    //! Version 2 members:
+    //! 
+    //! Optional heuristic that specifies the minimum depth difference between two objects in screen-space.
+    //! The units of the value are in linear depth units.
+    //! Linear depth is computed as:
+    //!     if depthInverted is false:  `lin_depth = 1 / (1 - depth)` 
+    //!     if depthInverted is true:   `lin_depth = 1 / depth`
+    //! 
+    //! Although unlikely to need to be modified, smaller thresholds are useful when depth units are
+    //! unusually compressed into a small dynamic range near 1.
+    //! 
+    //! If not specified, the default value is 40.0f.
+    float minRelativeLinearDepthObjectSeparation = 40.0f;
 
     //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
 };

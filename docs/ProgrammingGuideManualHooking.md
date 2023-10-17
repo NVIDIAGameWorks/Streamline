@@ -2,7 +2,7 @@
 Streamline - Manual Hooking
 =======================
 
-Version 2.2.0
+Version 2.2.1
 =======
 
 The automated global hooking is a great way to quickly enable SL features in any application. However, this can lead to unnecessary overhead caused by the entire API redirection through SL proxies and problems with tools and 3rd party libraries which do not expect to receive SL proxies as inputs.

@@ -2,7 +2,7 @@
 Streamline - SL
 =======================
 
-Version 2.2.0
+Version 2.2.1
 =======
 
 1 SETTING UP
@@ -962,6 +962,60 @@ slSetTag(viewport, &depthTag, 1);
 > There is no need to transition tagged resources to any specific state. When used by the host application resources will always be in the state they where left before invoking any SL APIs.
 
 For the complete list of the required buffer tags for a given feature please call `slGetFeatureRequirements`.
+
+### Resource extensions
+Some resource extensions can be supplied to `ResourceTag` to pass extra information. Extensions can be supplied in 2 ways:
+* **Member variable**: Member variable to the `ResourceTag`, with the appropriate struct version number
+* **Chain extension**: As part of the `ResouceTag` chain, in its `next` pointer member variable
+
+>**NOTE:**
+Chain extensions should all come immediately after the tag they belong to.
+
+#### Resource `Extent` (member variable, `kStructVersion1`)
+When a resource is suballocated as part of a bigger resource, please properly populate the `Extent` member variable as part of the `ResourceTag`. The `Extent` should indicate the top-left corner of the subresource relative to the tagged resource, as well as the width and height of the subresource.
+
+```cpp
+
+// Example extent: resource that starts in the middle of the tagged resource, and is at 1/8th of the tagged resource's resolution.
+// Illustration: The xxx represent the subresource that the extents define
+// -----------------
+// -----------------
+// -----------------
+// --------xxxx-----
+// --------xxxx-----
+// -----------------
+// -----------------
+
+Extent depthExtent{};
+depthExtent.top = depthResourceHeight / 2;
+depthExtent.left = depthResourceWidth / 2;
+depthExtent.height = depthResourceHeight / 4;
+depthExtent.width= depthResourceWidth / 4;
+
+ResourceTag depthTag{};
+depthTag.extent = depthExtent;
+```
+#### Resource `PrecisionInfo` (chain extension)
+Some buffers (e.g., `kBufferTypeBidirectionalDistortionField`) can be supplied with a `PrecisionInfo` struct as an extension (`next` ptr) to the `ResourceTag`. This struct allows a plugin to internally convert the low-precision buffer data to a higher-precision format, for better image quality purposes.
+
+Populating the `PrecisionInfo` accurately requires knowing the bounds the high-precision data, so that good `scale` and `bias` values are supplied.
+
+```cpp
+// These max and min values should be computed as part of a reduction phase, and should be used to convert
+// the high-precision data to a low-precision format
+// The conversion, using a linear transform, could look like the following:
+//     lowPrecisionData = (hiPrecisionData - bufferMinVal) / (bufferMaxVal - bufferMinVal)
+float bufferMaxVal; // max value in the high-precision format
+float bufferMinVal; // min value in the high-precision format
+
+PrecisionInfo bufferPrecisionInfo{};
+bufferPrecisionInfo.conversionFormula = PrecisionFormula::eLinearTransform;
+bufferPrecisionInfo.bias = bufferMinVal;
+bufferPrecisionInfo.scale = bufferMaxVal - bufferMinVal;
+
+ResourceTag tag{};
+tag.next = &bufferPrecisionInfo;
+```
 
 ### 2.9 FRAME TRACKING
 

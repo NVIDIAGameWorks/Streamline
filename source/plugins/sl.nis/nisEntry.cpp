@@ -38,6 +38,7 @@
 #include "source/plugins/sl.common/commonInterface.h"
 #include "external/json/include/nlohmann/json.hpp"
 #include "_artifacts/gitVersion.h"
+#include "_artifacts/json/nis_json.h"
 
 #include "./NIS/NIS_Config.h"
 // Compute shader permutations
@@ -120,19 +121,7 @@ struct NISContext
 
 constexpr uint32_t kMaxNumViewports = 4;
 
-const char* JSON = R"json(
-{
-    "id" : 2,
-    "priority" : 100,
-    "name" : "sl.nis",
-    "namespace" : "nis",
-    "required_plugins" : ["sl.common"],
-    "rhi" : ["d3d11", "d3d12", "vk"],
-    "hooks" :
-    [
-    ]
-}
-)json";
+static std::string JSON = std::string(nis_json, &nis_json[nis_json_len]);
 
 void updateEmbeddedJSON(json& config)
 {
@@ -151,7 +140,7 @@ void updateEmbeddedJSON(json& config)
     }
 }
 
-SL_PLUGIN_DEFINE("sl.nis", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON, updateEmbeddedJSON, nis, NISContext)
+SL_PLUGIN_DEFINE("sl.nis", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON.c_str(), updateEmbeddedJSON, nis, NISContext)
 
 Result slSetData(const BaseStructure* inputs, CommandBuffer* cmdBuffer)
 {

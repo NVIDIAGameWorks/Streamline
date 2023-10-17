@@ -734,6 +734,13 @@ typedef struct NVSDK_NGX_FeatureRequirement
 #define NVSDK_NGX_Parameter_DLSS_INV_VIEW_PROJECTION_MATRIX "InvViewProjectionMatrix"
 #define NVSDK_NGX_Parameter_DLSS_CLIP_TO_PREV_CLIP_MATRIX   "ClipToPrevClipMatrix"
 
+#define NVSDK_NGX_Parameter_DLSS_TransparencyLayer "DLSS.TransparencyLayer"
+#define NVSDK_NGX_Parameter_DLSS_TransparencyLayer_Subrect_Base_X "DLSS.TransparencyLayer.Subrect.Base.X"
+#define NVSDK_NGX_Parameter_DLSS_TransparencyLayer_Subrect_Base_Y "DLSS.TransparencyLayer.Subrect.Base.Y"
+#define NVSDK_NGX_Parameter_DLSS_TransparencyLayerOpacity "DLSS.TransparencyLayerOpacity"
+#define NVSDK_NGX_Parameter_DLSS_TransparencyLayerOpacity_Subrect_Base_X "DLSS.TransparencyLayerOpacity.Subrect.Base.X"
+#define NVSDK_NGX_Parameter_DLSS_TransparencyLayerOpacity_Subrect_Base_Y "DLSS.TransparencyLayerOpacity.Subrect.Base.Y"
+
 #define NVSDK_NGX_Parameter_DLSS_Get_Dynamic_Max_Render_Width     "DLSS.Get.Dynamic.Max.Render.Width"
 #define NVSDK_NGX_Parameter_DLSS_Get_Dynamic_Max_Render_Height    "DLSS.Get.Dynamic.Max.Render.Height"
 #define NVSDK_NGX_Parameter_DLSS_Get_Dynamic_Min_Render_Width     "DLSS.Get.Dynamic.Min.Render.Width"

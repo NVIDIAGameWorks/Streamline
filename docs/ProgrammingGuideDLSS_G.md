@@ -4,7 +4,7 @@ Streamline - DLSS-G
 
 NVIDIA DLSS Frame Generation (“DLSS-FG” or “DLSS-G”) is an AI based technology that infers frames based on rendered frames coming from a game engine or rendering pipeline. This document explains how to integrate DLSS-G into a renderer.
 
-Version 2.2.0
+Version 2.2.1
 =======
 
 ### 0.0 Integration checklist
@@ -193,6 +193,7 @@ Depth | - Same depth data used to generate motion vector data <br> - `sl::Consta
 Motion Vectors | - Dense motion vector field (i.e. includes camera motion, and motion of dynamic objects) <br> - *Note: this is the same set of requirements as DLSS-SR, and the same motion vectors can be used for both* | ![dlssg_mvec](./media/dlssg_docs_mvec.png "DLSSG Input Example: Motion Vectors")
 Hudless | - Should contain the full viewable scene, **without any HUD/UI elements in it**. If some HUD/UI elements are unavoidably included, expect some image quality degradation on those elements <br> - Same color space and post-processing effects (e.g tonemapping, blur etc.) as color backbuffer <br> - When appropriate buffer extents are *not* provided, needs to have the same dimensions as the color backbuffer <br> | ![dlssg_hudless](./media/dlssg_docs_hudless.png "DLSSG Input Example: Hudless")
 UI Color and Alpha | - Should **only** contain pixels that denote the UI/HUD, along with appropriate alpha values (described below) <br> - Alpha is *zero* on all pixels that do *not* have UI on them <br> - Alpha is *non-zero* on all pixels that do have UI on them <br> - RGB is as close as possible to respecting the following blending formula: `UI.RGB x UI.Alpha + (1 - UI.Alpha) x Hudless.RGB = Final_Color.RGB` <br> - When appropriate buffer extents are *not* provided, needs to have the same dimensions as the color backbuffer <br> | ![dlssg_ui_color_and_alpha](./media/dlssg_docs_ui_color_and_alpha.png "DLSSG Input Example: UI Color and Alpha")
+Bidirectional Distortion Field | - Optional buffer, **only needed when strong distortion effects are applied as post-processing filters** <br> - Refer to [pseudo-code below ](#bidirectional-distortion-field-buffer-generation-code-sample) for an example on how to generate this optional buffer <br> - When this buffer is tagged, Mvec and Depth need to be **undistorted** <br> - When this buffer is tagged, the FinalColor is should be **distorted** <br> - When this buffer is tagged, Hudless and UIColorAndAlpha need to be such that `Blend(Hudless, UIColorAndAlpha) = FinalColor`. This may mean that Hudless needs to be equally distorted, and in rare cases that UIColorAndAlpha is also equally distorted <br> - **Resolution**: we recommend using half of the FinalColor's resolution's width and height <br> - **Channel count**: 4 channels <br> - **RG channels**: UV coordinates of the corresponding **undistorted** pixel, as an offset relative to the source UV coordinate <br> - **BA channels**: UV coordinates of the corresponding **distorted** pixel, as an offset relative to the source UV coordinate <br> - **Units**: the buffer values should be in normalized pixel space `[0,1]`. These should be the same scale as the input MVecs <br> - **Channel precision and format:** Signed format, equal bit-count per channel (i.e. R10G10B10A2 is NOT allowed). We recommend a minimum of 8 bits per channel, with precision scale and bias (`PrecisionInfo`) passed in as part of the `ResourceTag` | <center>**Barrel distortion, RGB channels**  ![dlssg_bidirectional_distortion_field](./media/dlssg_docs_bidirectional_distortion_field.png "DLSSG Input Example: Bidirectional Distortion Field") <br><br> <center>**Barrel distortion, absolute value of RG channels** ![dlssg_docs_bidirectional_distortion_field_rg_abs](./media/dlssg_docs_bidirectional_distortion_field_rg_abs.png "DLSSG Input Example: Bidirectional Distortion Field, RG channels, Absolute value") 
 
 #### **Tagging recommendations**
 
@@ -222,8 +223,8 @@ It is important to emphasize that **the overuse of `sl::ResourceLifecycle::eOnly
 // NOTE: As an example we are tagging depth as immutable and mvec as volatile, this needs to be adjusted based on how your engine works
 sl::Resource depth = {sl::ResourceType::Tex2d, myDepthBuffer, nullptr, nullptr, depthState, nullptr};
 sl::Resource mvec = {sl::ResourceType::Tex2d, myMotionVectorsBuffer, nullptr, mvecState, nullptr, nullptr};
-sl::ResourceTag depthTag = sl::ResourceTag {&depth, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent }; // valid all the time
-sl::ResourceTag mvecTag = sl::ResourceTag {&mvec, sl::kBufferTypeMvec, sl::ResourceLifecycle::eOnlyValidNow, &fullExtent };     // reused for something else later on
+sl::ResourceTag depthTag = sl::ResourceTag {&depth, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent, nullptr }; // valid all the time
+sl::ResourceTag mvecTag = sl::ResourceTag {&mvec, sl::kBufferTypeMvec, sl::ResourceLifecycle::eOnlyValidNow, &fullExtent, nullptr };     // reused for something else later on
 
 // Normally depth and mvec are available at a similar point in the pipeline so tagging them together
 // If this is not the case simply tag them separately when they are available
@@ -233,15 +234,23 @@ slSetTag(viewport, inputs, _countof(inputs), cmdList);
 // After post-processing pass but before UI/HUD is added tag the hud-less buffer
 //
 sl::Resource hudLess = {sl::ResourceType::Tex2d, myHUDLessBuffer, nullptr, nullptr, hudlessState, nullptr};
-sl::ResourceTag hudLessTag = sl::ResourceTag {&hudLess, sl::kBufferTypeHUDLessColor, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent }; // valid all the time
+sl::ResourceTag hudLessTag = sl::ResourceTag {&hudLess, sl::kBufferTypeHUDLessColor, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent, nullptr }; // valid all the time
 sl::Resource inputs[] = {hudLessTag};
 slSetTag(viewport, inputs, _countof(inputs), cmdList);
 
 // UI buffer with color and alpha channel
 //
 sl::Resource ui = {sl::ResourceType::Tex2d, myUIBuffer, nullptr, nullptr, uiTextureState, nullptr};
-sl::ResourceTag uiTag = sl::ResourceTag {&ui, sl::kBufferTypeUIColorAndAlpha, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent }; // valid all the time
+sl::ResourceTag uiTag = sl::ResourceTag {&ui, sl::kBufferTypeUIColorAndAlpha, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent, nullptr }; // valid all the time
 sl::Resource inputs[] = {uiTag};
+slSetTag(viewport, inputs, _countof(inputs), cmdList);
+
+// OPTIONAL! Only need the Bidirectional distortion field when strong distortion effects are applied during post-processing
+//
+sl::Resource bidirectionalDistortionField = {sl::ResourceType::Tex2d, myBidirectionalDistortionBuffer, nullptr, nullptr, bidirectionalDistortionState, nullptr};
+// Note: here `precisionInfo` refers to the transform needed to be applied to the buffer values to convert from a low-precision format (e.g. 8-bits) to a high-precision format (e.g. 16-bits). Refer to 
+sl::ResourceTag bidirectionalDistortionTag = sl::ResourceTag {&bidirectionalDistortionField, sl::kBufferTypeBidirectionalDistortionField, sl::ResourceLifecycle::eValidUntilPresent, &fullExtent, &precisionInfo }; // valid all the time
+sl::Resource inputs[] = {bidirectionalDistortionTag};
 slSetTag(viewport, inputs, _countof(inputs), cmdList);
 ```
 
@@ -251,11 +260,72 @@ slSetTag(viewport, inputs, _countof(inputs), cmdList);
 > **IMPORTANT:**
 > If validity of tagged resources cannot be guaranteed (for example game is loading, paused, in menu, playing a video cut scene etc.) **all tags should be set to null pointers to avoid stability or IQ issues**.
 
-### 6.0 TURN DLSS-G ON/OFF AND PROVIDE OTHER DLSS-G OPTIONS
+#### **Bidirectional Distortion Field buffer generation code sample**
+The following is pseudo-code that should guide the generation of the bidirectional distortion field buffer. The example distortion illustrated is barrel distortion.
+
+```cpp
+const float distortionAlpha = -0.5f;
+ 
+float2 barrelDistortion(float2 UV)
+{    
+    // Barrel distortion assumes UVs relative to center (0,0), so we transform
+    // to [-1, 1]
+    float2 UV11 = (UV * 2.0f) - 1.0f;
+     
+    // Squared norm of distorted distance to center
+    float r2 = UV11.x * UV11.x + UV11.y * UV11.y;
+     
+    // Reference: http://www.cs.ait.ac.th/~mdailey/papers/Bukhari-RadialDistortion.pdf
+    float x = UV11.x / (1.0f + distortionAlpha * r2);
+    float y = UV11.y / (1.0f + distortionAlpha * r2);
+     
+    // Transform back to [0, 1]     
+    float2 outUV = vec2(x, y);
+    return (outUV + 1.0f) / 2.0f;
+}
+ 
+float2 inverseBarrelDistortion(float2 UV)
+{  
+    // Barrel distortion assumes UVs relative to center (0,0), so we transform
+    // to [-1, 1]
+    float2 UV11 = (UV * 2.0f) - 1.0f;
+     
+    // Squared norm of undistorted distance to center
+    float ru2 = UV11.x * UV11.x +  UV11.y * UV11.y;
+ 
+    // Solve for distorted distance to center, using quadratic formula
+    float num = sqrt(1.0f - 4.0f * distortionAlpha * ru2) - 1.0f;
+    float denom = 2.0f * distortionAlpha * sqrt(ru2);
+    float rd = -num / denom;
+     
+    // Reference: http://www.cs.ait.ac.th/~mdailey/papers/Bukhari-RadialDistortion.pdf
+    float x = UV11.x * (rd / sqrt(ru2));
+    float y = UV11.y * (rd / sqrt(ru2));
+     
+    // Transform back to [0, 1]     
+    float2 outUV = vec2(x, y);
+    return (outUV + 1.0f) / 2.0f;
+}
+ 
+float2 generateBidirectionalDistortionField(Texture2D output, float2 UV)
+{
+    // Assume UV is in [0, 1]
+    float2 rg = barrelDistortion(UV) - UV;
+    float2 ba = inverseBarrelDistortion(UV) - UV;
+ 
+    // rg and ba needs to be in the same canonical format as the motion vectors
+    // i.e. a displacement of rg or ba needs to to be in the same scale as (Mvec.x, Mvec.y)
+     
+    // The output can be outside of the [0, 1] range
+    Texture2D[UV] = float4(rg, ba); // needs to be signed
+}
+```
+
+### 6.0 TURN DLSS-G ON/OFF/AUTO AND PROVIDE OTHER DLSS-G OPTIONS
 
 **NOTE: By default DLSS-G interpolation is off, even if the feature is loaded and the required items tagged.  DLSS-G must be explicitly turned on by the application using the DLSS-G-specific constants function.**
 
-DLSS-G options must be set so that the DLSS-G plugin can track any changes made by the user, and to enable DLSS-G interpolation.  To enable interpolation, be sure to set `mode` to `sl::DLSSGMode::eOn`.  While DLSS-G can be turned on/off in development builds via a hotkey, it is best for the application not to rely on this, even during development.
+DLSS-G options must be set so that the DLSS-G plugin can track any changes made by the user, and to enable DLSS-G interpolation.  To enable interpolation, be sure to set `mode` to `sl::DLSSGMode::eOn` or `sl::DLSSGMode::eAuto` if using [Dynamic Frame Generation](#220-dynamic-frame-generation). While DLSS-G can be turned on/off/auto in development builds via a hotkey, it is best for the application not to rely on this, even during development.
 
 ```cpp
 
@@ -272,7 +342,7 @@ if(SL_FAILED(result, slDLSSGSetOptions(viewport, options)))
 ```
 
 > **NOTE:**
-> To turn off DLSS-G set `sl::DLSSGOptions.mode` to `sl::DLSSGMode::eOff`, note that this does NOT release any resources, for that please use `slFreeResources`
+> Setting`sl::DLSSGOptions.mode` to `sl::DLSSGMode::eOff` currently releases all resources. Then if you set it back to `sl::DLSSGMode::eOn` - this will allocate resources again, which will result in small (perhaps 200 ms) stutter. Currently there is no way to pause the feature without releasing the resources. The option to pause the feature without releasing the resources is going to be added in future releases.
 
 #### 6.1 HOW TO SETUP A CALLBACK TO RECEIVE API ERRORS (OPTIONAL)
 
@@ -353,7 +423,7 @@ When using non-production (development) builds of `sl.dlss_g.dll`, there are num
 * `"stats"` (default `Shift-Ctrl-VK_HOME`)
   * Toggle performance stats
 * `"dlssg-toggle"` (default `VK_OEM_2` `/?` for US)
-  * Toggle DLSS-G on/off (override app setting)
+  * Toggle DLSS-G on/off/auto (override app setting)
 * `"write-stats"` (default `Ctrl-Alt-'O'`)
   * Write performance stats to file
 
@@ -605,9 +675,9 @@ Here is some pseudo code showing how this can be done:
 ```cpp
 void onDLSSGModeChange(sl::DLSSGMode mode)
 {
-    if(mode == sl::DLSSGMode::eOn)
+    if(mode == sl::DLSSGMode::eOn || mode == sl::DLSSGMode::eAuto)
     {
-        // DLSS-G was off, now we are turning it on
+        // DLSS-G was off, now we are turning it on or set the mode to auto
 
         // Make sure no work is pending on GPU
         waitForIdle();
@@ -706,3 +776,13 @@ In developer DLSS-FG variants ASCD displays on-screen hints for:
 3. No scene change detected with the reset flag.
 
 The hints present as text blurbs in the center of screen, messages in the DLSS-FG log file, and in scenario 1, a screen goldenrod yellow tint.
+
+### 22.0 DYNAMIC FRAME GENERATION
+
+Dynamic Frame Generation leverages stochastic control to automatically trigger DLSS-G. This adaptive monitoring mechanism activates frame generation only when it boosts performance beyond the native framerate production of the game. Otherwise, DLSS-G remains disabled to ensure optimal framerate performance.
+
+#### 22.1 DLSS-G AUTO MODE
+
+Dynamic Frame Generation is enabled when DLSS-G is in auto mode. To activate Dynamic Frame Generation, set `mode` to `sl::DLSSGMode::eAuto`.
+
+When using non-production (development) builds of `sl.dlss_g.dll`, the status of Dynamic Frame Generation and the current state of DLSS-G is displayed on the DLSS-G status window.

@@ -59,7 +59,7 @@ class ICompute;
 
 struct CommonResource
 {
-    friend sl::Result slSetTagInternal(const sl::Resource* resource, BufferType tag, uint32_t id, const Extent* ext, ResourceLifecycle lifecycle, CommandBuffer* cmdBuffer, bool localTag);
+    friend sl::Result slSetTagInternal(const sl::Resource* resource, BufferType tag, uint32_t id, const Extent* ext, ResourceLifecycle lifecycle, CommandBuffer* cmdBuffer, bool localTag, const PrecisionInfo* pi);
     friend void getCommonTag(BufferType tagType, uint32_t id, CommonResource& res, const sl::BaseStructure** inputs, uint32_t numInputs);
 
     inline operator bool() { return clone.resource != nullptr || res.native != nullptr; }
@@ -82,16 +82,19 @@ struct CommonResource
     }
     inline CommonResource& operator=(chi::Resource rhs)
     {
-        if (rhs) res = *rhs; else { res = {}; extent = {}; clone = {}; }
+        if (rhs) res = *rhs; else { res = {}; extent = {}; pi = {}; clone = {}; }
         return *this;
     }
     inline operator const Extent& () const { return extent; }
+    inline operator const PrecisionInfo& () const { return pi; }
     inline bool isCloned() const { return clone.resource != nullptr; };
     inline uint32_t getState() const { return res.state; }
     inline const Extent& getExtent() const { return extent; }
+    inline const PrecisionInfo& getPrecisionInfo() const { return pi; }
 private:
     sl::Resource res{};
     Extent extent{};
+    PrecisionInfo pi{};
     chi::HashedResource clone{};
 };
 

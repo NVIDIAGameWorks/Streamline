@@ -147,9 +147,17 @@ namespace ota
         SL_LOG_VERBOSE("execThreadProc: %ls", command.c_str());
 
         // Append a '\n' here so that SL uses "unformatted" logs. The output
-        // from the NGX updater is formatted already with timestamps, no need to
-        // insert our own.
-        SL_LOG_VERBOSE("%s\n", output.c_str());
+        // from the NGX updater is formatted already with timestamps, so we
+        // want to remove them before adding our own.
+        // Safety note: Passing this directly to the `fmt` parameter of `logva`
+        // is safe because the '\n' at the end skips formatting. Using "%s\n"
+        // would make the logger skip formatting and print "%s" instead of the
+        // intended message.
+        if (!output.empty())
+        {
+            output += '\n';
+            SL_LOG_VERBOSE(output.c_str());
+        }
     }
 
 struct OTA : IOTA

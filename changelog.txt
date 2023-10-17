@@ -1,3 +1,39 @@
+======== Release 2.2.1 Entries ========
+
+    * Added support for DLSS Frame Generation Dynamic Frame Generation.
+      See section 22.0 "Dynamic Frame Generation" in `ProgrammingGuideDLSS_G.md`
+      for more information.
+
+    * Added two new buffer types:
+      - `sl::kBufferTypeTransparencyLayer`
+      - `sl::kBufferTypeTransparencyLayerOpacity`
+      See section 4.1.10 "Transparency Overlay" in `ProgrammingGuideDLSS_RR.md`
+      for more information.
+
+    * Added new buffer type `sl::kBufferTypeBidirectionalDistortionField` for
+      post-processed distortion patterns applied to the backbuffer and
+      `sl::kBufferTypeUIColorAndAlpha`.
+      See section 5.0 "TAG ALL REQUIRED RESOURCES" in `ProgrammingGuideDLSS_G.md`
+      for more information.
+
+    * Added a new `sl::Constants` field `minRelativeLinearDepthObjectSeparation`
+      for describing the minimum depth difference between two objects in screen-space.
+
+    * Added a new structure `sl::PrecsisionInfo` for specifying floating-point
+      precision bias for a `sl::Resource`.
+      See section 2.8 "TAGGING RESOURCES" in `ProgrammingGuide.md` for more
+      information.
+
+    * Fixed a bug where `sl.interposer.dll` would crash if plugins were located
+      in paths containing wide characters.
+
+    * Fixed a bug where verbose logging would not include additional information for OTA Updates.
+
+    * Updated documentation for `sl::DLSSGMode::eOff` to match current behavior.
+      See section 5.0 "TURN DLSS-G ON/OFF/AUTO AND PROVIDE OTHER DLSS-G OPTIONS" in
+      `ProgrammingGuideDLSS_G.md` for more information.
+
+
 ======== Release 2.2.0 Entries ========
 
     * Added support for multiple viewports to the sl.nis plugin.

@@ -136,7 +136,37 @@ constexpr BufferType kBufferTypeOpaqueColor = 35;
 constexpr BufferType kBufferTypeReactiveMaskHint = 36;
 //! Optional - Pixel lock adjustment hint (set to 1 if pixel lock should be completely removed, 0 otherwise)
 constexpr BufferType kBufferTypeTransparencyAndCompositionMaskHint = 37;
-
+//! Optional - Albedo of the reflection ray hit point. For multibounce reflections, this should be the albedo of the first non-specular bounce.
+constexpr BufferType kBufferTypeReflectedAlbedo = 38;
+//! Optional - Color buffer before particles are drawn.
+constexpr BufferType kBufferTypeColorBeforeParticles = 39;
+//! Optional - Color buffer before transparent objects are drawn.
+constexpr BufferType kBufferTypeColorBeforeTransparency = 40;
+//! Optional - Color buffer before fog is drawn.
+constexpr BufferType kBufferTypeColorBeforeFog = 41;
+//! Optional - Buffer containing the hit distance of a specular ray.
+constexpr BufferType kBufferTypeSpecularHitDistance = 42;
+//! Optional - Buffer that contains 3 components of a specular ray direction, and 1 component of specular hit distance.
+constexpr BufferType kBufferTypeSpecularRayDirectionHitDistance = 43;
+//! Optional - Buffer containing normalized direction of a specular ray.
+constexpr BufferType kBufferTypeSpecularRayDirection = 44;
+// !Optional - Buffer containing the hit distance of a diffuse ray.
+constexpr BufferType kBufferTypeDiffuseHitDistance = 45;
+//! Optional - Buffer that contains 3 components of a diffuse ray direction, and 1 component of diffuse hit distance.
+constexpr BufferType kBufferTypeDiffuseRayDirectionHitDistance = 46;
+//! Optional - Buffer containing normalized direction of a diffuse ray.
+constexpr BufferType kBufferTypeDiffuseRayDirection = 47;
+//! Optional - Buffer containing display resolution depth.
+constexpr BufferType kBufferTypeHiResDepth = 48;
+//! Required either this or kBufferTypeDepth - Buffer containing linear depth.
+constexpr BufferType kBufferTypeLinearDepth = 49;
+//! Optional - Bidirectional distortion field. 4 channels in normalized [0,1] pixel space. RG = distorted pixel to undistorted pixel displacement. BA = undistorted pixel to distorted pixel displacement.
+constexpr BufferType kBufferTypeBidirectionalDistortionField = 50;
+//!Optional - Buffer containing particles or other similar transparent effects rendered into it instead of passing it as part of the input color
+constexpr BufferType kBufferTypeTransparencyLayer = 51;
+//!Optional - Butffer to be used in addition to TransparencyLayer which allows 3-channels of Opacity versus 1-channel. 
+//            In this case, TransparencyLayer represents Color (RcGcBc), TransparencyLayerOpacity represents alpha (RaGaBa)'
+constexpr BufferType kBufferTypeTransparencyLayerOpacity = 52;
 
 //! Features supported with this SDK
 //! 
@@ -300,8 +330,15 @@ enum ResourceLifecycle
 //! Tagged resource
 //! 
 //! {4C6A5AAD-B445-496C-87FF-1AF3845BE653}
+//! Extensions as part of the `next` ptr:
+//!     PrecisionInfo
 SL_STRUCT(ResourceTag, StructType({ 0x4c6a5aad, 0xb445, 0x496c, { 0x87, 0xff, 0x1a, 0xf3, 0x84, 0x5b, 0xe6, 0x53 } }), kStructVersion1)
-    ResourceTag(Resource* r, BufferType t, ResourceLifecycle l, const Extent* e = nullptr) : BaseStructure(ResourceTag::s_structType, kStructVersion1), resource(r), type(t), lifecycle(l) { if (e) extent = *e; };
+    ResourceTag(Resource* r, BufferType t, ResourceLifecycle l, const Extent* e = nullptr)
+        : BaseStructure(ResourceTag::s_structType, kStructVersion1), resource(r), type(t), lifecycle(l)
+    {
+        if (e) extent = *e;
+    };
+
     //! Resource description
     Resource* resource{};
     //! Type of the tagged buffer
@@ -312,6 +349,52 @@ SL_STRUCT(ResourceTag, StructType({ 0x4c6a5aad, 0xb445, 0x496c, { 0x87, 0xff, 0x
     Extent extent{};
 
     //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
+};
+
+// 
+//! Precision info, optional extension for ResourceTag.
+//! 
+//! {98F6E9BA-8D16-4831-A802-4D3B52FF26BF}
+//! Extensions as part of the `next` ptr:
+//!     ResourceTag
+SL_STRUCT(PrecisionInfo, StructType({ 0x98f6e9ba, 0x8d16, 0x4831, { 0xa8, 0x2, 0x4d, 0x3b, 0x52, 0xff, 0x26, 0xbf } }), kStructVersion1)
+    // Formula used to convert the low-precision data to high-precision
+    enum PrecisionFormula : uint32_t
+    {
+        eNoTransform = 0,           // hi = lo, essentially no conversion is done
+        eLinearTransform,           // hi = lo * scale + bias
+    };
+
+    PrecisionInfo(PrecisionInfo::PrecisionFormula formula, float bias, float scale)
+        : BaseStructure(PrecisionInfo::structType, kStructVersion1), conversionFormula(formula), bias(bias), scale(scale) {};
+    
+    static std::string getPrecisionFormulaAsStr(PrecisionFormula formula)
+    {
+        switch (formula)
+        {
+        case eNoTransform:
+            return "eNoTransform";
+        case eLinearTransform:
+            return "eLinearTransform";
+        default:
+            assert("Invalid PrecisionFormula" && false);
+            return "Unknown";
+        }
+    };
+
+    PrecisionFormula conversionFormula{ eNoTransform };
+    float bias{ 0.0f };
+    float scale{ 1.0f };
+
+    inline operator bool() const { return conversionFormula != eNoTransform; }
+    inline bool operator==(const PrecisionInfo& rhs) const
+    {
+        return conversionFormula == rhs.conversionFormula && bias == rhs.bias && scale == rhs.scale;
+    }
+    inline bool operator!=(const PrecisionInfo& rhs) const
+    {
+        return !operator==(rhs);
+    }
 };
 
 //! Resource allocation/deallocation callbacks

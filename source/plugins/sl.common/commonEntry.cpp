@@ -44,6 +44,7 @@
 #include "source/plugins/sl.common/commonDRSInterface.h"
 #include "source/plugins/sl.common/drs.h"
 #include "_artifacts/gitVersion.h"
+#include "_artifacts/json/common_json.h"
 
 #ifdef SL_WINDOWS
 #define NV_WINDOWS
@@ -146,68 +147,13 @@ struct CommonEntryContext
 };
 }
 
-//! These are the hooks we need to track resources
-//! 
-static const char* JSON = R"json(
-{
-    "id" : -1,
-    "priority" : 0,
-    "name" : "sl.common",
-    "namespace" : "common",
-    "rhi" : ["d3d11", "d3d12", "vk"],
-    "hooks" :
-    [
-        {
-            "class": "Vulkan",
-            "target" : "Present",
-            "replacement" : "slHookVkPresent",
-            "base" : "before"
-        },
-        {
-            "class": "Vulkan",
-            "target" : "CmdBindPipeline",
-            "replacement" : "slHookVkCmdBindPipeline",
-            "base" : "after"
-        },
-        {
-            "class": "Vulkan",
-            "target" : "CmdBindDescriptorSets",
-            "replacement" : "slHookVkCmdBindDescriptorSets",
-            "base" : "after"
-        },
-        {
-            "class": "Vulkan",
-            "target" : "BeginCommandBuffer",
-            "replacement" : "slHookVkBeginCommandBuffer",
-            "base" : "after"
-        },
-
-        {
-            "class": "IDXGISwapChain",
-            "target" : "ResizeBuffers",
-            "replacement" : "slHookResizeSwapChainPre",
-            "base" : "before"
-        },
-        {
-            "class": "IDXGISwapChain",
-            "target" : "Present",
-            "replacement" : "slHookPresent",
-            "base" : "before"
-        },
-        {
-            "class": "IDXGISwapChain",
-            "target" : "Present1",
-            "replacement" : "slHookPresent1",
-            "base" : "before"
-        }
-    ]
-}
-)json";
+//! Embedded JSON, containing information about the plugin and the hooks it requires.
+static std::string JSON = std::string(common_json, &common_json[common_json_len]);
 
 void updateEmbeddedJSON(json& config);
 
 //! Define our plugin
-SL_PLUGIN_DEFINE("sl.common", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON, updateEmbeddedJSON, common, CommonEntryContext)
+SL_PLUGIN_DEFINE("sl.common", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON.c_str(), updateEmbeddedJSON, common, CommonEntryContext)
 
 //! Thread safe get/set resource tag
 //! 
@@ -227,6 +173,10 @@ void getCommonTag(BufferType tagType, uint32_t id, CommonResource& res, const sl
                 {
                     res.extent = tag->extent;
                     res.res = *tag->resource;
+
+                    // Optional extensions are chained after the tag they belong to
+                    PrecisionInfo* optPi = findStruct<PrecisionInfo>(tag->next);
+                    res.pi = optPi ? *optPi : PrecisionInfo{};
 
                     //! Keep track of what tags are requested for what viewport (unique insert)
                     //! 
@@ -252,7 +202,7 @@ void getCommonTag(BufferType tagType, uint32_t id, CommonResource& res, const sl
     ctx.requiredTags.insert({ id, tagType, inputs ? ResourceLifecycle::eValidUntilEvaluate : ResourceLifecycle::eValidUntilPresent });
 }
 
-sl::Result slSetTagInternal(const sl::Resource* resource, BufferType tag, uint32_t id, const Extent* ext, ResourceLifecycle lifecycle, CommandBuffer* cmdBuffer, bool localTag)
+sl::Result slSetTagInternal(const sl::Resource* resource, BufferType tag, uint32_t id, const Extent* ext, ResourceLifecycle lifecycle, CommandBuffer* cmdBuffer, bool localTag, const PrecisionInfo* pi)
 {
     auto& ctx = (*common::getContext());
     uint64_t uid = ((uint64_t)tag << 32) | (uint64_t)id;
@@ -330,9 +280,15 @@ sl::Result slSetTagInternal(const sl::Resource* resource, BufferType tag, uint32
             }
         }
     }
+
     if (ext)
     {
         cr.extent = *ext;
+    }
+
+    if (pi)
+    {
+        cr.pi = *pi;
     }
 
     // No need to track volatile resources since we keep a copy
@@ -362,14 +318,25 @@ sl::Result slSetTagInternal(const sl::Resource* resource, BufferType tag, uint32
     return Result::eOk;
 }
 
+
+// For future reference, this function supports setting tags in 3 ways:
+//  * An array of ResourceTags
+//  * A linked-list of ResourceTags, using the `next` ptr to navigate the linked-list
+//  * A hybrid approach
+// Extensions usage:
+//  Additionally, we support extensions to ResourceTags via the `next` ptr.
+//  The requirement is that when setting tags, the developer should chain the extensions right after the tag that they belong to.
 sl::Result slSetTag(const sl::ViewportHandle& viewport, const sl::ResourceTag* resources, uint32_t numResources, sl::CommandBuffer* cmdBuffer)
 {
     for (uint32_t i = 0; i < numResources; i++)
     {
         auto tag = &resources[i];
-        while (tag)
+        while (tag != nullptr)
         {
-            SL_CHECK(slSetTagInternal(tag->resource, tag->type, viewport, &tag->extent, tag->lifecycle, cmdBuffer, false));
+            // Find the optional extension PrecisionInfo, until we see a ResourceTag (or nullptr) in the linked list
+            PrecisionInfo* optPi = findStruct<PrecisionInfo, ResourceTag>(tag->next);
+            SL_CHECK(slSetTagInternal(tag->resource, tag->type, viewport, &tag->extent, tag->lifecycle, cmdBuffer, false, optPi));
+
             tag = findStruct<ResourceTag>(tag->next);
         }
     }
@@ -421,6 +388,8 @@ void validateCommonConstants(const Constants& consts)
     SL_VALIDATE_BOOL(consts.orthographicProjection);
     SL_VALIDATE_BOOL(consts.motionVectorsDilated);
     SL_VALIDATE_BOOL(consts.motionVectorsJittered);
+
+    // minRelativeLinearDepthObjectSeparation does not need to be validated. It's entirely optional.
 }
 
 //! Thread safe get/set common constants
@@ -464,8 +433,11 @@ sl::Result slEvaluateFeature(sl::Feature feature, const sl::FrameToken& frame, c
             {
                 if (tag->lifecycle != ResourceLifecycle::eValidUntilPresent)
                 {
+                    // Optional extensions are chained after the tag they belong to
+                    PrecisionInfo* optPi = findStruct<PrecisionInfo>(tag->next);
+
                     //! Temporary tag, hence passing true
-                    SL_CHECK(slSetTagInternal(tag->resource, tag->type, *viewport, &tag->extent, tag->lifecycle, cmdBuffer, true));
+                    SL_CHECK(slSetTagInternal(tag->resource, tag->type, *viewport, &tag->extent, tag->lifecycle, cmdBuffer, true, optPi));
                 }
             }
         }
@@ -846,6 +818,7 @@ void allocateNGXResourceCallback(D3D12_RESOURCE_DESC* desc, int state, CD3DX12_H
     resDesc.nativeFormat = desc->Format;
     resDesc.format = chi::eFormatINVALID;
     resDesc.heapType = (chi::HeapType)heap->Type;
+
 
     auto compute = ctx.computeD3D12 ? ctx.computeD3D12 : ctx.compute;
 
