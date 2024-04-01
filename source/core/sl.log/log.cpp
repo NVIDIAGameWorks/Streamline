@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -136,6 +136,8 @@ struct Log : ILog
         m_name = name;
     }
 
+    const wchar_t* getLogName() override { return m_name.c_str(); }
+
     void setLogCallback(void* logMessageCallback) override
     {
         m_logMessageCallback = (PFun_LogMessageCallback*)logMessageCallback;
@@ -195,7 +197,7 @@ struct Log : ILog
         }
     }
 
-    void logva(uint32_t level, ConsoleForeground color, const char *_file, int line, const char *_func, int type, const char *_fmt, ...) override
+    void logva(uint32_t level, ConsoleForeground color, const char *_file, int line, const char *_func, int type, bool isMetaDataUnique, const char *_fmt,...) override
     {
         if (level > (uint32_t)m_logLevel)
         {
@@ -209,30 +211,65 @@ struct Log : ILog
         std::string msg;
 
         // Incoming message can be un-formatted if provided by 3rd party like NGX
-        bool formatted = fmt.back() != '\n';
+        bool formatted = fmt.empty() || fmt.back() != '\n';
         if (formatted)
         {
+            bool errorDetected = false;
             va_list args;
+
+            // Make sure va_end is called before early out!
             va_start(args, _fmt);
-            msg.resize(1024);
-            auto size = vsprintf_s(msg.data(), msg.size(), _fmt, args);
-            va_end(args);
-            if (size <= 0)
+
+            // Determine the required size of the formatted message (without null-terminator)
+            int msgSize = _vscprintf(_fmt, args);
+            if (msgSize >= 1)
             {
-                // Something went wrong, invalid character in the string etc.
+                // Account for the null terminator char
+                msgSize++;
+                msg.resize(msgSize);
+
+                // Format the message
+                msgSize = vsnprintf(msg.data(), msg.size(), _fmt, args);
+
+                if (msgSize <= 0)
+                {
+                    // invalid character in the string or any other error
+                    errorDetected = true;
+                }
+                // vsnprintf adds '0' at the end of the string. if we don't remove it,
+                // the '+=' won't work correctly on that string
+                while (msg.size() && *msg.rbegin() == '\0')
+                {
+                    msg.pop_back();
+                }
+            }
+            else
+            {
+                // _fmt is bad or empty log
+                errorDetected = true;
+            }
+            va_end(args);
+
+            if (errorDetected)
+            {
+                // Something went wrong during `_vscprintf` or `vsprintf_s`
                 return;
             }
-            msg.resize(size);
         }
 
-        auto logLambda = [this, msg, level, color, file, line, func, type, fmt, formatted]()->void
+        auto logLambda = [this, msg, level, color, file, line, func, type, fmt, formatted, isMetaDataUnique]()->void
         {
             if (m_console && !m_consoleActive)
             {
                 startConsole();
                 m_consoleActive = isConsoleActive();
             }
-            std::string logMessage;
+            std::string completeLogMessage;
+
+            // Today's time
+            auto t = std::time(nullptr);
+            tm time = {};
+            localtime_s(&time, &t);
 
             if (!m_file && !m_path.empty() && !m_pathInvalid)
             {
@@ -243,14 +280,16 @@ struct Log : ILog
                 {
                     m_pathInvalid = true;
                     std::wstring tmp = L"[streamline][error]log.cpp:125[logva] Failed to open log file " + path + L"\n";
-                    logMessage = extra::toStr(tmp);
-                    print(RED, logMessage);
+                    completeLogMessage = extra::toStr(tmp);
+                    print(RED, completeLogMessage);
                 }
                 else
                 {
-                    std::wstring tmp = L"[streamline][info]log.cpp:131[logva] Log file " + path + L" opened\n";
-                    logMessage = extra::toStr(tmp);
-                    print(WHITE, logMessage);
+                    std::stringstream dateTimeOss{};
+                    dateTimeOss << std::put_time(&time, "on %d.%m.%Y at %H-%M-%S");
+                    std::wstring tmp = L"[streamline][info]log.cpp:131[logva] Log file " + path + L" opened " + extra::toWStr(dateTimeOss.str()) + L"\n";
+                    completeLogMessage = extra::toStr(tmp);
+                    print(WHITE, completeLogMessage);
                 }
             }
 
@@ -274,17 +313,28 @@ struct Log : ILog
                 }
             }
             
+            // Filename
             std::string f(file);
             // file is constexpr so always valid and always will have at least one '\'
             f = f.substr(f.rfind('\\') + 1);
+
+            // Log type
             std::string prefix[] = { "info","warn","error" };
             static_assert(countof(prefix) == (size_t)LogType::eCount);
-            auto t = std::time(nullptr);
-            tm time = {};
-            localtime_s(&time, &t);
+           
+            // This thread ID
+            auto tid = std::this_thread::get_id();
+
+            // Metadata that makes a log message unique
+            std::ostringstream oss_logSourceMetdata;
+            oss_logSourceMetdata << "[tid:" << tid << "]" << "[" << sl::extra::getPrettyTimestamp() + "]";
+
+            // Put it all together in the message header
             std::ostringstream oss;
-            oss << std::put_time(&time, "[%d.%m.%Y %H-%M-%S]");
-            logMessage = oss.str() + "[streamline][" + prefix[type] + "]" + f + ":" + std::to_string(line) + "[" + std::string(func) + "] ";
+            oss << std::put_time(&time, "[%H-%M-%S]") << "[streamline][" << prefix[type] << "]" << oss_logSourceMetdata.str() << f << ":" << line << "[" << func << "]";
+            
+            // Actual message will get appended a bit later in this func
+            completeLogMessage = oss.str();
 
             // Safety in case map grows too big like 10K unique messages (which is highly unlikely ever to happen but ...)
             // However if verbose logging is on allow all messages
@@ -294,7 +344,16 @@ struct Log : ILog
                 {
                     m_logTimes.clear();
                 }
-                auto id = m_hash(message);
+
+                std::string messageHashPrefix = "";
+                if (isMetaDataUnique)
+                {
+                    // We consider source metadata(e.g., thread id, granular timestamp) to make a log message unique in this case
+                    // e.g.: logging "Hello!" from 2 different threads is considered logging 2 different messages
+                    messageHashPrefix = oss_logSourceMetdata.str();
+                }
+
+                auto id = m_hash(messageHashPrefix + message);
                 auto lastLogTime = m_logTimes[id];
                 if (lastLogTime.time_since_epoch().count() > 0)
                 {
@@ -309,18 +368,18 @@ struct Log : ILog
                 m_logTimes[id] = std::chrono::system_clock::now();
             }
 
-            logMessage += message;
+            completeLogMessage += ' ' + message;
 
             if (formatted)
             {
-                logMessage += '\n';
-            }
+                completeLogMessage += '\n';
+            }            
 
-            print(color, logMessage);
+            print(color, completeLogMessage);
 
             if (m_logMessageCallback)
             {
-                m_logMessageCallback((LogType)type, logMessage.c_str());
+                m_logMessageCallback((LogType)type, completeLogMessage.c_str());
             }
         };
         m_worker->scheduleWork(logLambda);

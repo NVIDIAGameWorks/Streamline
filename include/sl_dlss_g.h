@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "sl.h"
 #include "sl_consts.h"
 #include <vector>
 
@@ -44,7 +45,9 @@ enum class DLSSGFlags : uint32_t
 {
     eShowOnlyInterpolatedFrame = 1 << 0,
     eDynamicResolutionEnabled = 1 << 1,
-    eRequestVRAMEstimate = 1 << 2
+    eRequestVRAMEstimate = 1 << 2,
+    eRetainResourcesWhenOff = 1 << 3,
+    eEnableFullscreenMenuDetection = 1 << 4,
 };
 
 // Adds various useful operators for our enum

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -192,6 +192,14 @@ SL_EXPORT BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)       
     return TRUE;                                                                                           \
 }                                                                                                          \
 namespace sl {
+
+//! Check if plugin correctly initialized via slOnPluginLoad and slOnPluginStartup
+//! Intended to be used at the top of exported plugin functions like slGet/SetData, etc.
+#define SL_PLUGIN_INIT_CHECK() do {                                                                         \
+        if (!api::getContext()->parameters /*slOnPluginLoad*/                                               \
+        || !api::getContext()->device /*slOnPluginStartup > SL_PLUGIN_COMMON_STARTUP*/                      \
+        ){  return Result::eErrorNotInitialized; }                                                          \
+    } while(false)
 
 } // namespace api
 

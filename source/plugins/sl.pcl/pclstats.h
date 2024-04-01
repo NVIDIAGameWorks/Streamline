@@ -1,4 +1,4 @@
-/** Copyright (c) 2021-2022, NVIDIA CORPORATION.  All rights reserved.*
+/** Copyright (c) 2021-2023, NVIDIA CORPORATION.  All rights reserved.*
 * NVIDIA CORPORATION and its licensors retain all intellectual property
 * and proprietary rights in and to this software, related documentation
 * and any modifications thereto.  Any use, reproduction, disclosure or
@@ -29,6 +29,7 @@ typedef enum _PCLSTATS_LATENCY_MARKER_TYPE
     PCLSTATS_OUT_OF_BAND_PRESENT_START = 11,
     PCLSTATS_OUT_OF_BAND_PRESENT_END = 12,
     PCLSTATS_CONTROLLER_INPUT_SAMPLE = 13,
+    PCLSTATS_DELTA_T_CALCULATION = 14,
 } PCLSTATS_LATENCY_MARKER_TYPE;
 
 typedef enum _PCLSTATS_FLAGS
@@ -113,10 +114,12 @@ TRACELOGGING_DECLARE_PROVIDER(g_hPCLStatsComponentProvider);
         } \
     }
 
+#define PCLSTATS_PING_MSG_STRING (L"PC_Latency_Stats_Ping")
+
 #define PCLSTATS_INIT(flags) \
     if (g_PCLStatsWindowMessage == 0) \
     { \
-        g_PCLStatsWindowMessage = RegisterWindowMessageW(L"PC_Latency_Stats_Ping"); \
+        g_PCLStatsWindowMessage = RegisterWindowMessageW(PCLSTATS_PING_MSG_STRING); \
     } \
     g_PCLStatsFlags = (flags); \
     if (!g_PCLStatsQuitEvent) \
@@ -135,6 +138,7 @@ TRACELOGGING_DECLARE_PROVIDER(g_hPCLStatsComponentProvider);
 
 #define PCLSTATS_MARKER(mrk,frid) TraceLoggingWrite(g_hPCLStatsComponentProvider, "PCLStatsEvent", TraceLoggingUInt32((mrk), "Marker"), TraceLoggingUInt64((frid), "FrameID"))
 #define PCLSTATS_MARKER_V2(mrk,frid) TraceLoggingWrite(g_hPCLStatsComponentProvider, "PCLStatsEventV2", TraceLoggingUInt32((mrk), "Marker"), TraceLoggingUInt64((frid), "FrameID"), TraceLoggingUInt32(g_PCLStatsFlags, "Flags"))
+#define PCLSTATS_MARKER_V3(mrk,frid,val) TraceLoggingWrite(g_hPCLStatsComponentProvider, "PCLStatsEventV3", TraceLoggingUInt32((mrk), "Marker"), TraceLoggingUInt64((frid), "FrameID"), TraceLoggingInt32((val), "Value"))
 
 #define PCLSTATS_SHUTDOWN() \
     if (g_PCLStatsPingThread) \

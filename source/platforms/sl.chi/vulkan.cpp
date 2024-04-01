@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -25,7 +25,7 @@
 #include "source/core/sl.param/parameters.h"
 #include "source/core/sl.security/secureLoadLibrary.h"
 #include "shaders/vulkan_clear_image_view_spirv.h"
-#include "external/reflex-sdk-vk/inc/NvLowLatencyVk.h"
+#include "nvllvk.h"
 #include "external/vulkan/include/vulkan/vulkan_win32.h"
 
 // Errors are negative so don't check for VK_SUCCESS only since there are other 'non fatal' values > 0, we show them as warnings
@@ -37,7 +37,7 @@
 #define VK_CHECK_RE(res, f) res = f;if(res < 0){SL_LOG_ERROR("%s failed - error %d",#f,res); return res;} else if(res != 0) {SL_LOG_WARN("%s - warning %d",#f,res);}
 #define VK_CHECK_RWS(f) {auto _r = f;if(_r < 0){SL_LOG_ERROR("%s failed - error %d",#f,_r); return WaitStatus::eError;} else if(_r == VK_TIMEOUT) {SL_LOG_WARN("%s - timed out", #f); return WaitStatus::eTimeout;}}
 
-#define LL_CHECK(f) {auto _r = f;if(_r != NvLL_VK_Status::NVLL_VK_OK){SL_LOG_ERROR( "%s failed - error %u",#f,_r); return ComputeStatus::eError;}}
+#define CHECK_REFLEX() do { if (!m_reflex){ SL_LOG_WARN_ONCE("No reflex"); return ComputeStatus::eError; } } while(false)
 
 namespace sl
 {
@@ -49,8 +49,6 @@ ICompute *getVulkan()
 {
     return &s_vulkan;
 }
-
-constexpr uint64_t kMaxSemaphoreWaitUs = 500000000; // 500ms max wait on any semaphore;
 
 class CommandListContextVK : public ICommandListContext
 {
@@ -834,43 +832,11 @@ ComputeStatus Vulkan::init(Device device, param::IParameters* params)
     m_device = (VkDevice)deviceArray[1];
     m_physicalDevice = (VkPhysicalDevice)deviceArray[2];
 
-    // Path where our modules are located
-    wchar_t* pluginPath{};
-    param::getPointerParam(params, param::global::kPluginPath, &pluginPath);
-    if (!pluginPath)
-    {
-        SL_LOG_ERROR( "Cannot find path to plugins");
-        return ComputeStatus::eError;
-    }
-    std::wstring path(pluginPath);
-    path += L"/NvLowLatencyVk.dll";
-    // This call translates to signature check in production and regular load otherwise
-    m_hmodReflex = security::loadLibrary(path.c_str());
-    if (!m_hmodReflex)
-    {
-        SL_LOG_ERROR( "Failed to load %S", path.c_str());
-        return ComputeStatus::eError;
-    }
-
-    // Low latency API
-    auto llRes = NvLL_VK_Initialize();
-    if (llRes)
-    {
-        SL_LOG_WARN("Low latency API for VK failed to initialize %d", llRes);
-    }
-    else
-    {
-        HANDLE semaphore;
-        llRes = NvLL_VK_InitLowLatencyDevice(m_device, &semaphore);
-        if (llRes)
-        {
-            SL_LOG_WARN("Low latency API for VK failed to initialize device %d", llRes);
-        }
-        else
-        {
-            m_lowLatencySemaphore = (VkSemaphore)semaphore;
-        }
-    }
+    #ifdef SL_WITH_NVLLVK
+    m_reflex = CreateNvLowLatencyVk(m_device, params);
+    #else
+    #error "Not implemented"
+    #endif
     
     // For callbacks we just need VkDevice
     Generic::init(m_device, params);
@@ -894,6 +860,11 @@ ComputeStatus Vulkan::init(Device device, param::IParameters* params)
     m_vk->mapVulkanDeviceAPI(m_device);
     m_ddt = m_vk->dispatchDeviceMap[m_device];
     m_idt = m_vk->dispatchInstanceMap[m_instance];
+
+    if (m_reflex)
+    {
+        m_reflex->initDispatchTable(m_ddt);
+    }
 
     if(m_idt.CreateDebugUtilsMessengerEXT)
     {
@@ -1019,15 +990,13 @@ ComputeStatus Vulkan::init(Device device, param::IParameters* params)
 
 ComputeStatus Vulkan::shutdown()
 {
-    NvLL_VK_DestroyLowLatencyDevice(m_device);
-    NvLL_VK_Unload();
-
-    if (m_hmodReflex)
+    if (m_reflex)
     {
-        FreeLibrary(m_hmodReflex);
-        m_hmodReflex = {};
+        m_reflex->shutdown();
+        delete m_reflex;
+        m_reflex = {};
     }
-
+    
     if (m_idt.DestroyDebugUtilsMessengerEXT && m_debugUtilsMessenger)
     {
         m_idt.DestroyDebugUtilsMessengerEXT(m_instance, m_debugUtilsMessenger, nullptr);
@@ -2721,7 +2690,7 @@ std::wstring Vulkan::getDebugName(Resource res)
 
 ComputeStatus Vulkan::setDebugName(Resource InOutResource, const char InFriendlyName[])
 {
-#if !(defined SL_PRODUCTION || defined SL_REL_EXT_DEV)
+#ifdef SL_DEBUG
     sl::Resource* vkResource = (sl::Resource*) InOutResource;
 
     // The VK_EXT_debug_utils may not have been enabled so don't try to set names by default
@@ -3019,6 +2988,7 @@ ComputeStatus Vulkan::getNativeFormat(Format format, NativeFormat& native)
         case eFormatD24S8:      native = VK_FORMAT_D24_UNORM_S8_UINT; break;
         case eFormatD32S32:     native = VK_FORMAT_D32_SFLOAT; break;
         case eFormatR32F:       native = VK_FORMAT_R32_SFLOAT; break;
+        case eFormatD32S8U:     native = VK_FORMAT_D32_SFLOAT_S8_UINT; break;   
         case eFormatE5M3: assert(false);
     }
     
@@ -3053,6 +3023,7 @@ ComputeStatus Vulkan::getNativeFormat(Format format, NativeFormat& native)
         case VK_FORMAT_R32G32_SFLOAT:               format = eFormatRG32F; break;
         case VK_FORMAT_D24_UNORM_S8_UINT:           format = eFormatD24S8; break;
         case VK_FORMAT_D32_SFLOAT:                  format = eFormatD32S32; break;
+        case VK_FORMAT_D32_SFLOAT_S8_UINT:          format = eFormatD32S8U; break;
         default:                                    format = eFormatINVALID;
     }
 
@@ -3061,46 +3032,20 @@ ComputeStatus Vulkan::getNativeFormat(Format format, NativeFormat& native)
 
  ComputeStatus Vulkan::setSleepMode(const ReflexOptions& consts)
  {
-     NVLL_VK_SET_SLEEP_MODE_PARAMS params{ 
-         consts.mode != ReflexMode::eOff,
-         consts.mode == ReflexMode::eLowLatencyWithBoost,
-         consts.frameLimitUs 
-     };
-     LL_CHECK(NvLL_VK_SetSleepMode(m_device, &params));
-     return ComputeStatus::eOk;
+     CHECK_REFLEX();
+     return m_reflex->setSleepMode(consts);
  }
 
  ComputeStatus Vulkan::getSleepStatus(ReflexState& settings)
  {
-     NVLL_VK_GET_SLEEP_STATUS_PARAMS params{};
-     LL_CHECK(NvLL_VK_GetSleepStatus(m_device, &params));
-     return ComputeStatus::eOk;
+     CHECK_REFLEX();
+     return m_reflex->getSleepStatus(settings);
  }
 
  ComputeStatus Vulkan::getLatencyReport(ReflexState& settings)
  {
-     NVLL_VK_LATENCY_RESULT_PARAMS params{};
-     LL_CHECK(NvLL_VK_GetLatency(m_device, &params));
-     for (auto i = 0; i < 64; i++)
-     {
-         settings.frameReport[i].frameID = params.frameReport[i].frameID;
-         settings.frameReport[i].inputSampleTime = params.frameReport[i].inputSampleTime;
-         settings.frameReport[i].simStartTime = params.frameReport[i].simStartTime;
-         settings.frameReport[i].simEndTime = params.frameReport[i].simEndTime;
-         settings.frameReport[i].renderSubmitStartTime = params.frameReport[i].renderSubmitStartTime;
-         settings.frameReport[i].renderSubmitEndTime = params.frameReport[i].renderSubmitEndTime;
-         settings.frameReport[i].presentStartTime = params.frameReport[i].presentStartTime;
-         settings.frameReport[i].presentEndTime = params.frameReport[i].presentEndTime;
-         settings.frameReport[i].driverStartTime = params.frameReport[i].driverStartTime;
-         settings.frameReport[i].driverEndTime = params.frameReport[i].driverEndTime;
-         settings.frameReport[i].osRenderQueueStartTime = params.frameReport[i].osRenderQueueStartTime;
-         settings.frameReport[i].osRenderQueueEndTime = params.frameReport[i].osRenderQueueEndTime;
-         settings.frameReport[i].gpuRenderStartTime = params.frameReport[i].gpuRenderStartTime;
-         settings.frameReport[i].gpuRenderEndTime = params.frameReport[i].gpuRenderEndTime;
-         settings.frameReport[i].gpuActiveRenderTimeUs = (uint32_t)(params.frameReport[i].gpuRenderEndTime - params.frameReport[i].gpuRenderStartTime);
-         settings.frameReport[i].gpuFrameTimeUs = i == 0 ? 0 : (uint32_t)(params.frameReport[i].gpuRenderEndTime - params.frameReport[i - 1].gpuRenderEndTime);
-     }
-     return ComputeStatus::eOk;
+     CHECK_REFLEX();
+     return m_reflex->getReport(settings);
  }
 
  ComputeStatus Vulkan::sleep()
@@ -3110,37 +3055,25 @@ ComputeStatus Vulkan::getNativeFormat(Format format, NativeFormat& native)
      m_parameters->get(sl::param::interposer::kVKValidationActive, &vkValidationOn);
      if(vkValidationOn) return ComputeStatus::eOk;
 #endif
-
-     reflexSemaphoreValue++;
-     LL_CHECK(NvLL_VK_Sleep(m_device, reflexSemaphoreValue));
-     VkSemaphoreWaitInfo waitInfo;
-     waitInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
-     waitInfo.pNext = NULL;
-     waitInfo.flags = 0;
-     waitInfo.semaphoreCount = 1;
-     waitInfo.pSemaphores = &m_lowLatencySemaphore;
-     waitInfo.pValues = &reflexSemaphoreValue;
-     m_ddt.WaitSemaphores(m_device, &waitInfo, kMaxSemaphoreWaitUs);
-     return ComputeStatus::eOk;
+     CHECK_REFLEX();
+     return m_reflex->sleep();
  }
 
- ComputeStatus Vulkan::setReflexMarker(ReflexMarker marker, uint64_t frameId)
+ ComputeStatus Vulkan::setReflexMarker(PCLMarker marker, uint64_t frameId)
  {
-     NVLL_VK_LATENCY_MARKER_PARAMS params{ frameId, (NVLL_VK_LATENCY_MARKER_TYPE)marker };
-     LL_CHECK(NvLL_VK_SetLatencyMarker(m_device, &params));
-     return ComputeStatus::eOk;
+     CHECK_REFLEX();
+     return m_reflex->setMarker(marker, frameId);
  }
 
  ComputeStatus Vulkan::notifyOutOfBandCommandQueue(CommandQueue queue, OutOfBandCommandQueueType type)
  {
-     LL_CHECK(NvLL_VK_NotifyOutOfBandQueue(m_device, (VkQueue)((CommandQueueVk*)queue)->native, (NVLL_VK_OUT_OF_BAND_QUEUE_TYPE)type));
-     return ComputeStatus::eOk;
+     CHECK_REFLEX();
+     return m_reflex->notifyOutOfBandCommandQueue(queue, type);
  }
- ComputeStatus Vulkan::setAsyncFrameMarker(CommandQueue queue, ReflexMarker marker, uint64_t frameId)
+ ComputeStatus Vulkan::setAsyncFrameMarker(CommandQueue queue, PCLMarker marker, uint64_t frameId)
  {
-     NVLL_VK_LATENCY_MARKER_PARAMS params{ frameId, (NVLL_VK_LATENCY_MARKER_TYPE)marker };
-     LL_CHECK(NvLL_VK_SetLatencyMarker(m_device, &params));
-     return ComputeStatus::eOk;
+     CHECK_REFLEX();
+     return m_reflex->setAsyncFrameMarker(queue, marker, frameId);
  }
 }
 }

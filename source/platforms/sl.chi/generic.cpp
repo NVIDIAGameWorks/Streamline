@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -74,6 +74,7 @@ const char *GFORMAT_STR[] = {
     "eFormatRG32UI",
     "eFormatD32S32",
     "eFormatD24S8",
+    "eFormatD32S8U",
 }; static_assert(countof(GFORMAT_STR) == sl::chi::eFormatCOUNT, "Not enough strings for eFormatCOUNT");
 
 #define SL_TEXT_BUFFER_SIZE 16384
@@ -106,61 +107,58 @@ struct ResourcePool : IResourcePool
         std::unique_lock<std::mutex> lock(m_mtx);
         // Look for a free one to recycle
         HashedResource resource{};
-        for (auto& items : m_free)
         {
-            if (hash == items.first) 
+            auto& freeItems = m_free[hash];
+            // Incoming resource was allocated and freed before but nothing is free at the moment
+            if (freeItems.empty())
             {
-                // Incoming resource was allocated and freed before but nothing is free at the moment
-                if (items.second.empty())
+                // No free items, check if this was allocated before
+                for (auto& allocated : m_allocated)
                 {
-                    // No free items, check if this was allocated before
-                    for (auto& allocated : m_allocated)
+                    if (hash == allocated.first)
                     {
-                        if (hash == allocated.first)
+                        // Yes, this was allocated before so it makes sense to wait for an item to be freed
+
+                        // Figure out how much VRAM is available vs how much we need
+                        uint64_t bytesAvailable;
+                        m_compute->getVRAMBudget(bytesAvailable);
+                        ResourceFootprint footprint{};
+                        m_compute->getResourceFootprint(source, footprint);
+
+                        //! IMPORTANT: The more we wait the less VRAM we use but we potentially slow down execution.
+                        //! 
+                        //! Therefore we determine dynamically how much VRAM is available and if we need to wait more (100ms) or less (0.5ms).
+                        //! In addition, we have to check for hard limit on the queue size since even if there is plenty of VRAM it does not 
+                        //! make sense to allocate buffers endlessly. Good example would be the v-sync on mode, in that scenario the longer 
+                        //! waits are normal since present calls will block and wait for the v-sync line before actually presenting the frame.
+                        float resourcePoolWaitUs = bytesAvailable > footprint.totalBytes && allocated.second.size() < m_maxQueueSize ? 500.0f : 100000.0f;
+
+                        // Use more precise timer
+                        extra::AverageValueMeter meter;
+                        meter.begin();
+                        // Prevent deadlocks, time out after a reasonable wait period.
+                        // See comments above about the wait time and VRAM consumption.
+                        while (freeItems.empty() && meter.getElapsedTimeUs() < resourcePoolWaitUs)
                         {
-                            // Yes, this was allocated before so it makes sense to wait for an item to be freed
-
-                            // Figure out how much VRAM is available vs how much we need
-                            uint64_t bytesAvailable;
-                            m_compute->getVRAMBudget(bytesAvailable);
-                            ResourceFootprint footprint{};
-                            m_compute->getResourceFootprint(source, footprint);
-
-                            //! IMPORTANT: The more we wait the less VRAM we use but we potentially slow down execution.
-                            //! 
-                            //! Therefore we determine dynamically how much VRAM is available and if we need to wait more (100ms) or less (0.5ms).
-                            //! In addition, we have to check for hard limit on the queue size since even if there is plenty of VRAM it does not 
-                            //! make sense to allocate buffers endlessly. Good example would be the v-sync on mode, in that scenario the longer 
-                            //! waits are normal since present calls will block and wait for the v-sync line before actually presenting the frame.
-                            float resourcePoolWaitUs = bytesAvailable > footprint.totalBytes && allocated.second.size() < m_maxQueueSize ? 500.0f : 100000.0f;
-
-                            // Use more precise timer
-                            extra::AverageValueMeter meter;
-                            meter.begin();
-                            // Prevent deadlocks, time out after a reasonable wait period.
-                            // See comments above about the wait time and VRAM consumption.
-                            while (items.second.empty() && meter.getElapsedTimeUs() < resourcePoolWaitUs)
-                            {
-                                lock.unlock();
-                                // Better than sleep for modern CPUs with hyper-threading
-                                YieldProcessor();
-                                lock.lock();
-                                meter.end();
-                            }
-                            // Timing out here is fine, that just means more VRAM is needed.
-                            //
-                            // We already have warnings/errors for GPU fence and worker thread timeouts which are serious problems
+                            lock.unlock();
+                            // Better than sleep for modern CPUs with hyper-threading
+                            YieldProcessor();
+                            lock.lock();
+                            meter.end();
                         }
+                        // Timing out here is fine, that just means more VRAM is needed.
+                        //
+                        // We already have warnings/errors for GPU fence and worker thread timeouts which are serious problems
                     }
                 }
-                if (!items.second.empty())
-                {
-                    resource = items.second.back().second;
-                    items.second.pop_back();
-                    m_compute->getResourceState(resource.resource, resource.state);
-                    m_allocated[hash].push_back({ std::chrono::system_clock::now(), resource });
-                    return resource;
-                }
+            }
+            if (!freeItems.empty())
+            {
+                resource = freeItems.back().second;
+                freeItems.pop_back();
+                m_compute->getResourceState((Resource)resource, resource.accessState());
+                m_allocated[hash].push_back({ std::chrono::system_clock::now(), resource });
+                return resource;
             }
         }
         if (!resource)
@@ -170,13 +168,13 @@ struct ResourcePool : IResourcePool
             m_compute->cloneResource(source, res, debugName, initialState);
             m_compute->endVRAMSegment();
             m_compute->getResourceState(res->state, initialState);
-            resource = { hash, initialState, res };
+            resource = HashedResource(hash, initialState, res, m_compute, true);
 #if SL_DEBUG_RESOURCE_POOL
             for (auto& [timestamp, cached] : m_allocated[hash])
             {
                 assert(res != cached.resource);
             }
-            SL_LOG_VERBOSE("alloc - hash %llu 0x%llx '%s' [%llu,%llu]", hash, resource.resource->native, debugName, m_allocated[hash].size(), m_free[hash].size());
+            SL_LOG_VERBOSE("alloc - hash %llu 0x%p '%s' [%llu,%llu]\n", hash, ((Resource)resource)->native, debugName, m_allocated[hash].size(), m_free[hash].size());
 #endif
             m_allocated[hash].push_back({ std::chrono::system_clock::now(), resource });
         }
@@ -187,14 +185,15 @@ struct ResourcePool : IResourcePool
     {
         if (!res) return;
         std::scoped_lock lock(m_mtx);
-        auto& list = m_allocated[res.hash];
+        assert(!res.dbgIsCorrupted());
+        auto& list = m_allocated[res.accessHash()];
         auto it = list.begin();
 #if SL_DEBUG_RESOURCE_POOL
         int count = 0;
 #endif
         while(it != list.end())
         {
-            if ((*it).second.resource == res.resource)
+            if ((*it).second == res)
             {
                 it = list.erase(it);
 #if SL_DEBUG_RESOURCE_POOL
@@ -213,28 +212,14 @@ struct ResourcePool : IResourcePool
             assert(res.resource != cached.resource);
         }
 #endif
-        m_free[res.hash].push_back({ std::chrono::system_clock::now(), res });
+        m_free[res.accessHash()].push_back({ std::chrono::system_clock::now(), res });
     }
 
     virtual void clear() override final
     {
         m_compute->beginVRAMSegment(m_vramSegment.c_str());
         std::scoped_lock lock(m_mtx);
-        for (auto& items : m_free)
-        {
-            for (auto& [timestamp, resource] : items.second)
-            {
-                m_compute->destroyResource(resource);
-            }
-        }
         m_free.clear();
-        for (auto& items : m_allocated)
-        {
-            for (auto& [timestamp, resource] : items.second)
-            {
-                m_compute->destroyResource(resource);
-            }
-        }
         m_allocated.clear();
         m_compute->endVRAMSegment();
     }
@@ -254,7 +239,6 @@ struct ResourcePool : IResourcePool
                     std::chrono::duration<float, std::milli> deltaSinceLastUsed = std::chrono::system_clock::now() - timestamp;
                     if (deltaSinceLastUsed.count() > deltaMs)
                     {
-                        m_compute->destroyResource(resource,0);
                         it1 = (*it).second.erase(it1);
                         continue;
                     }
@@ -297,6 +281,9 @@ struct ResourcePool : IResourcePool
     std::map<uint64_t, std::vector<TimestampedResource>> m_free{};
     std::map<uint64_t, std::vector<TimestampedResource>> m_allocated{};
 };
+
+ResourceState HashedResource::s_invalidState{};
+uint64_t HashedResource::s_invalidHash{};
 
 ComputeStatus Generic::genericPostInit()
 {
@@ -370,13 +357,14 @@ ComputeStatus Generic::getVendorId(VendorId& id)
     return ComputeStatus::eError;
 }
 
-ComputeStatus Generic::startTrackingResource(uint32_t id, Resource resource)
+ComputeStatus Generic::startTrackingResource(uint64_t uid, Resource resource)
 {
     // Make sure we are thread safe
     std::scoped_lock lock(m_mutexResourceTrack);
 
     // NOTE: This covers d3d11/d3d12, VK currently does NOP here
-    IUnknown* cachedResource = m_resourceTrackMap.find(id) == m_resourceTrackMap.end() ? nullptr : m_resourceTrackMap[id];
+    auto it = m_resourceTrackMap.find(uid);
+    IUnknown* cachedResource = (it == m_resourceTrackMap.end()) ? nullptr : it->second;
     if (cachedResource)
     {
         if (cachedResource != resource->native)
@@ -390,23 +378,25 @@ ComputeStatus Generic::startTrackingResource(uint32_t id, Resource resource)
     {
         cachedResource = (IUnknown*)(resource->native);
         auto refCount = cachedResource->AddRef();
-        m_resourceTrackMap[id] = cachedResource;
+        m_resourceTrackMap[uid] = cachedResource;
         //std::wstring name = getDebugName(cachedResource);
         //SL_LOG_VERBOSE("Start tracking 0x%llx '%S' ref count %d", cachedResource, name.c_str(), refCount);
     }
     return ComputeStatus::eOk;
 }
 
-ComputeStatus Generic::stopTrackingResource(uint32_t id)
+ComputeStatus Generic::stopTrackingResource(uint64_t id, Resource dbgResource)
 {
     // Make sure we are thread safe
     std::scoped_lock lock(m_mutexResourceTrack);
 
     // NOTE: This covers d3d11/d3d12, VK currently does NOP here
     ResourceTrackingMap::const_iterator it = m_resourceTrackMap.find(id);
-    IUnknown* cachedResource = it == m_resourceTrackMap.end() ? nullptr : it->second;
+    IUnknown* cachedResource = (it == m_resourceTrackMap.end()) ? nullptr : it->second;
     if (cachedResource)
     {
+        assert(cachedResource == dbgResource->native ||
+            dbgResource->native == nullptr); // startTracking() and stopTracking() is called for different resources?
         // Note that here we could easily hold last reference and that is fine, host destroys tag and calls setTag(null)
         cachedResource->Release();
         m_resourceTrackMap.erase(it);
@@ -889,6 +879,7 @@ ComputeStatus Generic::getBytesPerPixel(Format InFormat, size_t& size)
         8,                      // eFormatRG32UI,
         8,                      // eFormatD32S32,
         4,                      // eFormatD24S8,
+        8,                      // eFormatD32S8U 
     }; static_assert(countof(BYTES_PER_PIXEL_TABLE) == eFormatCOUNT, "Not enough numbers for eFormatCOUNT");
 
     size = BYTES_PER_PIXEL_TABLE[InFormat];
@@ -1177,7 +1168,7 @@ ComputeStatus Generic::sleep()
     return ComputeStatus::eOk;
 }
 
-ComputeStatus Generic::setReflexMarker(ReflexMarker marker, uint64_t frameId)
+ComputeStatus Generic::setReflexMarker(PCLMarker marker, uint64_t frameId)
 {
     NV_LATENCY_MARKER_PARAMS_V1 params = { 0 };
     params.version = NV_LATENCY_MARKER_PARAMS_VER1;

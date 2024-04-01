@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -47,8 +47,8 @@ struct Hook : public IHook
 #define SL_EXTRACT_CONFIG_FLAG(a)                                                   \
 if (config.contains(#a))                                                            \
 {                                                                                   \
-    config.at(#a).get_to(m_config.##a);                                             \
-    auto v = extra::format("{}:{}",#a, m_config.##a);                               \
+    config.at(#a).get_to(m_config.a);                                               \
+    auto v = extra::format("{}:{}",#a, m_config.a);                                 \
     SL_LOG_HINT("Read '%s' from sl.interposer.json", v.c_str());                    \
 }
         // Hook interface can be called before slInit so we cannot use plugin locations from sl::Preferences
@@ -251,6 +251,10 @@ if (config.contains(#a))                                                        
     inline static Hook* s_hook = {};
 };
 
+bool hasInterface()
+{
+    return Hook::s_hook != nullptr;
+}
 IHook* getInterface()
 {
     if (!Hook::s_hook)

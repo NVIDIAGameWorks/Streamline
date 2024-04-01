@@ -22,6 +22,10 @@
 
 #include "drs.h"
 #include <mutex>
+#include <vector>
+#include <type_traits>
+#include "source/core/sl.log/log.h"
+#include "source/core/sl.file/file.h"
 
 #ifdef SL_WINDOWS
 #define NV_WINDOWS
@@ -79,20 +83,59 @@ namespace drs
 #endif
     }
 
-    bool drsReadKeyString(NvU32 keyId, std::wstring& value)
+    NvAPI_Status getProfileHandleImpl(NvDRSSessionHandle hSession, const std::wstring& wAppName, NvDRSProfileHandle& hProfile)
+    {
+#ifdef NV_WINDOWS
+        std::vector<NvU16> appName{ wAppName.begin(), wAppName.end() };
+        appName.push_back(0); // add null terminator
+        NVDRS_APPLICATION application;
+        application.version = NVDRS_APPLICATION_VER;
+        auto status = NvAPI_DRS_FindApplicationByName(hSession, appName.data(), (NvDRSProfileHandle*)(&hProfile), (NVDRS_APPLICATION*)(&application));
+        return status;
+#else
+        return NVAPI_ERROR;
+#endif
+    }
+
+    template<typename T>
+    bool drsReadKeyImpl(NvU32 keyId, T& value, bool useAppProfile)
     {
 #ifdef NV_WINDOWS
         std::unique_lock<std::mutex> lock(g_mutex);
-        if (!g_hDRSProfile)
+        NvDRSProfileHandle hProfile;
+        if (useAppProfile)
+        {
+            std::wstring wAppName = sl::file::getExecutableNameAndExtension();
+            auto status = getProfileHandleImpl(g_hDRSSession, wAppName, hProfile);
+            if (status != NVAPI_OK)
+            {
+                return false;
+            }
+        }
+        else
+        {
+            hProfile = g_hDRSProfile;
+        }
+        if (!hProfile)
         {
             return false;
         }
         NVDRS_SETTING profileSetting;
         profileSetting.version = NVDRS_SETTING_VER;
-        if (NvAPI_DRS_GetSetting(g_hDRSSession, g_hDRSProfile, keyId, &profileSetting) != NVAPI_OK)
+        auto status = NvAPI_DRS_GetSetting(g_hDRSSession, hProfile, keyId, &profileSetting);
+        if (status != NVAPI_OK)
+        {
             return false;
-        const char* s = (const char*)&profileSetting.binaryCurrentValue.valueData[0];
-        value = std::wstring(s, s + strlen(s));
+        }
+        if constexpr (std::is_same_v<T, NvU32>)
+        {
+            value = profileSetting.u32CurrentValue;
+        }
+        else
+        {
+            const char* s = (const char*)&profileSetting.binaryCurrentValue.valueData[0];
+            value = std::wstring(s, s + strlen(s));
+        }
         return true;
 #else
         return false;
@@ -101,20 +144,25 @@ namespace drs
 
     bool drsReadKey(NvU32 keyId, NvU32& value)
     {
-#ifdef NV_WINDOWS
-        std::unique_lock<std::mutex> lock(g_mutex);
-        if (!g_hDRSProfile)
-        {
-            return false;
-        }
-        NVDRS_SETTING profileSetting;
-        profileSetting.version = NVDRS_SETTING_VER;
-        if (NvAPI_DRS_GetSetting(g_hDRSSession, g_hDRSProfile, keyId, &profileSetting) != NVAPI_OK)
-            return false;
-        value = profileSetting.u32CurrentValue;
-        return true;
-#else
-        return false;
-#endif
+        const bool useAppProfile = false;
+        return drsReadKeyImpl(keyId, value, useAppProfile);
+    }
+
+    bool drsReadKeyFromProfile(NvU32 keyId, NvU32& value)
+    {
+        const bool useAppProfile = true;
+        return drsReadKeyImpl(keyId, value, useAppProfile);
+    }
+
+    bool drsReadKeyString(NvU32 keyId, std::wstring& value)
+    {
+        const bool useAppProfile = false;
+        return drsReadKeyImpl(keyId, value, useAppProfile);
+    }
+
+    bool drsReadKeyStringFromProfile(NvU32 keyId, std::wstring& value)
+    {
+        const bool useAppProfile = true;
+        return drsReadKeyImpl(keyId, value, useAppProfile);
     }
 }

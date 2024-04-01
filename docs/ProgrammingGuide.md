@@ -2,7 +2,7 @@
 Streamline - SL
 =======================
 
-Version 2.2.1
+Version 2.4.0
 =======
 
 1 SETTING UP
@@ -1453,6 +1453,24 @@ else
 
 > NOTE
 > Third party libraries SHOULD NOT use SL proxies to avoid app instability.
+
+### 5.4 CMAKE SUPPORT
+
+A `CMakeLists.txt` file is included for integrations using [CMake](https://cmake.org).  Uncompress the Streamline package (e.g. to `streamline`) and in one of your `CMakeLists.txt` add:
+```
+add_directory(streamline)
+```
+
+It contains the following CMake Options:
+| Option Name | Description | Default |
+|--|--|--|
+| STREAMLINE_FEATURE_DLSS_SR | Include DLSS-SR dll | OFF
+| STREAMLINE_FEATURE_NRD | Include NRD dll | OFF
+| STREAMLINE_FEATURE_IMGUI | Include Imgui dll | OFF
+| STREAMLINE_FEATURE_REFLEX | Include Reflex dll | OFF
+| STREAMLINE_FEATURE_NIS | Include NIS dll | OFF
+| STREAMLINE_FEATURE_DLSS_FG | Include DLSS-FG dll | OFF
+| STREAMLINE_IMPORT_AS_INTERFACE | Import Streamline as an Interface without lib | OFF
 
 6 EXCEPTION HANDLING
 ------------------------------------------------

@@ -52,20 +52,25 @@ IF NOT "%1"=="" (
         SET cfg=Debug
         SHIFT
     )
-    IF "%1"=="-release" (
-        SET cfg=Release
+    IF "%1"=="-develop" (
+        SET cfg=Develop
         SHIFT
     )
     IF "%1"=="-production" (
         SET cfg=Production
         SHIFT
     )
+    :: Deprecated build configuration names
+    IF "%1"=="-release" (
+        SET cfg=Debug
+        SHIFT
+    )
     IF "%1"=="-profiling" (
-        SET cfg=Profiling
+        SET cfg=Develop
         SHIFT
     )
     IF "%1"=="-relextdev" (
-        SET cfg=RelExtDev
+        SET cfg=Develop
         SHIFT
     )
     SHIFT
@@ -87,9 +92,9 @@ exit /b 1
 :SetVSEnvFinished
 
 if exist .\_project\vs2022\streamline.sln (
-    msbuild .\_project\vs2022\streamline.sln /t:%bld% /property:Configuration=%cfg%
+    msbuild .\_project\vs2022\streamline.sln /m /t:%bld% /property:Configuration=%cfg%
 ) else if exist .\_project\vs2019\streamline.sln (
-    msbuild .\_project\vs2019\streamline.sln /t:%bld% /property:Configuration=%cfg%
+    msbuild .\_project\vs2019\streamline.sln /m /t:%bld% /property:Configuration=%cfg%
 ) else (
-    msbuild .\_project\vs2017\streamline.sln /t:%bld% /property:Configuration=%cfg%
+    msbuild .\_project\vs2017\streamline.sln /m /t:%bld% /property:Configuration=%cfg%
 )

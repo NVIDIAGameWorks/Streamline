@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -1213,7 +1213,7 @@ ComputeStatus D3D11::createBufferResourceImpl(ResourceDescription &InOutResource
 
 ComputeStatus D3D11::setDebugName(Resource res, const char name[])
 {
-#if !(defined SL_PRODUCTION || defined SL_REL_EXT_DEV)
+#ifdef SL_DEBUG
     auto unknown = (IUnknown*)(res->native);
     ID3D11DeviceChild* deviceChild{};
     unknown->QueryInterface(&deviceChild);
@@ -1698,7 +1698,7 @@ ComputeStatus D3D11::notifyOutOfBandCommandQueue(CommandQueue queue, OutOfBandCo
     return ComputeStatus::eOk;
 }
 
-ComputeStatus D3D11::setAsyncFrameMarker(CommandQueue queue, ReflexMarker marker, uint64_t frameId)
+ComputeStatus D3D11::setAsyncFrameMarker(CommandQueue queue, PCLMarker marker, uint64_t frameId)
 {
     return ComputeStatus::eOk;
 }

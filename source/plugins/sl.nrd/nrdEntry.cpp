@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -100,7 +100,7 @@ namespace sl
         { nrd::ResourceType::OUT_DIFF_HITDIST,              ResourceTypeRole::eOutput,      false },
     };
 
-    std::vector<ResourceTypeDesc> const kReblurDiffuseShBuffers{
+    std::vector<ResourceTypeDesc> const kShDiffuseBuffers{
         { nrd::ResourceType::IN_MV,                         ResourceTypeRole::eInput,       false },
         { nrd::ResourceType::IN_NORMAL_ROUGHNESS,           ResourceTypeRole::eInput,       false },
         { nrd::ResourceType::IN_VIEWZ,                      ResourceTypeRole::eInput,       false },
@@ -128,7 +128,7 @@ namespace sl
         { nrd::ResourceType::OUT_SPEC_HITDIST,              ResourceTypeRole::eOutput,      false },
     };
 
-    std::vector<ResourceTypeDesc> const kReblurSpecularShBuffers{
+    std::vector<ResourceTypeDesc> const kShSpecularBuffers{
         { nrd::ResourceType::IN_MV,                         ResourceTypeRole::eInput,       false },
         { nrd::ResourceType::IN_NORMAL_ROUGHNESS,           ResourceTypeRole::eInput,       false },
         { nrd::ResourceType::IN_VIEWZ,                      ResourceTypeRole::eInput,       false },
@@ -161,7 +161,7 @@ namespace sl
         { nrd::ResourceType::OUT_SPEC_HITDIST,              ResourceTypeRole::eOutput,      false },
     };
 
-    std::vector<ResourceTypeDesc> const kReblurDiffuseSpecularShBuffers{
+    std::vector<ResourceTypeDesc> const kShDiffuseSpecularBuffers{
         { nrd::ResourceType::IN_MV,                         ResourceTypeRole::eInput,       false },
         { nrd::ResourceType::IN_NORMAL_ROUGHNESS,           ResourceTypeRole::eInput,       false },
         { nrd::ResourceType::IN_VIEWZ,                      ResourceTypeRole::eInput,       false },
@@ -300,19 +300,22 @@ namespace sl
     std::vector<NrdMethodInfo> const kMethodInfos{
         { nrd::Denoiser::REBLUR_DIFFUSE,                      "REBLUR_DIFFUSE",                       DenoiserClass::eReblur,     kReblurDiffuseBuffers },
         { nrd::Denoiser::REBLUR_DIFFUSE_OCCLUSION,            "REBLUR_DIFFUSE_OCCLUSION",             DenoiserClass::eReblur,     kReblurDiffuseOcclusionBuffers },
-        { nrd::Denoiser::REBLUR_DIFFUSE_SH,                   "REBLUR_DIFFUSE_SH",                    DenoiserClass::eReblur,     kReblurDiffuseShBuffers },
+        { nrd::Denoiser::REBLUR_DIFFUSE_SH,                   "REBLUR_DIFFUSE_SH",                    DenoiserClass::eReblur,     kShDiffuseBuffers },
         { nrd::Denoiser::REBLUR_SPECULAR,                     "REBLUR_SPECULAR",                      DenoiserClass::eReblur,     kReblurSpecularBuffers },
         { nrd::Denoiser::REBLUR_SPECULAR_OCCLUSION,           "REBLUR_SPECULAR_OCCLUSION",            DenoiserClass::eReblur,     kReblurSpecularOcclusionBuffers },
-        { nrd::Denoiser::REBLUR_SPECULAR_SH,                  "REBLUR_SPECULAR_SH",                   DenoiserClass::eReblur,     kReblurSpecularShBuffers },
+        { nrd::Denoiser::REBLUR_SPECULAR_SH,                  "REBLUR_SPECULAR_SH",                   DenoiserClass::eReblur,     kShSpecularBuffers },
         { nrd::Denoiser::REBLUR_DIFFUSE_SPECULAR,             "REBLUR_DIFFUSE_SPECULAR",              DenoiserClass::eReblur,     kReblurDiffuseSpecularBuffers },
         { nrd::Denoiser::REBLUR_DIFFUSE_SPECULAR_OCCLUSION,   "REBLUR_DIFFUSE_SPECULAR_OCCLUSION",    DenoiserClass::eReblur,     kReblurDiffuseSpecularOcclusionBuffers },
-        { nrd::Denoiser::REBLUR_DIFFUSE_SPECULAR_SH,          "REBLUR_DIFFUSE_SPECULAR_SH",           DenoiserClass::eReblur,     kReblurDiffuseSpecularShBuffers },
+        { nrd::Denoiser::REBLUR_DIFFUSE_SPECULAR_SH,          "REBLUR_DIFFUSE_SPECULAR_SH",           DenoiserClass::eReblur,     kShDiffuseSpecularBuffers },
         { nrd::Denoiser::REBLUR_DIFFUSE_DIRECTIONAL_OCCLUSION,"REBLUR_DIFFUSE_DIRECTIONAL_OCCLUSION", DenoiserClass::eReblur,     kReblurDiffuseDirectionalOcclusionBuffers },
         { nrd::Denoiser::SIGMA_SHADOW,                        "SIGMA_SHADOW",                         DenoiserClass::eSigma,      kSigmaShadowBuffers },
         { nrd::Denoiser::SIGMA_SHADOW_TRANSLUCENCY,           "SIGMA_SHADOW_TRANSLUCENCY",            DenoiserClass::eSigma,      kSigmaShadowTransluscencyBuffers },
         { nrd::Denoiser::RELAX_DIFFUSE,                       "RELAX_DIFFUSE",                        DenoiserClass::eRelax,      kRelaxDiffuseBuffers },
+        { nrd::Denoiser::RELAX_DIFFUSE_SH,                    "RELAX_DIFFUSE_SH",                     DenoiserClass::eRelax,      kShDiffuseBuffers },
         { nrd::Denoiser::RELAX_SPECULAR,                      "RELAX_SPECULAR",                       DenoiserClass::eRelax,      kRelaxSpecularBuffers },
+        { nrd::Denoiser::RELAX_SPECULAR_SH,                   "RELAX_SPECULAR_SH",                    DenoiserClass::eRelax,      kShSpecularBuffers },
         { nrd::Denoiser::RELAX_DIFFUSE_SPECULAR,              "RELAX_DIFFUSE_SPECULAR",               DenoiserClass::eRelax,      kRelaxDiffuseSpecularBuffers },
+        { nrd::Denoiser::RELAX_DIFFUSE_SPECULAR_SH,           "RELAX_DIFFUSE_SPECULAR",               DenoiserClass::eRelax,      kShDiffuseSpecularBuffers },
         { nrd::Denoiser::REFERENCE,                           "REFERENCE",                            DenoiserClass::eReference,  kReferenceBuffers },
         { nrd::Denoiser::SPECULAR_REFLECTION_MV,              "SPECULAR_REFLECTION_MV",               DenoiserClass::eMv,         kSpecularReflectionMvBuffers },
         { nrd::Denoiser::SPECULAR_DELTA_MV,                   "SPECULAR_DELTA_MV",                    DenoiserClass::eMv,         kSpecularDeltaMvBuffers },
@@ -670,11 +673,24 @@ Result slSetData(const BaseStructure* inputs, CommandBuffer* cmdBuffer)
     return Result::eOk;
 }
 
-sl::Result slNRDSetConstants(const sl::ViewportHandle& viewport, const sl::NRDConstants& constants)
+sl::Result slSetFeatureSpecificInputs(const sl::FrameToken& frame, const sl::BaseStructure** inputs, uint32_t numInputs)
 {
-    auto v = viewport;
-    v.next = (sl::BaseStructure*)&constants;
-    return slSetData(&v, nullptr);
+    auto viewport = findStruct<ViewportHandle>((const void**)inputs, numInputs);
+    if (!viewport)
+    {
+        SL_LOG_ERROR("Missing viewport handle, did you forget to chain it up in the slSetFeatureSpecificInputs inputs?");
+        return Result::eErrorMissingInputParameter;
+    }
+
+    auto nrdConstants = findStruct<NRDConstants>((const void**)inputs, numInputs);
+    if (!nrdConstants)
+    {
+        SL_LOG_ERROR("Missing constants structure to set, did you forget to chain it up in the slSetFeatureSpecificInputs inputs?");
+        return Result::eErrorMissingInputParameter;
+    }
+
+    viewport->next = nrdConstants;
+    return slSetData(viewport, nullptr);
 }
 
 bool nrdGetConstants(const common::EventData& data, NRDConstants** consts)
@@ -733,6 +749,69 @@ chi::Format convertNRDFormat(nrd::Format format)
         default:                break;
     }
     return chi::Format::eFormatINVALID;
+}
+
+DXGI_FORMAT convertNRDFormat2Native(nrd::Format format)
+{
+    switch (format)
+    {
+    case nrd::Format::R8_UNORM:        return DXGI_FORMAT_R8_UNORM;
+    case nrd::Format::R8_SNORM:        return DXGI_FORMAT_R8_SNORM;
+    case nrd::Format::R8_UINT:        return DXGI_FORMAT_R8_UINT;
+    case nrd::Format::R8_SINT:        return DXGI_FORMAT_R8_SINT;
+
+    case nrd::Format::RG8_UNORM:      return DXGI_FORMAT_R8G8_UNORM;
+    case nrd::Format::RG8_SNORM:      return DXGI_FORMAT_R8G8_SNORM;
+    case nrd::Format::RG8_UINT:        return DXGI_FORMAT_R8G8_UINT;
+    case nrd::Format::RG8_SINT:        return DXGI_FORMAT_R8G8_SINT;
+
+    case nrd::Format::RGBA8_UNORM:      return DXGI_FORMAT_R8G8B8A8_UNORM;
+    case nrd::Format::RGBA8_SNORM:      return DXGI_FORMAT_R8G8B8A8_SNORM;
+    case nrd::Format::RGBA8_UINT:      return DXGI_FORMAT_R8G8B8A8_UINT;
+    case nrd::Format::RGBA8_SINT:      return DXGI_FORMAT_R8G8B8A8_SINT;
+    case nrd::Format::RGBA8_SRGB:      return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+
+    case nrd::Format::R16_UNORM:      return DXGI_FORMAT_R16_UNORM;
+    case nrd::Format::R16_SNORM:      return DXGI_FORMAT_R16_SNORM;
+    case nrd::Format::R16_UINT:        return DXGI_FORMAT_R16_UINT;
+    case nrd::Format::R16_SINT:        return DXGI_FORMAT_R16_SINT;
+    case nrd::Format::R16_SFLOAT:      return DXGI_FORMAT_R16_FLOAT;
+
+    case nrd::Format::RG16_UNORM:      return DXGI_FORMAT_R16G16_UNORM;
+    case nrd::Format::RG16_SNORM:      return DXGI_FORMAT_R16G16_SNORM;
+    case nrd::Format::RG16_UINT:      return DXGI_FORMAT_R16G16_UINT;
+    case nrd::Format::RG16_SINT:      return DXGI_FORMAT_R16G16_SINT;
+    case nrd::Format::RG16_SFLOAT:      return DXGI_FORMAT_R16G16_FLOAT;
+
+    case nrd::Format::RGBA16_UNORM:      return DXGI_FORMAT_R16G16B16A16_UNORM;
+    case nrd::Format::RGBA16_SNORM:      return DXGI_FORMAT_R16G16B16A16_SNORM;
+    case nrd::Format::RGBA16_UINT:      return DXGI_FORMAT_R16G16B16A16_UINT;
+    case nrd::Format::RGBA16_SINT:      return DXGI_FORMAT_R16G16B16A16_SINT;
+    case nrd::Format::RGBA16_SFLOAT:    return DXGI_FORMAT_R16G16B16A16_FLOAT;
+
+    case nrd::Format::R32_UINT:        return DXGI_FORMAT_R32_UINT;
+    case nrd::Format::R32_SINT:        return DXGI_FORMAT_R32_SINT;
+    case nrd::Format::R32_SFLOAT:      return DXGI_FORMAT_R32_FLOAT;
+
+    case nrd::Format::RG32_UINT:      return DXGI_FORMAT_R32G32_UINT;
+    case nrd::Format::RG32_SINT:      return DXGI_FORMAT_R32G32_SINT;
+    case nrd::Format::RG32_SFLOAT:      return DXGI_FORMAT_R32G32_FLOAT;
+
+    case nrd::Format::RGB32_UINT:      return DXGI_FORMAT_R32G32B32_UINT;
+    case nrd::Format::RGB32_SINT:      return DXGI_FORMAT_R32G32B32_SINT;
+    case nrd::Format::RGB32_SFLOAT:      return DXGI_FORMAT_R32G32B32_FLOAT;
+
+    case nrd::Format::RGBA32_UINT:      return DXGI_FORMAT_R32G32B32A32_UINT;
+    case nrd::Format::RGBA32_SINT:      return DXGI_FORMAT_R32G32B32A32_SINT;
+    case nrd::Format::RGBA32_SFLOAT:    return DXGI_FORMAT_R32G32B32A32_FLOAT;
+
+    case nrd::Format::R10_G10_B10_A2_UNORM:  return DXGI_FORMAT_R10G10B10A2_UNORM;
+    case nrd::Format::R10_G10_B10_A2_UINT:  return DXGI_FORMAT_R10G10B10A2_UINT;
+    case nrd::Format::R11_G11_B10_UFLOAT:  return DXGI_FORMAT_R11G11B10_FLOAT;
+    case nrd::Format::R9_G9_B9_E5_UFLOAT:  return DXGI_FORMAT_R9G9B9E5_SHAREDEXP;
+    default:                break;
+    }
+    return DXGI_FORMAT_UNKNOWN;
 }
 
 void destroyNRDInstance(NRDInstance* inst)
@@ -935,19 +1014,30 @@ Result initializeNRD(chi::CommandList cmdList, const common::EventData& data, co
     nrd::InstanceDesc instanceDesc = {};
     instanceDesc = ctx.getInstanceDesc(*ctx.viewport->instance->denoiser);
 
-    auto convertNRDTextureDesc = [](const nrd::TextureDesc& nrdTexDesc) -> chi::ResourceDescription
+    auto convertNRDTextureDesc = [&ctx](const nrd::TextureDesc& nrdTexDesc) -> chi::ResourceDescription
     {
         chi::ResourceDescription texDesc = {};
-        texDesc.format = convertNRDFormat(nrdTexDesc.format);
         texDesc.height = nrdTexDesc.height;
         texDesc.width = nrdTexDesc.width;
         texDesc.mips = nrdTexDesc.mipNum;
         texDesc.state = chi::ResourceState::eTextureRead;
+
+        sl::RenderAPI renderApi;
+        if (ctx.compute->getRenderAPI(renderApi) == chi::ComputeStatus::eOk && renderApi == RenderAPI::eD3D12)
+        {
+            texDesc.format = chi::Format::eFormatINVALID;
+            texDesc.nativeFormat = convertNRDFormat2Native(nrdTexDesc.format);
+        }
+        else
+        {
+            texDesc.format = convertNRDFormat(nrdTexDesc.format);
+        }
+
         return texDesc;
     };
 
     ctx.viewport->instance->permanentTextures.resize(instanceDesc.permanentPoolSize);
-    ctx.viewport->instance->permanentTexturesStates.resize(instanceDesc.permanentPoolSize, chi::ResourceState::eUndefined);
+    ctx.viewport->instance->permanentTexturesStates.resize(instanceDesc.permanentPoolSize, chi::ResourceState::eStorageRW);
 
     for (uint32_t texID = 0; texID < instanceDesc.permanentPoolSize; ++texID)
     {
@@ -958,7 +1048,7 @@ Result initializeNRD(chi::CommandList cmdList, const common::EventData& data, co
     }
 
     ctx.viewport->instance->transientTextures.resize(instanceDesc.transientPoolSize);
-    ctx.viewport->instance->transientTexturesStates.resize(instanceDesc.transientPoolSize, chi::ResourceState::eUndefined);
+    ctx.viewport->instance->transientTexturesStates.resize(instanceDesc.transientPoolSize, chi::ResourceState::eStorageRW);
 
     for (uint32_t texID = 0; texID < instanceDesc.transientPoolSize; ++texID)
     {
@@ -1169,9 +1259,9 @@ sl::Result prepare_data(sl::nrdsl::NRDContext& ctx, CommonResourcePack pack, chi
 }
 
 sl::Result get_resource_info(
-    sl::nrdsl::NRDContext& ctx,
-    nrd::ResourceDesc const& resource,
-    const sl::BaseStructure** inputs,
+    sl::nrdsl::NRDContext& ctx, 
+    nrd::ResourceDesc const& resource, 
+    const sl::BaseStructure** inputs, 
     uint32_t numInputs,
     sl::CommonResource& outResource)
 {
@@ -1278,9 +1368,9 @@ Result nrdDispatch(
     const nrd::InstanceDesc& denoiserDesc = ctx.getInstanceDesc(*ctx.viewport->instance->denoiser);
     const nrd::PipelineDesc& pipeline = denoiserDesc.pipelines[dispatch.pipelineIndex];
 
+    std::vector<CommonResource> commonResources;
     extra::ScopedTasks reverseTransitions;
     std::vector<chi::ResourceTransition> transitions;
-    std::vector<CommonResource> commonResources;
     commonResources.reserve(32);
 
     CHI_VALIDATE(ctx.compute->bindKernel(ctx.viewport->instance->shaders[dispatch.pipelineIndex]));
@@ -1326,27 +1416,29 @@ Result nrdDispatch(
                 SL_LOG_ERROR("Unable to find texture for nrd::ResourceType %u", resourceDesc.type);
             }
 
-            auto transition = [&ctx](nrd::ResourceDesc const& resourceDesc) -> chi::ResourceState {
+            auto transition = [&ctx](nrd::ResourceDesc const& resourceDesc, chi::ResourceState toState) -> chi::ResourceState {
                 auto from = ctx.viewport->instance->getResourceState(resourceDesc.type, resourceDesc.indexInPool);
-                auto to = resourceDesc.stateNeeded == nrd::DescriptorType::TEXTURE ? chi::ResourceState::eTextureRead : chi::ResourceState::eStorageRW;
+                // auto to = resourceDesc.stateNeeded == nrd::DescriptorType::TEXTURE ? chi::ResourceState::eTextureRead : chi::ResourceState::eStorageRW;
 
-                ctx.viewport->instance->setResourceState(to, resourceDesc.type, resourceDesc.indexInPool);
+                ctx.viewport->instance->setResourceState(toState, resourceDesc.type, resourceDesc.indexInPool);
                 return from;
             };
 
-            chi::ResourceState resourceState = transition(resourceDesc);
+            chi::ResourceState toState = resourceDesc.stateNeeded == nrd::DescriptorType::TEXTURE ? chi::ResourceState::eStorageRead | chi::ResourceState::eTextureRead : chi::ResourceState::eStorageRW;
+            chi::ResourceState fromState = transition(resourceDesc, toState);
+
             uint32_t bindingSlot = descriptorRange.baseRegisterIndex + descriptorID;
             if (descriptorRange.descriptorType == nrd::DescriptorType::TEXTURE)
             {
                 // TODO: Fix binding pos for VK
                 CHI_VALIDATE(ctx.compute->bindTexture(descriptorIdx++, bindingSlot, resource, resourceDesc.mipOffset, resourceDesc.mipNum));
-                transitions.push_back(chi::ResourceTransition(resource, chi::ResourceState::eTextureRead, resourceState));
+                transitions.push_back(chi::ResourceTransition(resource, toState, fromState, 0));
             }
             else
             {
                 // TODO: Fix binding pos for VK
                 CHI_VALIDATE(ctx.compute->bindRWTexture(descriptorIdx++, bindingSlot, resource, resourceDesc.mipOffset));
-                transitions.push_back(chi::ResourceTransition(resource, chi::ResourceState::eStorageRW, resourceState));
+                transitions.push_back(chi::ResourceTransition(resource, toState, fromState, 0));
             }
         }
     }
@@ -1408,10 +1500,13 @@ Result nrdEndEvent(chi::CommandList cmdList, const common::EventData& data, cons
             case nrd::Denoiser::REBLUR_DIFFUSE_DIRECTIONAL_OCCLUSION:
                 ctx.setDenoiserSettings(*ctx.viewport->instance->denoiser, ctx.viewport->instance->denoiserDescs[i].identifier, &ctx.nrdConsts->reblurSettings); break;
             case nrd::Denoiser::RELAX_DIFFUSE_SPECULAR:
+            case nrd::Denoiser::RELAX_DIFFUSE_SPECULAR_SH:
                 ctx.setDenoiserSettings(*ctx.viewport->instance->denoiser, ctx.viewport->instance->denoiserDescs[i].identifier, &ctx.nrdConsts->relaxDiffuseSpecular); break;
             case nrd::Denoiser::RELAX_DIFFUSE:
+            case nrd::Denoiser::RELAX_DIFFUSE_SH:
                 ctx.setDenoiserSettings(*ctx.viewport->instance->denoiser, ctx.viewport->instance->denoiserDescs[i].identifier, &ctx.nrdConsts->relaxDiffuse); break;
             case nrd::Denoiser::RELAX_SPECULAR:
+            case nrd::Denoiser::RELAX_SPECULAR_SH:
                 ctx.setDenoiserSettings(*ctx.viewport->instance->denoiser, ctx.viewport->instance->denoiserDescs[i].identifier, &ctx.nrdConsts->relaxSpecular); break;
             case nrd::Denoiser::SIGMA_SHADOW:
             case nrd::Denoiser::SIGMA_SHADOW_TRANSLUCENCY:
@@ -1629,8 +1724,7 @@ SL_EXPORT void *slGetPluginFunction(const char *functionName)
     SL_EXPORT_FUNCTION(slSetData);
     SL_EXPORT_FUNCTION(slAllocateResources);
     SL_EXPORT_FUNCTION(slFreeResources);
-
-    SL_EXPORT_FUNCTION(slNRDSetConstants);
+    SL_EXPORT_FUNCTION(slSetFeatureSpecificInputs);
 
     return nullptr;
 }

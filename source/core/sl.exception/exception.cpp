@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -66,9 +66,10 @@ struct Exception : IException
             return 0;
         }
 
-        std::wstring logSrc = log::getInterface()->getLogPath();
-        logSrc += L"/sl.log";
-        std::wstring logDst = path + L"/sl.log";
+        // We use these to copy the log file to the dump location
+        std::wstring logFileName = log::getInterface()->getLogName();
+        std::wstring logSrc = std::wstring(log::getInterface()->getLogPath()) + L"/" + logFileName;
+        std::wstring logDst = path + L"/" + logFileName;
 
         path += L"/sl-sha-" + extra::utf8ToUtf16(GIT_LAST_COMMIT_SHORT) + L".dmp";
         SL_LOG_ERROR( "Exception detected - thread %u - creating mini-dump '%S'", GetCurrentThreadId(), path.c_str());

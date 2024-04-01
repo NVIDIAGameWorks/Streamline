@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -36,6 +36,7 @@
 #include "source/core/sl.param/parameters.h"
 #include "source/core/sl.interposer/d3d12/d3d12.h"
 #include "source/core/sl.interposer/vulkan/layer.h"
+#include "source/core/sl.log/log.h"
 #include "source/plugins/sl.common/versions.h"
 #include "source/platforms/sl.chi/d3d12.h"
 #include "source/platforms/sl.chi/vulkan.h"
@@ -68,11 +69,13 @@ extern HRESULT slHookCreateCommittedResource(const D3D12_HEAP_PROPERTIES* pHeapP
 extern HRESULT slHookCreatePlacedResource(ID3D12Heap* pHeap, UINT64 HeapOffset, const D3D12_RESOURCE_DESC* pDesc, D3D12_RESOURCE_STATES InitialState, const D3D12_CLEAR_VALUE* pOptimizedClearValue, REFIID riid, void** ppvResource);
 extern HRESULT slHookCreateReservedResource(const D3D12_RESOURCE_DESC* pDesc, D3D12_RESOURCE_STATES InitialState, const D3D12_CLEAR_VALUE* pOptimizedClearValue, REFIID riid, void** ppvResource);
 extern HRESULT slHookPresent(IDXGISwapChain* swapChain, UINT SyncInterval, UINT Flags, bool& Skip);
+extern HRESULT slHookAfterPresent(UINT Flags);
 extern HRESULT slHookPresent1(IDXGISwapChain* swapChain, UINT SyncInterval, UINT Flags, DXGI_PRESENT_PARAMETERS* params, bool& Skip);
 extern HRESULT slHookResizeSwapChainPre(IDXGISwapChain* swapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags, bool& Skip);
 
 // VULKAN
 extern VkResult slHookVkPresent(VkQueue Queue, const VkPresentInfoKHR* PresentInfo, bool& Skip);
+extern VkResult slHookVkAfterPresent();
 extern void slHookVkCmdBindPipeline(VkCommandBuffer CommandBuffer, VkPipelineBindPoint PipelineBindPoint, VkPipeline Pipeline);
 extern void slHookVkCmdBindDescriptorSets(VkCommandBuffer CommandBuffer, VkPipelineBindPoint PipelineBindPoint, VkPipelineLayout Layout, uint32_t FirstSet, uint32_t DescriptorSetCount, const VkDescriptorSet* DescriptorSets, uint32_t DynamicOffsetCount, const uint32_t* DynamicOffsets);
 extern void slHookVkBeginCommandBuffer(VkCommandBuffer CommandBuffer, const VkCommandBufferBeginInfo* BeginInfo);
@@ -155,6 +158,8 @@ void updateEmbeddedJSON(json& config);
 //! Define our plugin
 SL_PLUGIN_DEFINE("sl.common", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON.c_str(), updateEmbeddedJSON, common, CommonEntryContext)
 
+extern uint64_t getCurrentFrame();
+
 //! Thread safe get/set resource tag
 //! 
 void getCommonTag(BufferType tagType, uint32_t id, CommonResource& res, const sl::BaseStructure** inputs, uint32_t numInputs)
@@ -194,7 +199,18 @@ void getCommonTag(BufferType tagType, uint32_t id, CommonResource& res, const sl
     //! Now let's check the global ones
     uint64_t uid = ((uint64_t)tagType << 32) | (uint64_t)id;
     std::lock_guard<std::mutex> lock(ctx.resourceTagMutex);
-    res = ctx.idToResourceMap[uid];
+    CommonResource& resTmp = ctx.idToResourceMap[uid];
+    uint64_t uCurFrame = getCurrentFrame();
+    if (uCurFrame != resTmp.uFrameWhenTagged && resTmp.uFrameWhenTagged != ~0ull)
+    {
+        if (resTmp)
+        {
+            SL_LOG_WARN("Tags are valid only until Present(). Invalidating the hanging tag %d for viewport %d (created at frame: %d, current frame: %d)", tagType, id, resTmp.uFrameWhenTagged, uCurFrame);
+            ctx.compute->stopTrackingResource(uid, &resTmp.res);
+        }
+        resTmp = CommonResource();
+    }
+    res = resTmp;
     //! Keep track of what tags are requested for what viewport (unique insert)
     //! 
     //! Note that the presence of a valid pointer to 'inputs' indicates that we are called
@@ -207,6 +223,7 @@ sl::Result slSetTagInternal(const sl::Resource* resource, BufferType tag, uint32
     auto& ctx = (*common::getContext());
     uint64_t uid = ((uint64_t)tag << 32) | (uint64_t)id;
     CommonResource cr{};
+    cr.uFrameWhenTagged = getCurrentFrame();
     if (resource && resource->native)
     {
         cr.res = *(sl::Resource*)resource;
@@ -215,7 +232,7 @@ sl::Result slSetTagInternal(const sl::Resource* resource, BufferType tag, uint32
             // Force common state for d3d11 in case engine is providing something that won't work on compute queue
             cr.res.state = 0;
         }
-#if defined SL_PRODUCTION || defined SL_REL_EXT_DEV
+#if defined(SL_PRODUCTION) || defined(SL_DEVELOP)
         // Check if state is provided but only if not running on D3D11
         if (ctx.platform != RenderAPI::eD3D11 && resource->state == UINT_MAX)
         {
@@ -228,7 +245,8 @@ sl::Result slSetTagInternal(const sl::Resource* resource, BufferType tag, uint32
         //! Note that tagging outputs as volatile is ignored, we need to write output into the engine's resource
         //!
         bool writeTag = tag == kBufferTypeScalingOutputColor || tag == kBufferTypeAmbientOcclusionDenoised ||
-            tag == kBufferTypeShadowDenoised || tag == kBufferTypeSpecularHitDenoised || tag == kBufferTypeDiffuseHitDenoised;
+            tag == kBufferTypeShadowDenoised || tag == kBufferTypeSpecularHitDenoised || tag == kBufferTypeDiffuseHitDenoised ||
+            tag == kBufferTypeBackbuffer;
         if (!writeTag && lifecycle != ResourceLifecycle::eValidUntilPresent)
         {
             //! Only make a copy if this tag is required by at least one loaded and supported plugin on the same viewport and with immutable life-cycle.
@@ -299,11 +317,11 @@ sl::Result slSetTagInternal(const sl::Resource* resource, BufferType tag, uint32
 
         if (cr.res.native)
         {
-            ctx.compute->startTrackingResource((uint32_t)tag, &cr.res);
+            ctx.compute->startTrackingResource(uid, &cr.res);
         }
         else
         {
-            ctx.compute->stopTrackingResource((uint32_t)tag);
+            ctx.compute->stopTrackingResource(uid, &cr.res);
         }
     }
 
@@ -314,7 +332,7 @@ sl::Result slSetTagInternal(const sl::Resource* resource, BufferType tag, uint32
         // Host can set null as a tag or even change the life-cycle of a tag, in that case any previously allocated copies must be recycled
         ctx.pool->recycle(prevTag.clone);
     }
-    ctx.idToResourceMap[uid] = cr;
+    prevTag = cr;
     return Result::eOk;
 }
 
@@ -1297,7 +1315,9 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
 
             // Provide DRS context to other plugins
             ctx.drsContext.drsReadKey = drs::drsReadKey;
+            ctx.drsContext.drsReadKeyFromProfile = drs::drsReadKeyFromProfile;
             ctx.drsContext.drsReadKeyString = drs::drsReadKeyString;
+            ctx.drsContext.drsReadKeyStringFromProfile = drs::drsReadKeyStringFromProfile;
             parameters->set(param::global::kDRSContext, &ctx.drsContext);
         }
         else
@@ -1593,10 +1613,12 @@ SL_EXPORT void* slGetPluginFunction(const char* functionName)
     //! D3D12
     SL_EXPORT_FUNCTION(slHookPresent);
     SL_EXPORT_FUNCTION(slHookPresent1);
+    SL_EXPORT_FUNCTION(slHookAfterPresent);
     SL_EXPORT_FUNCTION(slHookResizeSwapChainPre);
     
     //! Vulkan
     SL_EXPORT_FUNCTION(slHookVkPresent);
+    SL_EXPORT_FUNCTION(slHookVkAfterPresent);
     SL_EXPORT_FUNCTION(slHookVkCmdBindPipeline);
     SL_EXPORT_FUNCTION(slHookVkCmdBindDescriptorSets);
     SL_EXPORT_FUNCTION(slHookVkBeginCommandBuffer);

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -132,7 +132,7 @@ protected:
     std::atomic<uint64_t> m_vramBudgetBytes{};
     std::atomic<uint64_t> m_vramUsageBytes{};
 
-    using ResourceTrackingMap = std::map<uint32_t, IUnknown*>;
+    using ResourceTrackingMap = std::map<uint64_t, IUnknown*>;
     ResourceTrackingMap m_resourceTrackMap{};
 
     PFun_ResourceAllocateCallback* m_allocateCallback = {};
@@ -185,7 +185,17 @@ public:
     //! The following methods are VK specific so by default no implementation
     virtual ComputeStatus getInstance(Instance& instance)  override { return ComputeStatus::eNoImplementation; };
     virtual ComputeStatus getPhysicalDevice(PhysicalDevice& device)  override { return ComputeStatus::eNoImplementation; };
-    virtual ComputeStatus waitForIdle(Device device)   override { return ComputeStatus::eNoImplementation; };
+    virtual ComputeStatus waitForIdle(Device device) override
+    {
+        // This is a Vulkan-only operation. It must not be exersiced in other code paths. Even in Vulkan
+        // it's a dubious operation. We have it only because Vulkan spec has it and the games may call
+        // it. Why it's dubious? See - we have multiple threads. Those threads keep submitting work.
+        // If the game calls https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/vkDeviceWaitIdle.html
+        // that function has to be aware of all threads, and has to have a way to flush their work.
+        // So it's quite finicky to make that function work correctly. Let's limit its use as much as possible
+        assert(false);
+        return ComputeStatus::eNoImplementation;
+    };
 
     virtual ComputeStatus getVendorId(VendorId& id) override;
     virtual ComputeStatus clearCache() override;
@@ -243,8 +253,8 @@ public:
         return ComputeStatus::eOk;
     }
 
-    virtual ComputeStatus startTrackingResource(uint32_t id, Resource resource) override;
-    virtual ComputeStatus stopTrackingResource(uint32_t id) override;
+    virtual ComputeStatus startTrackingResource(uint64_t uid, Resource resource) override;
+    virtual ComputeStatus stopTrackingResource(uint64_t uid, Resource dbgResource) override;
 
     ComputeStatus restorePipeline(CommandList cmdList)  override { return ComputeStatus::eOk; }
 
@@ -268,7 +278,7 @@ public:
     virtual ComputeStatus getSleepStatus(ReflexState& settings) override;
     virtual ComputeStatus getLatencyReport(ReflexState& settings) override;
     virtual ComputeStatus sleep() override;
-    virtual ComputeStatus setReflexMarker(ReflexMarker marker, uint64_t frameId) override;
+    virtual ComputeStatus setReflexMarker(PCLMarker marker, uint64_t frameId) override;
     
 
     // Sharing API

@@ -3,9 +3,9 @@ Streamline - DLSS
 =======================
 
 >The focus of this guide is on using Streamline to integrate DLSS into an application.  For more information about DLSS itself, please visit the [NVIDIA Developer DLSS Page](https://developer.nvidia.com/rtx/dlss)
->For information on user interface considerations when using the DLSS plugin, please see the "RTX UI Developer Guidelines.pdf" document included in the DLSS SDK.
+>For information on user interface considerations when using the DLSS plugin, please see the ["RTX UI Developer Guidelines.pdf"](<RTX UI Developer Guidelines.pdf>) document included with this SDK.
 
-Version 2.2.1
+Version 2.4.0
 =======
 
 ### 1.0 INITIALIZE AND SHUTDOWN
@@ -160,6 +160,15 @@ DLSS options must be set so that the DLSS plugin can track any changes made by t
 
 ```cpp
 sl::DLSSOptions dlssOptions = {};
+// Set preferred Render Presets per Perf Quality Mode. These are typically set one time
+// and established while evaluating DLSS SR Image Quality for your Application.
+// It will be set to DSSPreset::eDefault if unspecified.
+// Please Refer to section 3.12 of the DLSS Programming Guide for details.
+dlssOptions.dlaaPreset = sl::DLSSPreset::ePresetA;
+dlssOptions.qualityPreset = sl::DLSSPreset::ePresetD;
+dlssOptions.balancedPreset = sl::DLSSPreset::ePresetD;
+dlssOptions.performancePreset = sl::DLSSPreset::ePresetD;
+dlssOptions.ultraPerformancePreset = sl::DLSSPreset::ePresetA;
 // These are populated based on user selection in the UI
 dlssOptions.mode = myUI->getDLSSMode(); // e.g. sl::eDLSSModeBalanced;
 dlssOptions.outputWidth = myUI->getOutputWidth();    // e.g 1920;
@@ -167,6 +176,7 @@ dlssOptions.outputHeight = myUI->getOutputHeight(); // e.g. 1080;
 dlssOptions.sharpness = dlssSettings.sharpness; // optimal sharpness
 dlssOptions.colorBuffersHDR = sl::Boolean::eTrue; // assuming HDR pipeline
 dlssOptions.useAutoExposure = sl::Boolean::eFalse; // autoexposure is not to be used if a proper exposure texture is available
+dlssOptions.alphaUpscalingEnabled = sl::Boolean::eFalse; // experimental alpha upscaling, enable to upscale alpha channel of color texture
 if(SL_FAILED(result, slDLSSSetOptions(viewport, dlssOptions)))
 {
     // Handle error here, check the logs
@@ -178,6 +188,9 @@ if(SL_FAILED(result, slDLSSSetOptions(viewport, dlssOptions)))
 
 > **NOTE:**
 > Set the DLSSOptions.useAutoExposure boolean to be true only if you want DLSS to be in in auto-exposure mode. Also, it is strongly advised to provide exposure if a proper exposure texture is available. 
+
+> **NOTE:**
+> Alpha upscaling (`DLSSOptions::alphaUpscalingEnabled`) is experimental, and will impact performace. This feature should be used only if the alpha channel of the color texture needs to be upscaled (if `eFalse`, only RGB channels will be upscaled).
 
 ### 6.0 PROVIDE COMMON CONSTANTS
 

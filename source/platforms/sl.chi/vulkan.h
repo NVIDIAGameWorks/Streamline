@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -41,6 +41,9 @@ namespace sl
 namespace chi
 {
 
+class IReflexVk;
+
+constexpr uint64_t kMaxSemaphoreWaitUs = 500000000; // 500ms max wait on any semaphore;
 constexpr int kDescriptorCount = 32;
 constexpr int kDynamicOffsetCount = 32;
 
@@ -223,11 +226,8 @@ class Vulkan : public Generic
 
     VkCommandBuffer m_cmdBuffer;
 
-    VkSemaphore m_lowLatencySemaphore{};
-    uint64_t reflexSemaphoreValue = 0;
-
-    HMODULE m_hmodReflex{};
-
+    IReflexVk* m_reflex;
+    
     thread::ThreadContext<DispatchData> m_dispatchContext;
 
     struct PerfData
@@ -321,8 +321,8 @@ public:
     virtual ComputeStatus getResourceState(Resource resource, ResourceState& state) override final;
     virtual ComputeStatus getResourceDescription(Resource InResource, ResourceDescription &OutDesc) override final;
 
-    virtual ComputeStatus startTrackingResource(uint32_t id, Resource resource) override final { return ComputeStatus::eOk; }
-    virtual ComputeStatus stopTrackingResource(uint32_t id) override final { return ComputeStatus::eOk; }
+    virtual ComputeStatus startTrackingResource(uint64_t uid, Resource resource) override final { return ComputeStatus::eOk; }
+    virtual ComputeStatus stopTrackingResource(uint64_t uid, Resource dbgResource) override final { return ComputeStatus::eOk; }
 
     virtual ComputeStatus mapResource(CommandList cmdList, Resource resource, void*& data, uint32_t subResource = 0, uint64_t offset = 0, uint64_t totalBytes = UINT64_MAX) override final;
     virtual ComputeStatus unmapResource(CommandList cmdList, Resource resource, uint32_t subResource) override final;
@@ -343,9 +343,9 @@ public:
     virtual ComputeStatus getSleepStatus(ReflexState& settings) override final;
     virtual ComputeStatus getLatencyReport(ReflexState& settings) override final;
     virtual ComputeStatus sleep() override final;
-    virtual ComputeStatus setReflexMarker(ReflexMarker marker, uint64_t frameId) override final;
+    virtual ComputeStatus setReflexMarker(PCLMarker marker, uint64_t frameId) override final;
     virtual ComputeStatus notifyOutOfBandCommandQueue(CommandQueue queue, OutOfBandCommandQueueType type) override final;
-    virtual ComputeStatus setAsyncFrameMarker(CommandQueue queue, ReflexMarker marker, uint64_t frameId) override final;
+    virtual ComputeStatus setAsyncFrameMarker(CommandQueue queue, PCLMarker marker, uint64_t frameId) override final;
 
     // Helper methods for NGX feature requirements and slIsFeatureSupported
     static ComputeStatus createInstanceAndFindPhysicalDevice(uint32_t id, chi::Instance& instance, chi::PhysicalDevice& device);

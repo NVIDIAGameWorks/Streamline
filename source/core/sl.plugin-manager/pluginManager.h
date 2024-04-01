@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -26,6 +26,7 @@
 #include <map>
 
 #include "include/sl_hooks.h"
+#include "source/core/sl.api/internal.h"
 #include "external/json/include/nlohmann/json.hpp"
 using json = nlohmann::json;
 
@@ -100,6 +101,7 @@ struct IPluginManager
     virtual ID3D11Device* getD3D11Device() const = 0;
     virtual VkDevice getVulkanDevice() const = 0;
 
+    virtual bool isFeatureEnabled(Feature feature) const = 0;
     virtual bool isProxyNeeded(const char* className) = 0;
     virtual bool isInitialized() const = 0;
     virtual bool arePluginsLoaded() const = 0;
@@ -108,7 +110,7 @@ struct IPluginManager
 
     virtual const FeatureContext* getFeatureContext(Feature feature) = 0;
 
-    virtual bool getExternalFeatureConfig(Feature feature, const char** configAsText) = 0;
+    virtual bool getExternalFeatureConfig(Feature feature, std::string& configAsText) = 0;
     virtual bool getLoadedFeatureConfigs(std::vector<json>& configList) const = 0;
     virtual bool getLoadedFeatures(std::vector<Feature>& featureList) const = 0;
 };

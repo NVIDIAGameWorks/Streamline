@@ -1,3 +1,76 @@
+======== Release 2.4.0 Entries ========
+    
+    * Added support for upscaling Alpha in `sl.dlss`. 
+    
+    * Added support for multiple viewports in `sl.dlss_g`. 
+      See section 5.0 "MULTIPLE VIEWPORTS" in `ProgrammingGuideDLSS_G.md` for more information.
+
+    * Added support for `VK_FORMAT_D32_SFLOAT_S8_UINT`.
+    
+    * Added fullscreen menu detection in `sl.dlss_g`. 
+      See section 6.3 "AUTOMATICALLY DISABLING DLSS-G IN MENUS" in `ProgrammingGuideDLSS_G.md` for more information.
+      
+    * Added support for a new preset `sl::DLSSPreset::ePresetE`. This is now the default preset for DLSS SR.
+      
+    * Deprecated the ambiguous flag `sl::ReflexOptions::useMarkersToOptimize`.
+
+======== Release 2.3.0 Entries ========
+
+    * Added support for DeepDVC with a new plugin: `sl.deepdvc`. 
+      See `ProgrammingGuideDeepDVC.md` for more information see.
+
+    * Added a new plugin `sl.pcl` for handling the IHV-agnostic functionality
+      previously covered within `sl.reflex`. See `ProgrammingGuidePCL.md` and
+      `ProgrammingGuideReflex.md` for more information.
+
+    * Added support for specifying `sl::Extent` values which are smaller than
+      the backbuffer size for `sl.dlssg`. See `ProgrammingGuideDLSS_G.md` for
+      more information.
+
+    * Added support for the Nsight Perf SDK with a new plugin: `sl.nvperf`. 
+      See `Debugging - Nsight-Perf-SDK GUI.md` for more information
+
+    * Added a new `sl::DLSSGFlags` enumeration value `eRetainResourcesWhenOff`
+      for controlling resource retention behavior on changes to `sl::DLSSGOptions::mode`. 
+      See section 6.2 "RETAINING RESOURCES WHEN DLSS-G IS OFF" in `ProgrammingGuideDLSS_G.md` 
+      for more information.
+
+    * Added a CMakeLists file for easier integration into projects using the
+      CMake build system.
+
+    * Added the Reflex Verification Tools to the repository under the `utils`
+      directory.
+
+    * Added a new enumeration `sl::PCLHotKey` for specifying the PC Latency
+      Marker hotkey. The field-type of `sl::PCLOptions::virtualKey` makes use of
+      this type rather than `uint16_t` that `sl::ReflexOptions::virtualKey`
+      used.
+
+    * Added the current thread id to log messages.
+
+    * Fixed a bug where `sl.dlssg` would occasionally deadlock when applications
+      switched between windows via the alt+tab keybind.
+
+    * Fixed a bug in `sl.reflex` where a workaround for the Unity engine was
+      checking for the incorrect `sl::PCLMarker`.
+
+    * Fixed a bug where the `sl.dlssg` debug interface could display when DLSS-G
+      was not enabled.
+
+    * Fixed a bug in `sl.imgui` where the `WM_GETMESSAGE` hook was leaked on plugin shutdown.
+
+    * Fixed a bug where logging would crash if the supplied message was greater
+      than 1024 characters in length.
+
+    * Fixed a bug where logging would crash if the supplied message was an empty
+      string.
+
+    * Updated `sl.nrd` to NRD version 4.3.5.
+
+    * Demoted GPU-Accelerated Hardware Scheduling related errors in `sl.dlssg`
+      to warnings. These cause non-fatal issues which impacted the logging
+      callback on machine configurations where DLSS-G was unsupported.
+
 ======== Release 2.2.1 Entries ========
 
     * Added support for DLSS Frame Generation Dynamic Frame Generation.

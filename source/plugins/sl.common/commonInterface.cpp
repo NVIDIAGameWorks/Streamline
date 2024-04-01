@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -68,7 +68,7 @@ struct CommonInterfaceContext
 #ifdef SL_CAPTURE
     sl::chi::ICapture* capture{};
 #endif
-    uint32_t currentFrame{};
+    uint64_t currentFrame{};
 
     IDXGIAdapter3* adapter{};
 
@@ -117,6 +117,11 @@ struct CommonInterfaceContext
 
 //! Our secondary context
 CommonInterfaceContext ctx;
+
+uint64_t getCurrentFrame()
+{
+    return ctx.currentFrame;
+}
 
 //! Get GPU information and share with other plugins
 //! 
@@ -664,9 +669,8 @@ void presentCommon(UINT Flags)
 #endif
         }
 
-        ctx.currentFrame++;
         // This will release any resources scheduled to be destroyed few frames behind
-        CHI_VALIDATE(ctx.compute->collectGarbage(ctx.currentFrame));
+        CHI_VALIDATE(ctx.compute->collectGarbage((uint32_t)ctx.currentFrame));
         // This will release unused recycled resources (volatile tag copies)
         ctx.pool->collectGarbage();
     }
@@ -689,6 +693,15 @@ void presentCommon(UINT Flags)
     api::getContext()->parameters->set(sl::param::common::kStats, (void*)s_stats.c_str());*/
 }
 
+void afterPresentCommon(UINT Flags)
+{
+    if ((Flags & DXGI_PRESENT_TEST))
+    {
+        return;
+    }
+    ++ctx.currentFrame;
+}
+
 HRESULT slHookPresent1(IDXGISwapChain* swapChain, UINT SyncInterval, UINT Flags, DXGI_PRESENT_PARAMETERS* params, bool& Skip)
 {
     presentCommon(Flags);
@@ -698,6 +711,12 @@ HRESULT slHookPresent1(IDXGISwapChain* swapChain, UINT SyncInterval, UINT Flags,
 HRESULT slHookPresent(IDXGISwapChain* swapChain, UINT SyncInterval, UINT Flags, bool& Skip)
 {
     presentCommon(Flags);
+    return S_OK;
+}
+
+HRESULT slHookAfterPresent(UINT Flags)
+{
+    afterPresentCommon(Flags);
     return S_OK;
 }
 
@@ -712,6 +731,13 @@ HRESULT slHookResizeSwapChainPre(IDXGISwapChain* swapChain, UINT BufferCount, UI
 VkResult slHookVkPresent(VkQueue Queue, const VkPresentInfoKHR* PresentInfo, bool& Skip)
 {
     presentCommon(0);
+
+    return VK_SUCCESS;
+}
+
+VkResult slHookVkAfterPresent()
+{
+    afterPresentCommon(0);
 
     return VK_SUCCESS;
 }

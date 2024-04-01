@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -167,6 +167,8 @@ constexpr BufferType kBufferTypeTransparencyLayer = 51;
 //!Optional - Butffer to be used in addition to TransparencyLayer which allows 3-channels of Opacity versus 1-channel. 
 //            In this case, TransparencyLayer represents Color (RcGcBc), TransparencyLayerOpacity represents alpha (RaGaBa)'
 constexpr BufferType kBufferTypeTransparencyLayerOpacity = 52;
+//! Optional - Swapchain buffer to be presented
+constexpr BufferType kBufferTypeBackbuffer = 53;
 
 //! Features supported with this SDK
 //! 
@@ -183,14 +185,23 @@ constexpr Feature kFeatureNRD = 1;
 //! NVIDIA Image Scaling
 constexpr Feature kFeatureNIS = 2;
 
-//! Low-Latency
+//! Reflex
 constexpr Feature kFeatureReflex = 3;
+
+//! PC Latency
+constexpr Feature kFeaturePCL = 4;
+
+//! DeepDVC
+constexpr Feature kFeatureDeepDVC = 5;
+
 
 //! DLSS Frame Generation
 constexpr Feature kFeatureDLSS_G = 1000;
 
 //! DLSS Ray Reconstruction
 constexpr Feature kFeatureDLSS_RR = 1001;
+
+constexpr Feature kFeatureNvPerf = 1002;
 
 // ImGUI 
 constexpr Feature kFeatureImGUI = 9999;

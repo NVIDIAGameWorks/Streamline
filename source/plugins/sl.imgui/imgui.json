@@ -1,12 +1,77 @@
 // These are the hooks we need to do whatever our plugin is trying to do
 {
-    "id" : 9999,
-    "priority" : 1,
-    "required_plugins" : ["sl.common"],
-    "name" : "sl.imgui",
-    "namespace" : "imgui",
-    "rhi" : ["d3d12"],
-    "hooks" :
-    [
-    ]
+  "id": 9999,
+  "priority": 1,
+  "required_plugins": [ "sl.common" ],
+  "name": "sl.imgui",
+  "namespace": "imgui",
+  "rhi": [ "d3d12", "vk" ],
+  "hooks": [
+    {
+      "class": "Vulkan",
+      "target": "CreateSwapchainKHR",
+      "replacement": "slHookVkCreateSwapchainKHR",
+      "base": "before"
+    },
+    {
+      "class": "Vulkan",
+      "target": "DestroySwapchainKHR",
+      "replacement": "slHookVkDestroySwapchainKHR",
+      "base": "before"
+    },
+    {
+      "class": "Vulkan",
+      "target": "CreateWin32SurfaceKHR",
+      "replacement": "slHookVkCreateWin32SurfaceKHR",
+      "base": "after"
+    },
+    {
+      "class": "Vulkan",
+      "target": "DestroySurfaceKHR",
+      "replacement": "slHookVkDestroySurfaceKHR",
+      "base": "before"
+    },
+    {
+      "class": "Vulkan",
+      "target": "GetSwapchainImagesKHR",
+      "replacement": "slHookVkGetSwapchainImagesKHR",
+      "base": "before"
+    },
+    {
+      "class": "Vulkan",
+      "target": "Present",
+      "replacement": "slHookVkPresent",
+      "base": "before"
+    },
+    {
+      "class": "IDXGIFactory",
+      "target": "CreateSwapChainForCoreWindow",
+      "replacement": "slHookCreateSwapChainForCoreWindow",
+      "base": "before"
+    },
+    {
+      "class": "IDXGIFactory",
+      "target": "CreateSwapChainForHwnd",
+      "replacement": "slHookCreateSwapChainForHwnd",
+      "base": "before"
+    },
+    {
+      "class": "IDXGIFactory",
+      "target": "CreateSwapChain",
+      "replacement": "slHookCreateSwapChain",
+      "base": "before"
+    },
+    {
+      "class": "IDXGISwapChain",
+      "target": "Present",
+      "replacement": "slHookPresent",
+      "base": "before"
+    },
+    {
+      "class": "IDXGISwapChain",
+      "target": "Present1",
+      "replacement": "slHookPresent1",
+      "base": "before"
+    }
+  ]
 }

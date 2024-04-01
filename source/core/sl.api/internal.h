@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -182,6 +182,7 @@ using PFuncOnPluginLoad = bool(sl::param::IParameters* params, const char* loade
 using PFuncOnPluginStartup = bool(const char* loaderJSON, void* device);
 using PFuncOnPluginShutdown = void(void);
 using PFuncGetPluginFunction = void* (const char* name);
+using PFuncOnPluginsInitialized = void(const char* loaderJSON);
 
 } // namespace api
 
@@ -200,11 +201,13 @@ using PFunCreateSwapChainForCoreWindowAfter = HRESULT(IDXGIFactory2* pFactory, I
 
 using PFunSwapchainDestroyedBefore = void(IDXGISwapChain*);
 using PFunPresentBefore = HRESULT(IDXGISwapChain* SwapChain, UINT SyncInterval, UINT Flags, bool& Skip);
+using PFunPresentAfter = HRESULT(UINT Flags);
 using PFunPresent1Before = HRESULT(IDXGISwapChain* SwapChain, UINT SyncInterval, UINT PresentFlags, const DXGI_PRESENT_PARAMETERS* pPresentParameters, bool& Skip);
 using PFunGetBufferBefore = HRESULT(IDXGISwapChain* SwapChain, UINT Buffer, REFIID riid, void** ppSurface, bool& Skip);
 using PFunGetCurrentBackBufferIndexBefore = UINT(IDXGISwapChain* SwapChain, bool& Skip);
 using PFunSetFullscreenStateBefore = HRESULT(IDXGISwapChain* SwapChain, BOOL pFullscreen, IDXGIOutput* ppTarget, bool& Skip);
 using PFunSetFullscreenStateAfter = HRESULT(IDXGISwapChain* SwapChain, BOOL pFullscreen, IDXGIOutput* ppTarget);
+using PFunGetDescAfter = HRESULT(IDXGISwapChain* SwapChain, DXGI_SWAP_CHAIN_DESC* pDesc);
 using PFunResizeBuffersBefore = HRESULT(IDXGISwapChain* SwapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT& SwapChainFlags, bool& Skip);
 using PFunResizeBuffersAfter = HRESULT(IDXGISwapChain* SwapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT& SwapChainFlags);
 using PFunResizeBuffers1Before = HRESULT(IDXGISwapChain* SwapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT Format, UINT SwapChainFlags, const UINT* pCreationNodeMask, IUnknown* const* ppPresentQueue, bool& Skip);
@@ -235,6 +238,7 @@ using PFunVkCreateSwapchainKHRAfter = VkResult(VkDevice Device, const VkSwapchai
 using PFunVkGetSwapchainImagesKHRBefore = VkResult(VkDevice Device, VkSwapchainKHR Swapchain, uint32_t* SwapchainImageCount, VkImage* SwapchainImages, bool& Skip);
 using PFunVkAcquireNextImageKHRBefore = VkResult(VkDevice Device, VkSwapchainKHR Swapchain, uint64_t Timeout, VkSemaphore Semaphore, VkFence Fence, uint32_t* ImageIndex, bool& Skip);
 using PFunVkQueuePresentKHRBefore = VkResult(VkQueue Queue, const VkPresentInfoKHR* PresentInfo, bool& Skip);
+using PFunVkQueuePresentKHRAfter = VkResult();
 using PFunVkDestroySwapchainKHRBefore = void(VkDevice Device, VkSwapchainKHR Swapchain, const VkAllocationCallbacks* Allocator, bool& Skip);
 using PFunVkCreateWin32SurfaceKHRBefore = VkResult(VkInstance Instance, const VkWin32SurfaceCreateInfoKHR* CreateInfo, const VkAllocationCallbacks* Allocator, VkSurfaceKHR* Surface, bool& Skip);
 using PFunVkCreateWin32SurfaceKHRAfter = VkResult(VkInstance Instance, const VkWin32SurfaceCreateInfoKHR* CreateInfo, const VkAllocationCallbacks* Allocator, VkSurfaceKHR* Surface);

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -28,7 +28,7 @@
 #include "external/vulkan/include/vulkan/vk_layer.h"
 #include "external/vulkan/include/vulkan/vk_layer_dispatch_table.h"
 
-//#include "vulkannv.h"
+#include "vulkannv.h"
 
 namespace sl
 {
@@ -70,8 +70,8 @@ struct VkTable
     PFN_vkGetImageViewHandleNVX vkGetImageViewHandleNVX;
 };
 
-#define SL_GIPR(F) dt.##F = (PFN_vk##F)getInstanceProcAddr(instance, "vk" #F)
-#define SL_GDPR(F) dt.##F = (PFN_vk##F)getDeviceProcAddr(device, "vk" #F)
+#define SL_GIPR(F) dt.F = (PFN_vk##F)getInstanceProcAddr(instance, "vk" #F)
+#define SL_GDPR(F) dt.F = (PFN_vk##F)getDeviceProcAddr(device, "vk" #F)
 
 inline void VkTable::mapVulkanInstanceAPI(VkInstance instance)
 {

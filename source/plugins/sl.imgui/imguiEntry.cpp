@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -31,6 +31,7 @@
 #include "source/core/sl.plugin/plugin.h"
 #include "source/core/sl.param/parameters.h"
 #include "source/platforms/sl.chi/compute.h"
+#include "source/platforms/sl.chi/vulkan.h"
 #include "source/plugins/sl.template/versions.h"
 #include "source/plugins/sl.common/commonInterface.h"
 #include "external/nvapi/nvapi.h"
@@ -38,6 +39,7 @@
 #include "external/imgui/imgui.h"
 #include "external/imgui/imgui_internal.h"
 #include "external/implot/implot.h"
+#include "external/vulkan/include/vulkan/vulkan_win32.h"
 #include "_artifacts/gitVersion.h"
 #include "_artifacts/json/imgui_json.h"
 #include "source/plugins/sl.imgui/imguiTypes.h"
@@ -46,10 +48,13 @@
 #include "source/plugins/sl.imgui/imgui_impl_dx12.h"
 #include "source/plugins/sl.imgui/imgui_impl_vulkan.h"
 #include "source/plugins/sl.imgui/imgui_impl_win32.h"
+#include "source/plugins/sl.imgui/DroidSans-Mono.h"
 
 using json = nlohmann::json;
 
 constexpr uint32_t NUM_BACK_BUFFERS = 3;
+constexpr float DEFAULT_SMALL_FONT_SIZE = 10.0f;
+constexpr float DEFAULT_MEDIUM_FONT_SIZE = 16.0f;
 
 namespace sl
 {
@@ -68,9 +73,7 @@ struct IMGUIContext
     void onCreateContext() {};
 
     // Called when plugin is unloaded, destroy any objects on heap here
-    void onDestroyContext() 
-    {
-    };
+    void onDestroyContext() {};
 
     // Compute API
     RenderAPI platform = RenderAPI::eD3D12;
@@ -83,19 +86,46 @@ struct IMGUIContext
     std::vector<RenderCallback>* anywhereCallbacks{};
 
     sl::imgui::ImGUI ui{};
+    imgui::Font* uiSmallFont{};
+    imgui::Font* uiMediumFont{};
+
+    float uiSmallFontSize = DEFAULT_SMALL_FONT_SIZE;
+    float uiMediumFontSize = DEFAULT_MEDIUM_FONT_SIZE;
 
     void* backBuffers[NUM_BACK_BUFFERS] = {};
+    BOOL  dxgiFullscreenState{};
 
     ID3D12Device* device{};
     ID3D12DescriptorHeap* pd3dRtvDescHeap{};
     ID3D12DescriptorHeap* pd3dSrvDescHeap{};
     D3D12_CPU_DESCRIPTOR_HANDLE  mainRenderTargetDescriptor[NUM_BACK_BUFFERS]{};
 
-    VkImageView vkImageViews[NUM_BACK_BUFFERS]{};
-    VkFramebuffer vkFrameBuffers[NUM_BACK_BUFFERS]{};
-    ImGui_ImplVulkan_InitInfo vkInfo{};
+    VkImageView                                vkImageViews[NUM_BACK_BUFFERS]{};
+    VkFramebuffer                              vkFrameBuffers[NUM_BACK_BUFFERS]{};
+    ImGui_ImplVulkan_InitInfo                  vkInfo{};
+    std::vector<std::pair<VkSurfaceKHR, HWND>> surfaceWindows{};
+    VkSwapchainCreateInfoKHR                   vkSwapChainParams{};
+    VkImage                                    vkSwapchainImages[NUM_BACK_BUFFERS]{};
+
+    HHOOK inputHook = nullptr;
+
+    bool                      renderInternal         = true;   // true = render in this plugin, false = render in dlss_g
+    chi::ICommandListContext* cmdList                = nullptr;
+    chi::CommandQueue         cmdQueue               = nullptr;
+    ID3D12Resource*           currentBackBuffer      = nullptr;
+    VkImage                   currentBackBufferVk    = nullptr;
+    uint32_t                  currentBackBufferIndex = 0;
+    uint32_t                  backBufferFormat       = 0;
+    uint32_t                  backBufferWidth        = 0;
+    uint32_t                  backBufferHeight       = 0;
+    HWND                      backBufferHwnd         = {};
+    uint32_t                  bufferCount            = 0;
+    
+    extra::AverageValueMeter  frameMeter             = {};
 };
 }
+
+
 
 void updateEmbeddedJSON(json& config);
 
@@ -112,6 +142,8 @@ struct Context
 {
     ImGuiContext* imgui;
     ImPlotContext* plot;
+    uint32_t backBufferWidth{};
+    uint32_t backBufferHeight{};
 
     void* apiData{};
 
@@ -193,7 +225,14 @@ Context* createContext(const ContextDesc& desc)
     // Setup Dear ImGui style
     //ImGui::StyleColorsDark();
     //ImGui::StyleColorsClassic();
-        
+
+    // We don't want imgui to take ownership of the underlying host memory for "DroidSans_Mono_ttf",
+    // so we flag the atlas accordingly. This is what allows us to destroy & recreate the imgui context without crashing
+    FontConfig font_cfg;
+    font_cfg.fontDataOwnedByAtlas = false;
+    ctx.uiSmallFont = ctx.ui.addFontFromMemoryTTF(DroidSans_Mono_ttf, DroidSans_Mono_ttf_len, ctx.uiSmallFontSize, &font_cfg, nullptr);
+    ctx.uiMediumFont = ctx.ui.addFontFromMemoryTTF(DroidSans_Mono_ttf, DroidSans_Mono_ttf_len, ctx.uiMediumFontSize, &font_cfg, nullptr);
+
     // When viewports are enabled we tweak WindowRounding/WindowBg so platform windows can look identical to regular ones.
     ImGuiStyle& style = ImGui::GetStyle();
     if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
@@ -337,26 +376,14 @@ Context* createContext(const ContextDesc& desc)
         apiData = renderPass;
     }
     
-    return new Context{ imguiCtx, plotCtx, apiData };
+    return new Context{ imguiCtx, plotCtx, desc.width, desc.height, apiData };
 }
 
-void destroyContext(Context* imguiCtx)
+void destroyContext(Context* ctx)
 {
-    // Causing a crash, not sure why
-    //ImGui::DestroyContext(imguiCtx->imgui);
-    ImPlot::DestroyContext(imguiCtx->plot);
-
-    if (g_ctx == imguiCtx)
-    {
-        g_ctx = {};
-    }
-    delete imguiCtx;
-    
-    auto& ctx = (*sl::imgui::getContext());
-    ctx.backBuffers[0] = {};
-    ctx.backBuffers[1] = {};
-    ctx.backBuffers[2] = {};
-    if (ctx.platform == RenderAPI::eD3D12 || ctx.platform == RenderAPI::eD3D11)
+    (void)(ctx);
+    auto& pluginCtx = (*sl::imgui::getContext());
+    if (pluginCtx.platform == RenderAPI::eD3D12 || pluginCtx.platform == RenderAPI::eD3D11)
     {
         // In both cases we use D3D12
         ImGui_ImplDX12_InvalidateDeviceObjects();
@@ -365,6 +392,18 @@ void destroyContext(Context* imguiCtx)
     {
         ImGui_ImplVulkan_DestroyDeviceObjects();
     }
+
+    ImGui::DestroyContext(g_ctx->imgui);
+    ImPlot::DestroyContext(g_ctx->plot);
+
+    delete g_ctx;
+    g_ctx = {};
+
+    pluginCtx.backBuffers[0] = {};
+    pluginCtx.backBuffers[1] = {};
+    pluginCtx.backBuffers[2] = {};
+
+    pluginCtx.currentFrame = 0;
 }
 
 void setCurrentContext(Context* ctx)
@@ -530,6 +569,28 @@ void plotGraph(const Graph& graph, const std::vector<GraphValues>& values)
     }
 }
 
+void toggleRenderInternal(bool val)
+{
+    auto& ctx = (*imgui::getContext());
+    ctx.renderInternal = val;
+    ctx.currentFrame = 0;
+    if (ctx.renderInternal)
+    {
+        ctx.frameMeter.reset();
+    }
+}
+
+bool getRenderInternal()
+{
+    auto& ctx = (*imgui::getContext());
+    return ctx.renderInternal;
+}
+
+Context* getCurrentContext()
+{
+    return g_ctx;
+}
+
 void triggerRenderWindowCallbacks(bool finalFrame)
 {
     auto& ctx = (*imgui::getContext());
@@ -605,14 +666,14 @@ const DrawData& getDrawData()
     return g_ctx->drawData;
 }
 
-static void setSize(type::Float2 size)
+static void setDisplaySize(type::Float2 size)
 {
     ImGuiIO& io = ImGui::GetIO();
     io.DisplaySize.x = size.x;
     io.DisplaySize.y = size.y;
 }
 
-static type::Float2 getSize()
+static type::Float2 getDisplaySize()
 {
     ImGuiIO& io = ImGui::GetIO();
     return { io.DisplaySize.x, io.DisplaySize.y };
@@ -2135,6 +2196,169 @@ static bool isModalPopupOpen()
     return (::ImGui::GetTopMostPopupModal() != nullptr);
 }
 
+static void popStyleVarMultiple(int count)
+{
+    ::ImGui::PopStyleVar(count);
+}
+
+static bool beginTable(const char* str_id, int columns_count, TableFlags flags, const Float2& outer_size, float inner_width)
+{
+    return ::ImGui::BeginTable(str_id, columns_count,  flags, toImVec2(outer_size), inner_width);
+}
+
+static void tableNextRow()
+{
+    return ::ImGui::TableNextRow();
+}
+
+static bool tableSetColumnIndex(int col)
+{
+    return ::ImGui::TableSetColumnIndex(col);
+}
+
+static void endTable()
+{
+    return ::ImGui::EndTable();
+}
+
+static void ImPlot_PushStyleVar(int idx, const Float2& val)
+{
+    return ImPlot::PushStyleVar(idx, toImVec2(val));
+}
+
+static bool ImPlot_BeginPlot(const char* title_id, const Float2& size, int flags)
+{
+    return ImPlot::BeginPlot(title_id, toImVec2(size), flags);
+}
+static void ImPlot_SetupLegend(int location, int flags)
+{
+    return ::ImPlot::SetupLegend(location, flags);
+}
+static void ImPlot_PopStyleVar(int count)
+{
+    return ::ImPlot::PopStyleVar(count);
+}
+static void ImPlot_SetupAxes(const char* x_label, const char* y_label, int x_flags, int y_flags)
+{
+    return ::ImPlot::SetupAxes(x_label, y_label, x_flags, y_flags);
+}
+static void ImPlot_SetupAxisLimits(int idx, double min_lim, double max_lim, int cond)
+{
+    return ::ImPlot::SetupAxisLimits(idx, min_lim, max_lim, cond);
+}
+static void ImPlot_SetupAxisTicks(int idx, const double* values, int n_ticks, const char* const labels[], bool show_default)
+{
+    return ::ImPlot::SetupAxisTicks(idx, values, n_ticks, labels, show_default);
+}
+static void ImPlot_SetNextLineStyle(const Float4& col, float weight)
+{
+    return ::ImPlot::SetNextLineStyle(toImVec4(col), weight);
+}
+
+// NvPerf: these functions are needed to prevent using NvPerf code from within this plugin
+// NvPerf will call into ImPlot_PlotLineG/ImPlot_PlotShadedG, and in those functions
+// these getters are used to call back into nvperf to access the data stored there
+
+DoubleGetter staticTsGetter;
+DoubleGetter staticValGetter;
+DoubleGetter staticTsGetterData2;
+DoubleGetter staticValGetterData2;
+
+int staticDataOffset;
+
+ImPlotPoint ImPlotPointGetter(int idx, void* user_data)
+{
+    // call back into nvperf to get the values stored there
+    ImPlotPoint point(staticTsGetter(idx + staticDataOffset), staticValGetter(idx + staticDataOffset));
+    return point;
+}
+
+ImPlotPoint ImPlotPointGetterSlot2(int idx, void* user_data)
+{
+    // call back into nvperf to get the values stored there
+    ImPlotPoint point(staticTsGetterData2(idx + staticDataOffset), staticValGetterData2(idx + staticDataOffset));
+    return point;
+}
+
+ImPlotPoint ImPlotPointGetterSlot2ForceZero(int idx, void* user_data)
+{
+    // call back into nvperf to get the values stored there
+    ImPlotPoint point(staticTsGetterData2(idx + staticDataOffset), 0.0);
+    return point;
+}
+
+// End of NvPerf
+
+static void ImPlot_PlotLineG(const char* label_id, void* data, int count, int flags)
+{
+    SL_LOG_ERROR("sl.imgui unsupported function: ImPlot_PlotLineG");
+    assert(0);
+    return;
+}
+
+static bool ImPlot_IsLegendEntryHovered(const char* label_id)
+{
+    return ::ImPlot::IsLegendEntryHovered(label_id);
+}
+
+static void ImPlot_SetNextFillStyle(const Float4& col, float alpha)
+{
+    return ::ImPlot::SetNextFillStyle(toImVec4(col), alpha);
+}
+
+static void ImPlot_PlotShadedG(const char* label_id, bool useGetterWithoutVal, void* data1, void* data2, int count, int flags)
+{       
+    SL_LOG_ERROR("sl.imgui unsupported function: ImPlot_PlotShadedG");
+    assert(0);
+    return;
+}
+
+static void ImPlot_EndPlot()
+{
+    return ::ImPlot::EndPlot();
+}
+
+static PlotStyle* ImPlot_GetStyle()
+{
+    return (PlotStyle*)(&::ImPlot::GetStyle());
+}
+
+static void ImPlot_PlotLineG_NSightPerf(const char* label_id, void* data, int count, int flags, DoubleGetter tsGetter, DoubleGetter valGetter, int dataOffset)
+{
+    staticTsGetter = tsGetter;
+    staticValGetter = valGetter;
+    staticDataOffset = dataOffset;
+    return ::ImPlot::PlotLineG(label_id, &ImPlotPointGetter, nullptr, count, flags);
+}
+
+static void ImPlot_PlotShadedG_NSightPerf(const char* label_id, bool useGetterWithoutVal, void* data1, void* data2, int count, int flags, DoubleGetter tsGetter, DoubleGetter valGetter, DoubleGetter tsGetterData2, DoubleGetter valGetterData2, int dataOffset)
+{
+    staticTsGetter = tsGetter;
+    staticValGetter = valGetter;
+    staticTsGetterData2 = tsGetterData2;
+    staticValGetterData2 = valGetterData2;
+    staticDataOffset = dataOffset;
+
+    if (useGetterWithoutVal)
+    {
+        return ::ImPlot::PlotShadedG(label_id, &ImPlotPointGetter, data1, &ImPlotPointGetterSlot2ForceZero, data2, count, flags);
+    }
+    else
+    {
+        return ::ImPlot::PlotShadedG(label_id, &ImPlotPointGetter, data1, &ImPlotPointGetterSlot2, data2, count, flags);
+    }
+}
+
+static void destroyContextOnResize(unsigned int width, unsigned int height)
+{
+    if(g_ctx != nullptr &&
+      (g_ctx->backBufferWidth != width ||
+       g_ctx->backBufferHeight != height))
+    {        
+        destroyContext(nullptr);
+    }   
+}
+
 static void closeCurrentPopup()
 {
     ::ImGui::CloseCurrentPopup();
@@ -3203,7 +3427,7 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
         return CallNextHookEx(NULL, nCode, wParam, lParam);
     };
 
-    auto hr = SetWindowsHookEx(WH_GETMESSAGE, listener, GetModuleHandle(NULL), GetCurrentThreadId());
+    ctx.inputHook = SetWindowsHookEx(WH_GETMESSAGE, listener, GetModuleHandle(NULL), GetCurrentThreadId());
     SL_LOG_INFO("SetWindowsHookEx result - %s", std::system_category().message(GetLastError()).c_str());
 
     using namespace sl::imgui;
@@ -3221,8 +3445,8 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
         triggerRenderAnywhereCallbacks,
         registerRenderCallbacks,
         plotGraph,
-        setSize,
-        getSize,
+        setDisplaySize,
+        getDisplaySize,
         getStyle,
         showDemoWindow,
         showMetricsWindow,
@@ -3596,7 +3820,32 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
         destroyListClipper,
         feedKeyboardEvent,
         feedMouseEvent,
-        isModalPopupOpen
+        isModalPopupOpen,
+        popStyleVarMultiple,
+        beginTable,
+        tableNextRow,
+        tableSetColumnIndex,
+        endTable,
+        ImPlot_PushStyleVar,
+        ImPlot_BeginPlot,
+        ImPlot_SetupLegend,
+        ImPlot_PopStyleVar,
+        ImPlot_SetupAxes,
+        ImPlot_SetupAxisLimits,
+        ImPlot_SetupAxisTicks,
+        ImPlot_SetNextLineStyle,
+        ImPlot_PlotLineG,
+        ImPlot_IsLegendEntryHovered,
+        ImPlot_SetNextFillStyle,
+        ImPlot_PlotShadedG,
+        ImPlot_EndPlot,
+        ImPlot_GetStyle,
+        toggleRenderInternal,
+        getRenderInternal,
+        getCurrentContext, 
+        ImPlot_PlotLineG_NSightPerf,
+        ImPlot_PlotShadedG_NSightPerf,
+        destroyContextOnResize
     };
 
     parameters->set(param::imgui::kInterface, &ctx.ui);
@@ -3604,11 +3853,6 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
     return true;
 }
 
-//! Main exit point - shutting down our plugin
-//! 
-//! IMPORTANT: Plugins are shutdown in the inverse order based to their priority.
-//! sl.common always shutsdown LAST since it has priority 0
-//!
 void slOnPluginShutdown()
 {
     auto& ctx = (*imgui::getContext());
@@ -3631,6 +3875,8 @@ void slOnPluginShutdown()
         SL_SAFE_RELEASE(ctx.pd3dSrvDescHeap);
     }
 
+    UnhookWindowsHookEx(ctx.inputHook);
+
     // Common shutdown
     plugin::onShutdown(api::getContext());
 }
@@ -3651,6 +3897,310 @@ void updateEmbeddedJSON(json& config)
         info.SHA = GIT_LAST_COMMIT_SHORT;
         updateCommonEmbeddedJSONConfig(&config, info);
     }
+    auto& ctx = (*sl::imgui::getContext());
+
+    json& extraConfig = *(json*)api::getContext()->extConfig;
+
+    extraConfig.contains("smallFontSize") ? extraConfig.at("smallFontSize").get_to(ctx.uiSmallFontSize) : DEFAULT_SMALL_FONT_SIZE;
+    extraConfig.contains("mediumFontSize") ? extraConfig.at("mediumFontSize").get_to(ctx.uiMediumFontSize) : DEFAULT_MEDIUM_FONT_SIZE;
+}
+
+void renderInternal()
+{
+    auto& ctx = (*sl::imgui::getContext());   
+    sl::imgui::setDisplaySize(Float2{ (float)ctx.backBufferWidth, (float)ctx.backBufferHeight });
+    sl::imgui::newFrame((float)ctx.frameMeter.getMean());
+    auto font = ctx.backBufferHeight < 1440 ? ctx.uiSmallFont : ctx.uiMediumFont;
+
+    sl::imgui::pushFont(font);
+
+    // Auto adjust the side bar based on latest size
+    static Float2 s_lastSize{};
+
+    sl::imgui::setNextWindowPos(imgui::Float2{ ctx.backBufferWidth - s_lastSize.x - 10, ctx.backBufferHeight * 0.5f - s_lastSize.y * 0.5f }, imgui::Condition::eAlways, imgui::Float2{ 0.0f, 0.0f });
+    sl::imgui::setNextWindowBgAlpha(0.5f);
+
+    sl::imgui::begin("Streamline", 0, imgui::kWindowFlagAlwaysAutoResize | imgui::kWindowFlagNoCollapse);
+    
+    // render all the other plugins UI via callbacks
+    sl::imgui::triggerRenderWindowCallbacks(false);
+    sl::imgui::triggerRenderAnywhereCallbacks(false);
+
+    s_lastSize = sl::imgui::getWindowSize();
+    sl::imgui::end(); // Side bar    
+    sl::imgui::popFont();
+
+    //! Let rendering stabilize before trying to trigger UI rendering
+    //!
+    //! This helps with exclusive full screen transitions in some games,
+    //! it can leave UI in invalid state and cause issues. 
+    //! Note, this comment was copied from present.cpp line 109, so this
+    //! delay is a known issue with imgui.
+    //! Most importantly, this delay is needed for Unreal apps to work
+    if(ctx.currentFrame > 60)
+    {
+        ctx.cmdList->beginCommandList();
+        if (ctx.platform == RenderAPI::eD3D12 || ctx.platform == RenderAPI::eD3D11)
+        {           
+            sl::imgui::render(ctx.cmdList->getCmdList(), (void*)ctx.currentBackBuffer, ctx.currentBackBufferIndex);
+        }
+        else if (ctx.platform == RenderAPI::eVulkan)
+        {            
+            sl::imgui::render(ctx.cmdList->getCmdList(), (void*)ctx.currentBackBufferVk, ctx.currentBackBufferIndex);
+        }
+        else
+        {
+            SL_LOG_ERROR("Unsupported render API used in sl.imgui plugin");
+            assert(0);
+        }
+        
+        ctx.cmdList->executeCommandList();
+    }
+    else
+    {
+        ImGui::EndFrame();
+    }
+}
+
+// DXGI Hooks
+
+HRESULT slHookCreateSwapChainForCoreWindow(IDXGIFactory2* pFactory, IUnknown* pDevice, IUnknown* pWindow, const DXGI_SWAP_CHAIN_DESC1* pDesc, IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain)
+{
+    auto& ctx = (*sl::imgui::getContext());
+    ctx.cmdQueue = (chi::CommandQueue)pDevice;
+    ctx.bufferCount = pDesc->BufferCount;
+    ctx.compute->createCommandListContext(ctx.cmdQueue, ctx.bufferCount, ctx.cmdList, "imgui-cmdlist");
+    ctx.frameMeter.reset();
+    return S_OK;
+}
+
+HRESULT slHookCreateSwapChainForHwnd(IDXGIFactory2* pFactory, IUnknown* pDevice, HWND hWnd, const DXGI_SWAP_CHAIN_DESC1* pDesc, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* pFullscreenDesc, IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain)
+{    
+    auto& ctx = (*sl::imgui::getContext());
+    ctx.cmdQueue = (chi::CommandQueue)pDevice;    
+    ctx.bufferCount = pDesc->BufferCount;    
+    ctx.compute->createCommandListContext(ctx.cmdQueue, ctx.bufferCount, ctx.cmdList, "imgui-cmdlist");    
+    ctx.frameMeter.reset();    
+    return S_OK;
+}
+
+HRESULT slHookCreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI_SWAP_CHAIN_DESC* pDesc, IDXGISwapChain** ppSwapChain)
+{    
+    auto& ctx = (*sl::imgui::getContext());
+    ctx.cmdQueue = (chi::CommandQueue)pDevice;
+    ctx.bufferCount = pDesc->BufferCount;
+    ctx.compute->createCommandListContext(ctx.cmdQueue, ctx.bufferCount, ctx.cmdList, "imgui-cmdlist");
+    ctx.frameMeter.reset();
+    return S_OK;
+}
+
+HRESULT slHookPresent(IDXGISwapChain* swapChain, UINT SyncInterval, UINT Flags, bool& Skip)
+{    
+    auto& ctx = (*sl::imgui::getContext());
+
+    if (ctx.renderInternal)
+    {
+        if (ctx.cmdQueue && ctx.cmdList)
+        {
+            ctx.frameMeter.timestamp();
+            ctx.currentBackBufferIndex = ((IDXGISwapChain4*)swapChain)->GetCurrentBackBufferIndex();
+            swapChain->GetBuffer(ctx.currentBackBufferIndex, __uuidof(ID3D12Resource), (void**)&ctx.currentBackBuffer);
+            DXGI_SWAP_CHAIN_DESC swapChainDesc;
+            swapChain->GetDesc(&swapChainDesc);
+            BOOL currentFullscreenState = {};
+            swapChain->GetFullscreenState(&currentFullscreenState, NULL);
+
+            if (ctx.backBufferWidth    != swapChainDesc.BufferDesc.Width  ||
+                ctx.backBufferHeight   != swapChainDesc.BufferDesc.Height ||
+                currentFullscreenState != ctx.dxgiFullscreenState)
+            {
+                ctx.backBufferWidth = swapChainDesc.BufferDesc.Width;
+                ctx.backBufferHeight = swapChainDesc.BufferDesc.Height;
+                ctx.dxgiFullscreenState = currentFullscreenState;
+                if (sl::imgui::g_ctx != nullptr)
+                {
+                    ctx.ui.destroyContext(nullptr);
+                }
+            }
+
+            if (sl::imgui::g_ctx == nullptr)
+            {               
+                ctx.backBufferFormat = swapChainDesc.BufferDesc.Format;
+                ctx.backBufferWidth = swapChainDesc.BufferDesc.Width;
+                ctx.backBufferHeight = swapChainDesc.BufferDesc.Height;
+                ctx.backBufferHwnd = swapChainDesc.OutputWindow;
+
+                sl::imgui::ContextDesc contextDesc =
+                {
+                    (uint32_t)ctx.backBufferFormat,
+                    ctx.backBufferWidth,
+                    ctx.backBufferHeight,
+                    ctx.backBufferHwnd
+                };
+
+                sl::imgui::Context* imguiCtx = ctx.ui.createContext(contextDesc);
+                ctx.ui.setCurrentContext(imguiCtx);
+                auto style = ctx.ui.getStyle();
+                ctx.ui.setStyleColors(style, imgui::StyleColorsPreset::eNvidiaDark);
+            }
+
+            renderInternal();
+
+            ctx.currentBackBuffer->Release();
+        }
+    }
+    return S_OK;
+}
+
+HRESULT slHookPresent1(IDXGISwapChain* swapChain, UINT SyncInterval, UINT Flags, const DXGI_PRESENT_PARAMETERS* pPresentParameters, bool& Skip)
+{
+    return slHookPresent(swapChain, SyncInterval, Flags, Skip);    
+}
+
+// VK Hooks
+
+VkResult slHookVkCreateSwapchainKHR(VkDevice Device, const VkSwapchainCreateInfoKHR* CreateInfo, const VkAllocationCallbacks* Allocator, VkSwapchainKHR* Swapchain, bool& Skip)
+{
+    auto& ctx = (*sl::imgui::getContext());
+
+    if (ctx.renderInternal)
+    {
+        // Cache swap params (defer creation of imgui context until present)
+        ctx.vkSwapChainParams = *CreateInfo;
+        ctx.backBufferFormat  = ctx.vkSwapChainParams.imageFormat;
+        ctx.backBufferWidth   = ctx.vkSwapChainParams.imageExtent.width;
+        ctx.backBufferHeight  = ctx.vkSwapChainParams.imageExtent.height;
+        ctx.bufferCount       = ctx.vkSwapChainParams.minImageCount;
+
+        // Find & cache the HWND
+        const auto surfaceIt = std::find_if(ctx.surfaceWindows.begin(), ctx.surfaceWindows.end(), [CreateInfo](const auto& it) { return it.first == CreateInfo->surface; });
+        if (surfaceIt != ctx.surfaceWindows.end())
+        {
+            ctx.backBufferHwnd = surfaceIt->second;
+        }
+        else
+        {
+            // Find first window associated with our process (there is no way to get HWND from VK swap-chain)
+            HWND hCurWnd = NULL;
+            do
+            {
+                hCurWnd = FindWindowEx(NULL, hCurWnd, NULL, NULL);
+                DWORD dwProcID = 0;
+                GetWindowThreadProcessId(hCurWnd, &dwProcID);
+                if (dwProcID == GetCurrentProcessId())
+                {
+                    ctx.backBufferHwnd = hCurWnd;
+                    break;
+                }
+            } while (hCurWnd != NULL);
+        }
+    }
+
+    return VK_SUCCESS;
+}
+
+void slHookVkDestroySwapchainKHR(VkDevice Device, VkSwapchainKHR Swapchain, const VkAllocationCallbacks* Allocator, bool& Skip)
+{
+    auto& ctx = (*sl::imgui::getContext());
+
+    if (ctx.renderInternal)
+    {
+        ctx.vkSwapChainParams = {};
+        ctx.backBufferFormat = {};
+        ctx.backBufferWidth = {};
+        ctx.backBufferHeight = {};
+        ctx.bufferCount = {};
+        ctx.backBufferHwnd = {};
+
+        if (sl::imgui::g_ctx != nullptr)
+        {
+            ctx.ui.destroyContext(nullptr);
+        }
+
+        for (uint32_t i = 0; i < NUM_BACK_BUFFERS; i++)
+        {
+            if (ctx.vkFrameBuffers[i])
+            {
+                vkDestroyFramebuffer(ctx.vkInfo.Device, ctx.vkFrameBuffers[i], nullptr);
+            }
+            if (ctx.vkImageViews[i])
+            {
+                vkDestroyImageView(ctx.vkInfo.Device, ctx.vkImageViews[i], nullptr);
+            }
+        }
+    }
+}
+
+VkResult slHookVkCreateWin32SurfaceKHR(VkInstance Instance, const VkWin32SurfaceCreateInfoKHR* CreateInfo, const VkAllocationCallbacks* Allocator, VkSurfaceKHR* Surface)
+{
+    auto& ctx = (*sl::imgui::getContext());
+    ctx.surfaceWindows.emplace_back(*Surface, CreateInfo->hwnd);
+    return VK_SUCCESS;
+}
+
+void slHookVkDestroySurfaceKHR(VkInstance Instance, VkSurfaceKHR Surface, const VkAllocationCallbacks* Allocator, bool& skip)
+{
+    auto& ctx = (*sl::imgui::getContext());
+    ctx.surfaceWindows.erase(std::remove_if(ctx.surfaceWindows.begin(), ctx.surfaceWindows.end(), [Surface](const auto& it) { return it.first == Surface; }), ctx.surfaceWindows.end());
+}
+
+VkResult slHookVkGetSwapchainImagesKHR(VkDevice Device, VkSwapchainKHR Swapchain, uint32_t* SwapchainImageCount, VkImage* SwapchainImages, bool& Skip)
+{
+    auto& ctx = (*sl::imgui::getContext());
+    if (ctx.renderInternal)
+    {
+        uint32_t imageCount = ctx.vkSwapChainParams.minImageCount;
+        vkGetSwapchainImagesKHR(Device, Swapchain, &imageCount, ctx.vkSwapchainImages);
+    }
+    return VK_SUCCESS;
+}
+
+VkResult slHookVkPresent(VkQueue Queue, const VkPresentInfoKHR* PresentInfo, bool& Skip)
+{
+    auto& ctx = (*sl::imgui::getContext());
+
+    if (ctx.renderInternal)
+    {
+        if (sl::imgui::g_ctx == nullptr)
+        {
+            // 1: Queue
+            ctx.cmdQueue = Queue;
+
+            // 2: Command list            
+            if (ctx.cmdList != nullptr)
+            {
+                ctx.compute->destroyCommandListContext(ctx.cmdList);
+            }
+
+            chi::ComputeStatus ret = ctx.compute->createCommandListContext(ctx.cmdQueue, ctx.bufferCount, ctx.cmdList, "imgui-cmdlist");
+            if (ret != chi::ComputeStatus::eOk)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+
+            // 3: imgui context
+            sl::imgui::ContextDesc contextDesc =
+            {
+                (uint32_t)ctx.backBufferFormat,
+                ctx.backBufferWidth,
+                ctx.backBufferHeight,
+                ctx.backBufferHwnd
+            };
+
+            sl::imgui::Context* imguiCtx = ctx.ui.createContext(contextDesc);
+            ctx.ui.setCurrentContext(imguiCtx);
+            auto style = ctx.ui.getStyle();
+            ctx.ui.setStyleColors(style, imgui::StyleColorsPreset::eNvidiaDark);           
+        }
+
+        ctx.frameMeter.timestamp();
+       
+        ctx.currentBackBufferIndex = PresentInfo->pImageIndices[0];
+        ctx.currentBackBufferVk = ctx.vkSwapchainImages[ctx.currentBackBufferIndex];
+
+        renderInternal();
+    }
+    return VK_SUCCESS;
 }
 
 //! The only exported function - gateway to all functionality
@@ -3661,13 +4211,26 @@ SL_EXPORT void* slGetPluginFunction(const char* functionName)
 
     //! Redirect to OTA if any
     SL_EXPORT_OTA;
-    
+
     //! Core API
     SL_EXPORT_FUNCTION(slOnPluginLoad);
     SL_EXPORT_FUNCTION(slOnPluginShutdown);
     SL_EXPORT_FUNCTION(slOnPluginStartup);
 
+    // Hooks
+    SL_EXPORT_FUNCTION(slHookCreateSwapChainForCoreWindow);
+    SL_EXPORT_FUNCTION(slHookCreateSwapChainForHwnd);
+    SL_EXPORT_FUNCTION(slHookCreateSwapChain);
+    SL_EXPORT_FUNCTION(slHookPresent);
+    SL_EXPORT_FUNCTION(slHookPresent1);
+    SL_EXPORT_FUNCTION(slHookVkCreateSwapchainKHR);
+    SL_EXPORT_FUNCTION(slHookVkDestroySwapchainKHR);
+    SL_EXPORT_FUNCTION(slHookVkCreateWin32SurfaceKHR);
+    SL_EXPORT_FUNCTION(slHookVkDestroySurfaceKHR);
+    SL_EXPORT_FUNCTION(slHookVkGetSwapchainImagesKHR);
+    SL_EXPORT_FUNCTION(slHookVkPresent);
+
     return nullptr;
 }
-
 }
+

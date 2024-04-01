@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -22,6 +22,36 @@
 
 #pragma once
 
+#include "include/sl.h"
 #include "include/sl_reflex.h"
+#include "source/platforms/sl.chi/compute.h"
+#include "source/platforms/sl.chi/vulkan.h"
 
-using PFunSetLatencyStatsMarker = void(sl::ReflexMarker marker, uint32_t frameId);
+namespace sl
+{
+namespace chi
+{
+
+class IReflexVk
+{
+public:
+	virtual ComputeStatus init(VkDevice device, param::IParameters* params) = 0;
+	virtual ComputeStatus shutdown() = 0;
+	virtual void initDispatchTable(VkLayerDispatchTable table) = 0;
+	virtual ComputeStatus setSleepMode(const ReflexOptions& consts) = 0;
+	virtual ComputeStatus getSleepStatus(ReflexState& settings) = 0;
+	virtual ComputeStatus getReport(ReflexState& settings) = 0;
+	virtual ComputeStatus sleep() = 0;
+	virtual ComputeStatus setMarker(PCLMarker marker, uint64_t frameId) = 0;
+	virtual ComputeStatus notifyOutOfBandCommandQueue(CommandQueue queue, OutOfBandCommandQueueType type) = 0;
+	virtual ComputeStatus setAsyncFrameMarker(CommandQueue queue, PCLMarker marker, uint64_t frameId) = 0;
+};
+
+#ifdef SL_WITH_NVLLVK
+
+IReflexVk* CreateNvLowLatencyVk(VkDevice device, param::IParameters* params);
+
+#endif //SL_WITH_NVLLVK
+
+}
+}

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -77,8 +77,11 @@ enum class NRDMethods : uint32_t
     eSigmaShadow,
     eSigmaShadowTranslucency,
     eRelaxDiffuse,
+    eRelaxDiffuseSh,
     eRelaxSpecular,
+    eRelaxSpecularSh,
     eRelaxDiffuseSpecular,
+    eRelaxDiffuseSpecularSh,
     eCount
 };
 
@@ -302,6 +305,17 @@ struct NRDAntilagHitDistanceSettings
     bool enable = true;
 };
 
+struct NRDReblurAntilagSettings
+{
+    // [1; 3] - delta is reduced by local variance multiplied by this value
+    float luminanceSigmaScale = 2.0f;
+    float hitDistanceSigmaScale = 1.0f;
+
+    // (0; 1] - antilag = pow( antilag, power )
+    float luminanceAntilagPower = 0.5f;
+    float hitDistanceAntilagPower = 1.0f;
+};
+
 // REBLUR_DIFFUSE and REBLUR_DIFFUSE_OCCLUSION
 
 const uint32_t REBLUR_MAX_HISTORY_FRAME_NUM = 63;
@@ -309,8 +323,7 @@ const uint32_t REBLUR_MAX_HISTORY_FRAME_NUM = 63;
 struct NRDReblurSettings
 {
     NRDHitDistanceParameters hitDistanceParameters = {};
-    NRDAntilagIntensitySettings antilagIntensitySettings = {};
-    NRDAntilagHitDistanceSettings antilagHitDistanceSettings = {};
+    NRDReblurAntilagSettings antilagSettings = {};
 
     // [0; REBLUR_MAX_HISTORY_FRAME_NUM] - maximum number of linearly accumulated frames (= FPS * "time of accumulation")
     uint32_t maxAccumulatedFrameNum = 30;
@@ -358,9 +371,6 @@ struct NRDReblurSettings
     // Adds bias in case of badly defined signals, but tries to fight with fireflies
     bool enableAntiFirefly = false;
 
-    // Turns off spatial filtering and virtual motion based specular tracking
-    bool enableReferenceAccumulation = false;
-
     // Boosts performance by sacrificing IQ
     bool enablePerformanceMode = false;
 
@@ -383,124 +393,212 @@ struct NRDSigmaShadowSettings
 
 const uint32_t RELAX_MAX_HISTORY_FRAME_NUM = 63;
 
+struct NRDRelaxAntilagSettings
+{
+    // IMPORTANT: History acceleration and reset amounts for specular are made 2x-3x weaker than values for diffuse below
+    // due to specific specular logic that does additional history acceleration and reset
+
+    // (>= 0) - amount of history acceleration if history clamping happened in pixel
+    float accelerationAmount = 3.0f;
+
+    // (> 0) - history is being reset if delta between history and raw input is larger than spatial sigma + temporal sigma
+    float spatialSigmaScale = 4.5f;
+
+    // (> 0) - history is being reset if delta between history and raw input is larger than spatial sigma + temporal sigma
+    float temporalSigmaScale = 0.5f;
+
+    // [0; 1] - amount of history reset, 0.0 - no reset, 1.0 - full reset
+    float resetAmount = 0.5f;
+};
+
 struct NRDRelaxDiffuseSpecularSettings
 {
-    // [0; 100] - radius in pixels (0 disables prepass)
-    float specularPrepassBlurRadius = 50.0f;
-    // [0; 100] - radius in pixels (0 disables prepass)
+    NRDRelaxAntilagSettings antilagSettings = {};
+
+    // (pixels) - pre-accumulation spatial reuse pass blur radius (0 = disabled, must be used in case of probabilistic sampling)
     float diffusePrepassBlurRadius = 0.0f;
-    // [0; RELAX_MAX_HISTORY_FRAME_NUM]
-    uint32_t specularMaxAccumulatedFrameNum = 31;
-    // [0; RELAX_MAX_HISTORY_FRAME_NUM]
-    uint32_t specularMaxFastAccumulatedFrameNum = 8;
-    // [0; RELAX_MAX_HISTORY_FRAME_NUM]
-    uint32_t diffuseMaxAccumulatedFrameNum = 31;
-    // [0; RELAX_MAX_HISTORY_FRAME_NUM]
-    uint32_t diffuseMaxFastAccumulatedFrameNum = 8;
-    // How much variance we inject to specular if reprojection confidence is low
-    float specularVarianceBoost = 1.0f;
-    // [0; 1], shorten diffuse history if dot (N, previousN) is less than  (1 - this value), this maintains sharpness
-    float rejectDiffuseHistoryNormalThreshold = 0.0f;
-    // Normal edge stopper for cross-bilateral sparse filter
-    float disocclusionFixEdgeStoppingNormalPower = 8.0f;
-    // Maximum radius for sparse bilateral filter, expressed in pixels
-    float disocclusionFixMaxRadius = 14.0f;
-    // Cross-bilateral sparse filter will be applied to frames with history length shorter than this value
-    uint32_t disocclusionFixNumFramesToFix = 3;
-    // [1; 3] - standard deviation scale of color box for clamping main "slow" history to responsive "fast" history
-    float historyClampingColorBoxSigmaScale = 2.0f;
-    // History length threshold below which spatial variance estimation will be executed
-    uint32_t spatialVarianceEstimationHistoryThreshold = 3;
-    // [2; 8] - number of iteration for A-Trous wavelet transform
-    uint32_t atrousIterationNum = 5;
-    // A-trous edge stopping Luminance sensitivity
-    float specularPhiLuminance = 2.0f;
+    float specularPrepassBlurRadius = 50.0f;
+
+    // [0; RELAX_MAX_HISTORY_FRAME_NUM] - maximum number of linearly accumulated frames ( = FPS * "time of accumulation")
+    uint32_t diffuseMaxAccumulatedFrameNum = 30;
+    uint32_t specularMaxAccumulatedFrameNum = 30;
+
+    // [0; RELAX_MAX_HISTORY_FRAME_NUM] - maximum number of linearly accumulated frames in fast history (less than "maxAccumulatedFrameNum")
+    uint32_t diffuseMaxFastAccumulatedFrameNum = 6;
+    uint32_t specularMaxFastAccumulatedFrameNum = 6;
+
+    // [0; RELAX_MAX_HISTORY_FRAME_NUM] - number of reconstructed frames after history reset (less than "maxFastAccumulatedFrameNum")
+    uint32_t historyFixFrameNum = 3;
+
     // A-trous edge stopping Luminance sensitivity
     float diffusePhiLuminance = 2.0f;
+    float specularPhiLuminance = 1.0f;
+
+    // (normalized %) - base fraction of diffuse or specular lobe angle used to drive normal based rejection
+    float diffuseLobeAngleFraction = 0.5f;
+    float specularLobeAngleFraction = 0.5f;
+
+    // (normalized %) - base fraction of center roughness used to drive roughness based rejection
+    float roughnessFraction = 0.15f;
+
+    // (>= 0) - how much variance we inject to specular if reprojection confidence is low
+    float specularVarianceBoost = 0.0f;
+
+    // (degrees) - slack for the specular lobe angle used in normal based rejection of specular during A-Trous passes
+    float specularLobeAngleSlack = 0.15f;
+
+    // (pixels) - base stride between samples in history reconstruction pass
+    float historyFixStrideBetweenSamples = 14.0f;
+
+    // (> 0) - normal edge stopper for history reconstruction pass
+    float historyFixEdgeStoppingNormalPower = 8.0f;
+
+    // [1; 3] - standard deviation scale of color box for clamping main "slow" history to responsive "fast" history
+    float historyClampingColorBoxSigmaScale = 2.0f;
+
+    // (>= 0) - history length threshold below which spatial variance estimation will be executed
+    uint32_t spatialVarianceEstimationHistoryThreshold = 3;
+
+    // [2; 8] - number of iteration for A-Trous wavelet transform
+    uint32_t atrousIterationNum = 5;
+
     // [0; 1] - A-trous edge stopping Luminance weight minimum
-    float minLuminanceWeight = 0.0f;
-    // A-trous edge stopping normal sensitivity for diffuse, spatial variance estimation normal sensitivity
-    float phiNormal = 64.0f;
-    // A-trous edge stopping depth sensitivity
-    float phiDepth = 0.05f;
-    // Base fraction of the specular lobe angle used in normal based rejection of specular during A-Trous passes; 0.333 works well perceptually
-    float specularLobeAngleFraction = 0.333f;
-    // Slack (in degrees) for the specular lobe angle used in normal based rejection of specular during A-Trous passes
-    float specularLobeAngleSlack = 0.3f;
-    // How much we relax roughness based rejection in areas where specular reprojection is low
-    float roughnessEdgeStoppingRelaxation = 0.3f;
-    // How much we relax normal based rejection in areas where specular reprojection is low
+    float diffuseMinLuminanceWeight = 0.0f;
+    float specularMinLuminanceWeight = 0.0f;
+
+    // (normalized %) - Depth threshold for spatial passes
+    float depthThreshold = 0.003f;
+
+    // Confidence inputs can affect spatial blurs, relaxing some weights in areas with low confidence
+    float confidenceDrivenRelaxationMultiplier = 0.0f;
+    float confidenceDrivenLuminanceEdgeStoppingRelaxation = 0.0f;
+    float confidenceDrivenNormalEdgeStoppingRelaxation = 0.0f;
+
+    // How much we relax roughness based rejection for spatial filter in areas where specular reprojection is low
+    float luminanceEdgeStoppingRelaxation = 0.5f;
     float normalEdgeStoppingRelaxation = 0.3f;
-    // How much we relax luminance based rejection in areas where specular reprojection is low
-    float luminanceEdgeStoppingRelaxation = 1.0f;
-    // If not OFF, diffuse mode equals checkerboard mode set here, and specular mode opposite: WHITE if diffuse is BLACK and vice versa
+
+    // How much we relax rejection for spatial filter based on roughness and view vector
+    float roughnessEdgeStoppingRelaxation = 1.0f;
+
+    // If not OFF and used for DIFFUSE_SPECULAR, defines diffuse orientation, specular orientation is the opposite
     NRDCheckerboardMode checkerboardMode = NRDCheckerboardMode::OFF;
-    // Skip reprojection test when there is no motion, might improve quality along the edges for static camera with a jitter
-    bool enableSkipReprojectionTestWithoutMotion = false;
-    // Clamp specular virtual history to the current frame neighborhood
-    bool enableSpecularVirtualHistoryClamping = true;
-    // Limit specular accumulation based on roughness
-    bool enableRoughnessBasedSpecularAccumulation = true;
-    // Roughness based rejection
-    bool enableRoughnessEdgeStopping = true;
+
+    // Must be used only in case of probabilistic sampling (not checkerboarding), when a pixel can be skipped and have "0" (invalid) hit distance
+    NRDHitDistanceReconstructionMode hitDistanceReconstructionMode = NRDHitDistanceReconstructionMode::OFF;
+
     // Firefly suppression
     bool enableAntiFirefly = false;
+
+    // Skip reprojection test when there is no motion, might improve quality along the edges for static camera with a jitter
+    bool enableReprojectionTestSkippingWithoutMotion = false;
+
+    // Roughness based rejection
+    bool enableRoughnessEdgeStopping = true;
+
+    // Spatial passes do optional material index comparison as: ( materialEnabled ? material[ center ] == material[ sample ] : 1 )
+    bool enableMaterialTestForDiffuse = false;
+    bool enableMaterialTestForSpecular = false;
 };
 
 // RELAX_DIFFUSE
 
 struct NRDRelaxDiffuseSettings
 {
-    // [0; 100] - radius in pixels (0 disables prepass)
+    NRDRelaxAntilagSettings antilagSettings = {};
+
     float prepassBlurRadius = 0.0f;
-    uint32_t diffuseMaxAccumulatedFrameNum = 31;
-    uint32_t diffuseMaxFastAccumulatedFrameNum = 8;
-    // [0; 1], shorten diffuse history if dot (N, previousN) is less than  (1 - this value), this maintains sharpness
-    float rejectDiffuseHistoryNormalThreshold = 0.0f;
-    float disocclusionFixEdgeStoppingNormalPower = 8.0f;
-    float disocclusionFixMaxRadius = 14.0f;
-    uint32_t disocclusionFixNumFramesToFix = 3;
+
+    uint32_t diffuseMaxAccumulatedFrameNum = 30;
+    uint32_t diffuseMaxFastAccumulatedFrameNum = 6;
+    uint32_t historyFixFrameNum = 3;
+
+    float diffusePhiLuminance = 2.0f;
+    float diffuseLobeAngleFraction = 0.5f;
+
+    float historyFixEdgeStoppingNormalPower = 8.0f;
+    float historyFixStrideBetweenSamples = 14.0f;
+
     float historyClampingColorBoxSigmaScale = 2.0f;
+
     uint32_t spatialVarianceEstimationHistoryThreshold = 3;
     uint32_t atrousIterationNum = 5;
-    float diffusePhiLuminance = 2.0f;
     float minLuminanceWeight = 0.0f;
-    float phiNormal = 64.0f;
-    float phiDepth = 0.05f;
+    float depthThreshold = 0.01f;
+
+    float confidenceDrivenRelaxationMultiplier = 0.0f;
+    float confidenceDrivenLuminanceEdgeStoppingRelaxation = 0.0f;
+    float confidenceDrivenNormalEdgeStoppingRelaxation = 0.0f;
+
     NRDCheckerboardMode checkerboardMode = NRDCheckerboardMode::OFF;
-    bool enableSkipReprojectionTestWithoutMotion = false;
+    NRDHitDistanceReconstructionMode hitDistanceReconstructionMode = NRDHitDistanceReconstructionMode::OFF;
+
     bool enableAntiFirefly = false;
+    bool enableReprojectionTestSkippingWithoutMotion = false;
+    bool enableMaterialTest = false;
 };
 
 // RELAX_SPECULAR
 
 struct NRDRelaxSpecularSettings
 {
+    NRDRelaxAntilagSettings antilagSettings = {};
+
     float prepassBlurRadius = 50.0f;
-    uint32_t specularMaxAccumulatedFrameNum = 31;
-    uint32_t specularMaxFastAccumulatedFrameNum = 8;
-    float specularVarianceBoost = 1.0f;
-    float disocclusionFixEdgeStoppingNormalPower = 8.0f;
-    float disocclusionFixMaxRadius = 14.0f;
-    uint32_t disocclusionFixNumFramesToFix = 3;
+
+    uint32_t specularMaxAccumulatedFrameNum = 30;
+    uint32_t specularMaxFastAccumulatedFrameNum = 6;
+    uint32_t historyFixFrameNum = 3;
+
+    float specularPhiLuminance = 1.0f;
+    float diffuseLobeAngleFraction = 0.5f;
+    float specularLobeAngleFraction = 0.5f;
+    float roughnessFraction = 0.15f;
+
+    float specularVarianceBoost = 0.0f;
+    float specularLobeAngleSlack = 0.15f;
+
+    float historyFixEdgeStoppingNormalPower = 8.0f;
+    float historyFixStrideBetweenSamples = 14.0f;
+
     float historyClampingColorBoxSigmaScale = 2.0f;
+
     uint32_t spatialVarianceEstimationHistoryThreshold = 3;
     uint32_t atrousIterationNum = 5;
-    float specularPhiLuminance = 2.0f;
     float minLuminanceWeight = 0.0f;
-    float phiNormal = 64.0f;
-    float phiDepth = 0.05f;
-    float specularLobeAngleFraction = 0.333f;
-    float specularLobeAngleSlack = 0.3f;
-    float roughnessEdgeStoppingRelaxation = 0.3f;
+    float depthThreshold = 0.01f;
+
+    float confidenceDrivenRelaxationMultiplier = 0.0f;
+    float confidenceDrivenLuminanceEdgeStoppingRelaxation = 0.0f;
+    float confidenceDrivenNormalEdgeStoppingRelaxation = 0.0f;
+
+    float luminanceEdgeStoppingRelaxation = 0.5f;
     float normalEdgeStoppingRelaxation = 0.3f;
-    float luminanceEdgeStoppingRelaxation = 1.0f;
+    float roughnessEdgeStoppingRelaxation = 1.0f;
+
     NRDCheckerboardMode checkerboardMode = NRDCheckerboardMode::OFF;
-    bool enableSkipReprojectionTestWithoutMotion = false;
-    bool enableSpecularVirtualHistoryClamping = true;
-    bool enableRoughnessBasedSpecularAccumulation = true;
-    bool enableRoughnessEdgeStopping = true;
+    NRDHitDistanceReconstructionMode hitDistanceReconstructionMode = NRDHitDistanceReconstructionMode::OFF;
+
     bool enableAntiFirefly = false;
+    bool enableReprojectionTestSkippingWithoutMotion = false;
+    bool enableRoughnessEdgeStopping = true;
+    bool enableMaterialTest = false;
+}; 
+
+struct NRDReferenceSettings
+{
+    // (>= 0) - maximum number of linearly accumulated frames ( = FPS * "time of accumulation")
+    uint32_t maxAccumulatedFrameNum = 1024;
+};
+
+struct NRDSpecularReflectionMvSettings
+{
+    float unused;
+};
+
+struct NRDSpecularDeltaMvSettings
+{
+    float unused;
 };
 
 // {616B9345-F235-40F3-8EA7-BEE1E153F95A}
@@ -537,12 +635,11 @@ SL_STRUCT(NRDConstants, StructType({ 0x616b9345, 0xf235, 0x40f3, { 0x8e, 0xa7, 0
 //! @return sl::ResultCode::eOk if successful, error code otherwise (see sl_result.h for details)
 //!
 //! This method is NOT thread safe.
-using PFun_slNRDSetConstants = sl::Result(const sl::ViewportHandle& viewport, const sl::NRDConstants& constants);
-
-//! HELPERS
-//!
 inline sl::Result slNRDSetConstants(const sl::ViewportHandle& viewport, const sl::NRDConstants& constants)
 {
-    SL_FEATURE_FUN_IMPORT_STATIC(sl::kFeatureNRD, slNRDSetConstants);
-    return s_slNRDSetConstants(viewport, constants);
+    using PFun_slSetFeatureSpecificInputs = sl::Result(const sl::FrameToken& frame, const sl::BaseStructure** inputs, uint32_t numInputs);
+    struct : public sl::FrameToken { operator uint32_t() const override { return 0; } } fakeToken;
+    sl::BaseStructure const* inputs[] = { &constants, &viewport };
+    SL_FEATURE_FUN_IMPORT_STATIC(sl::kFeatureNRD, slSetFeatureSpecificInputs);
+    return s_slSetFeatureSpecificInputs(fakeToken, inputs, sizeof(inputs) / sizeof(sl::BaseStructure const*));
 }

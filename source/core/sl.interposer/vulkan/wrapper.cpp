@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -1786,8 +1786,9 @@ extern "C"
     {
         bool skip = false;
         VkResult result = VK_SUCCESS;
+        auto hooksId = sl::FunctionHookID::eVulkan_Present;
         {
-            const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(sl::FunctionHookID::eVulkan_Present);
+            const auto& hooks = sl::plugin_manager::getInterface()->getBeforeHooks(hooksId);
             for (auto [hook, feature] : hooks)
             {
                 result = ((sl::PFunVkQueuePresentKHRBefore*)hook)(Queue, PresentInfo, skip);
@@ -1803,6 +1804,20 @@ extern "C"
         {
             result = s_ddt.QueuePresentKHR(Queue, PresentInfo);
         }
+
+        {
+            const auto& hooks = sl::plugin_manager::getInterface()->getAfterHooks(hooksId);
+            for (auto [hook, feature] : hooks)
+            {
+                result = ((sl::PFunVkQueuePresentKHRAfter*)hook)();
+                // report error on first fail
+                if (result != VK_SUCCESS)
+                {
+                    return result;
+                }
+            }
+        }
+
         return result;
     }
 

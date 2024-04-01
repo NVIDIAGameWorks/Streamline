@@ -14,7 +14,7 @@
     <package name="imgui" version="1.77_WIP-d405d530" platforms="windows-x86_64" />
   </dependency>
   <dependency name="nrd" linkPath="external/nrd">
-    <package name="nrd" version="v4.2.1-windows-x86_64" platforms="windows-x86_64" />
+    <package name="nrd" version="v4.3.5-B-windows-x86_64" platforms="windows-x86_64" />
   </dependency>
   <dependency name="reflex-sdk-vk" linkPath="external/reflex-sdk-vk">
     <package name="reflex-sdk" version="r520-developer" platforms="windows-x86_64" />

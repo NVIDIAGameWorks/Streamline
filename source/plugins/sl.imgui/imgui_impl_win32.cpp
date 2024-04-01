@@ -157,10 +157,10 @@ static void ImGui_ImplWin32_UpdateMousePos()
     // Set mouse position
     io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
     POINT pos;
-    if (HWND active_window = ::GetForegroundWindow())
-        if (active_window == g_hWnd || ::IsChild(active_window, g_hWnd))
-            if (::GetCursorPos(&pos) && ::ScreenToClient(g_hWnd, &pos))
-                io.MousePos = ImVec2((float)pos.x, (float)pos.y);
+    if (::GetCursorPos(&pos) && ::ScreenToClient(::GetForegroundWindow(), &pos))
+    {
+        io.MousePos = ImVec2((float)pos.x, (float)pos.y);
+    }
 
     m_MouseOverUI = ImGui::IsAnyItemHovered() || ImGui::IsAnyItemFocused() || ImGui::IsAnyItemActive();
 }

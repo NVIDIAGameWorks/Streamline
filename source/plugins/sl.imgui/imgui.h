@@ -15,6 +15,8 @@ using RenderCallback = std::function<void(ImGUI* ui, bool finalFrame)>;
 
 using namespace type;
 
+typedef double(*DoubleGetter)(int);
+
 struct ImGUI
 {
  
@@ -2565,6 +2567,64 @@ struct ImGUI
      * Return true if a modal popup is open
      */
     bool(* isModalPopupOpen)();
+
+    /**
+    * Apply multiple 'pop' commands within imgui
+    */
+    void(*popStyleVarMultiple)(int count);
+
+    /**
+     * Begin an imgui Table
+     */    
+    bool(* beginTable)(const char* str_id, int columns_count, TableFlags flags, const Float2& outer_size, float inner_width);
+    void(* tableNextRow)();
+    bool(* tableSetColumnIndex)(int col);
+    void(* endTable)();
+
+    /**
+     * ImPlot Functions
+     */
+    
+    void(* ImPlot_PushStyleVar)(int idx, const Float2& val);
+    bool(* ImPlot_BeginPlot)(const char* title_id, const Float2& size, int flags);
+    void(* ImPlot_SetupLegend)(int location, int flags);
+    void(* ImPlot_PopStyleVar)(int count);
+    void(* ImPlot_SetupAxes)(const char* x_label, const char* y_label, int x_flags, int y_flags);
+    void(* ImPlot_SetupAxisLimits)(int idx, double min_lim, double max_lim, int cond);
+    void(* ImPlot_SetupAxisTicks)(int idx, const double* values, int n_ticks, const char* const labels[], bool show_default);
+    void(* ImPlot_SetNextLineStyle)(const Float4& col, float weight);
+    void(* ImPlot_PlotLineG)(const char* label_id, void* data, int count, int flags);
+    bool(* ImPlot_IsLegendEntryHovered)(const char* label_id);
+    void(* ImPlot_SetNextFillStyle)(const Float4& col, float alpha);
+    void(* ImPlot_PlotShadedG)(const char* label_id, bool useGetterWithoutVal, void* data1, void* data2, int count, int flags);
+    void(* ImPlot_EndPlot)();
+    PlotStyle* (* ImPlot_GetStyle)();           
+
+    /**
+    * Toggle whether this plugin will issue the draw call or will the DLFG plugin issue it.
+    */
+    void(*toggleRenderInternal)(bool value);
+    bool(*getRenderInternal)();
+    Context* (*getCurrentContext)();
+    void(*ImPlot_PlotLineG_NSightPerf)(const char* label_id,
+                                       void* data, 
+                                       int count, 
+                                       int flags,
+                                       DoubleGetter tsGetter,
+                                       DoubleGetter valGetter,                                          
+                                       int dataOffset);
+    void(*ImPlot_PlotShadedG_NSightPerf)(const char* label_id,
+                                         bool useGetterWithoutVal,
+                                         void* data1,
+                                         void* data2,
+                                         int count,
+                                         int flags,
+                                         DoubleGetter tsGetter,
+                                         DoubleGetter valGetter,
+                                         DoubleGetter tsGetterData2,
+                                         DoubleGetter valGetterData2,
+                                         int dataOffset);
+    void(*destroyContextOnResize)(unsigned int width, unsigned int height);
 };
 
 }

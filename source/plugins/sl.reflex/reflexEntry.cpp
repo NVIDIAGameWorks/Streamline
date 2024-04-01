@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -20,21 +20,16 @@
 * SOFTWARE.
 */
 
-#include <dxgi1_6.h>
-#include <future>
-#include <map>
-#include <assert.h>
-
 #include "include/sl.h"
 #include "include/sl_consts.h"
-#include "source/core/sl.api/internal.h"
 #include "source/core/sl.log/log.h"
+#include "source/core/sl.api/internalDataSharing.h"
 #include "source/core/sl.plugin/plugin.h"
 #include "source/core/sl.param/parameters.h"
 #include "source/platforms/sl.chi/compute.h"
-#include "source/plugins/sl.template/versions.h"
+#include "source/plugins/sl.reflex/versions.h"
+#include "source/plugins/sl.reflex/reflex_shared.h"
 #include "source/plugins/sl.common/commonInterface.h"
-#include "source/plugins/sl.reflex/pclstats.h"
 #include "source/plugins/sl.imgui/imgui.h"
 #include "_artifacts/json/reflex_json.h"
 #include "_artifacts/gitVersion.h"
@@ -42,8 +37,8 @@
 #include "external/json/include/nlohmann/json.hpp"
 using json = nlohmann::json;
 
-//! GPU agnostic stats definition
-PCLSTATS_DEFINE();
+// DEPRECATED (reflex-pcl):
+#include "source/core/sl.plugin-manager/pluginManager.h"
 
 namespace sl
 {
@@ -77,6 +72,10 @@ struct LatencyContext
     RenderAPI platform = RenderAPI::eD3D12;
     chi::ICompute* compute{};
 
+    // DEPRECATED (reflex-pcl):
+    plugin_manager::PFun_slGetDataInternal* pclGetData{};
+    plugin_manager::PFun_slSetDataInternal* pclSetData{};
+
     UIStats uiStats{};
 
     // Engine type (Unity, UE etc)
@@ -102,9 +101,6 @@ struct LatencyContext
     //! Stats initialized or not
     std::atomic<bool> initialized = false;
     std::atomic<bool> enabled = false;
-
-    //! Debug text stats
-    std::string stats;
 };
 }
 
@@ -112,6 +108,7 @@ struct LatencyContext
 static std::string JSON = std::string(reflex_json, &reflex_json[reflex_json_len]);
 
 void updateEmbeddedJSON(json& config);
+sl::Result slReflexSetMarker(sl::PCLMarker marker, const sl::FrameToken& frame);
 
 //! Define our plugin, make sure to update version numbers in versions.h
 SL_PLUGIN_DEFINE("sl.reflex", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON.c_str(), updateEmbeddedJSON, reflex, LatencyContext)
@@ -194,10 +191,9 @@ Result slSetData(const BaseStructure* inputs, CommandBuffer* cmdBuffer)
     
     if (marker && frame)
     {
-        common::EventData evd = { (uint32_t)*marker, *frame };
-
+        const MarkerUnderlying evd_id = *marker;
         // Special 'marker' for low latency mode
-        if (*marker == (ReflexMarker)kReflexMarkerSleep)
+        if (evd_id == kReflexMarkerSleep)
         {
             if (ctx.lowLatencyAvailable)
             {
@@ -212,17 +208,22 @@ Result slSetData(const BaseStructure* inputs, CommandBuffer* cmdBuffer)
         }
         else
         {
-            // According to Cody we want markers set even when Reflex is off
-            if (ctx.lowLatencyAvailable && evd.id != PCLSTATS_PC_LATENCY_PING)
+            // Made sure it's not special kReflexMarkerSleep value, so should be "safe" to cast to valid PCLMarker enum
+            assert(evd_id < to_underlying(PCLMarker::eMaximum));
+            const PCLMarker pcl_marker = (PCLMarker)evd_id;
+            if (ctx.lowLatencyAvailable && pcl_marker != PCLMarker::ePCLatencyPing
+                && (pcl_marker != PCLMarker::eTriggerFlash || ctx.flashIndicatorDriverControlled))
             {
-                CHI_VALIDATE(ctx.compute->setReflexMarker((ReflexMarker)evd.id, evd.frame));
+                CHI_VALIDATE(ctx.compute->setReflexMarker(pcl_marker, *frame));
             }
 
-            // Special case for Unity, it is hard to provide present markers so using render markers
-            if (evd.id == ReflexMarker::ePresentStart || (ctx.engine == EngineType::eUnity && evd.id == ReflexMarker::eRenderSubmitStart))
+            if (pcl_marker == PCLMarker::ePresentStart
+                // Special case for Unity, it is hard to provide present markers so using render markers
+                || (ctx.engine == EngineType::eUnity && pcl_marker == PCLMarker::eRenderSubmitEnd)
+                )
             {
-                api::getContext()->parameters->set(sl::param::latency::kMarkerFrame, evd.frame);
-                updateStats(evd.frame);
+                api::getContext()->parameters->set(sl::param::latency::kMarkerFrame, *frame);
+                updateStats(*frame);
 
                 // Mark the last frame we were active
                 //
@@ -237,7 +238,15 @@ Result slSetData(const BaseStructure* inputs, CommandBuffer* cmdBuffer)
                 }
             }
 
-            PCLSTATS_MARKER((PCLSTATS_LATENCY_MARKER_TYPE)evd.id, evd.frame);
+            // DEPRECATED (reflex-pcl):
+            PCLHelper helper{pcl_marker};
+            helper.next = (BaseStructure*)frame;
+            auto res = ctx.pclSetData(&helper, cmdBuffer);
+            if (res != Result::eOk)
+            {
+                SL_LOG_WARN("Reflex-PCL: PCLSetData failed %d", res);
+                return res;
+            }
         }
     }
     else
@@ -254,32 +263,30 @@ Result slSetData(const BaseStructure* inputs, CommandBuffer* cmdBuffer)
                 SL_LOG_WARN_ONCE("Low-latency modes are only supported on NVIDIA hardware through Reflex, collecting latency stats only");
             }
         }
-
-
-        bool expected = false;
-        if (ctx.initialized.compare_exchange_weak(expected, true))
+        
+        // DEPRECATED (reflex-pcl):
         {
-            if (consts->virtualKey && (consts->virtualKey != VK_F13 && consts->virtualKey != VK_F14 && consts->virtualKey != VK_F15))
+            PCLHotKey hotkey{};
+            switch (consts->virtualKey)
             {
-                SL_LOG_ERROR("Latency virtual key can only be assigned to VK_F13, VK_F14 or VK_F15");
-                return Result::eErrorInvalidParameter;
+                case 0: break;
+                case VK_F13: { hotkey = PCLHotKey::eVK_F13; } break;
+                case VK_F14: { hotkey = PCLHotKey::eVK_F14; } break;
+                case VK_F15: { hotkey = PCLHotKey::eVK_F15; } break;
+                default:
+                    SL_LOG_ERROR("Latency virtual key can only be assigned to VK_F13, VK_F14 or VK_F15");
+                    return Result::eErrorInvalidParameter;
             }
-            //! GPU agnostic latency stats initialization
-
-            uint32_t idThread = 0;
-            idThread = consts->idThread;
-
-            PCLSTATS_INIT(0);
+            PCLOptions options;
+            options.virtualKey = hotkey;
+            options.idThread = consts->idThread;
+            auto res = ctx.pclSetData(&options, cmdBuffer);
+            if (res != Result::eOk)
+            {
+                SL_LOG_WARN("Reflex-PCL: PCLSetData failed %d", res);
+                return res;
+            }
         }
-
-        {
-            uint32_t idThread = 0;
-            idThread = consts->idThread;
-
-            PCLSTATS_SET_ID_THREAD(idThread);
-        }
-
-        PCLSTATS_SET_VIRTUAL_KEY(consts->virtualKey);
 
         {
             ctx.constants = *consts;
@@ -308,6 +315,7 @@ Result slSetData(const BaseStructure* inputs, CommandBuffer* cmdBuffer)
 
 Result slGetData(const BaseStructure* inputs, BaseStructure* outputs, CommandBuffer* cmdBuffer)
 {
+    SL_PLUGIN_INIT_CHECK();
     auto& ctx = (*reflex::getContext());
     
     auto settings = findStruct<ReflexState>(outputs);
@@ -325,15 +333,41 @@ Result slGetData(const BaseStructure* inputs, BaseStructure* outputs, CommandBuf
     settings->lowLatencyAvailable = ctx.lowLatencyAvailable;
     settings->latencyReportAvailable = ctx.latencyReportAvailable;
     settings->flashIndicatorDriverControlled = ctx.flashIndicatorDriverControlled;
-    // Allow host to check Windows messages for the special low latency message
-    settings->statsWindowMessage = g_PCLStatsWindowMessage;
+
+    // DEPRECATED (reflex-pcl):
+    {
+        PCLState state{};
+        auto res = ctx.pclGetData(inputs, &state, cmdBuffer);
+        if (res != Result::eOk)
+        {
+            SL_LOG_WARN("Reflex-PCL: PCLGetData failed %d", res);
+            return res;
+        }
+        settings->statsWindowMessage = state.statsWindowMessage;
+    }
+
     return Result::eOk;
 }
 
-//! Allows other plugins to set GPU agnostic stats
-void setLatencyStatsMarker(ReflexMarker marker, uint32_t frameId)
+internal::shared::Status getSharedData(BaseStructure* requestedData, const BaseStructure* requesterInfo)
 {
-    PCLSTATS_MARKER(marker, frameId);
+    if (!requestedData || requestedData->structType != reflex::ReflexInternalSharedData::s_structType)
+    {
+        SL_LOG_ERROR("Invalid request is made for shared data");
+        return internal::shared::Status::eInvalidRequestedData;
+    }
+    auto remote = static_cast<reflex::ReflexInternalSharedData*>(requestedData);
+
+    // v1
+    remote->slReflexSetMarker = slReflexSetMarker;
+
+    // Let newer requester know that we are older
+    if (remote->structVersion > kStructVersion1)
+    {
+        remote->structVersion = kStructVersion1;
+    }
+
+    return internal::shared::Status::eOk;
 }
 
 //! Main entry point - starting our plugin
@@ -362,9 +396,14 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
         return false;
     }
 
-    //! Allow other plugins to set latency stats
-    parameters->set(param::latency::kPFunSetLatencyStatsMarker, setLatencyStatsMarker);
-
+    // DEPRECATED (reflex-pcl):
+    if (!param::getPointerParam(parameters, sl::param::_deprecated_reflex_pcl::kSlGetData, &ctx.pclGetData)
+        || !param::getPointerParam(parameters, sl::param::_deprecated_reflex_pcl::kSlSetData, &ctx.pclSetData))
+    {
+        SL_LOG_ERROR("Failed to get PCL implementation");
+        return false;
+    }
+    
     //! Plugin manager gives us the device type and the application id
     //! 
     json& config = *(json*)api::getContext()->loaderConfig;
@@ -403,6 +442,7 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
     }
 
     updateStats(0);
+    parameters->set(internal::shared::getParameterNameForFeature(kFeatureReflex).c_str(), (void*)getSharedData);
 
 #ifndef SL_PRODUCTION
     // Check for UI and register our callback
@@ -422,7 +462,6 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
                 ui->text(ctx.uiStats.fpsCap.c_str());
                 ui->text(ctx.uiStats.presentFrame.c_str());
                 ui->text(ctx.uiStats.sleeping.c_str());
-                if (finalFrame) ctx.stats = {};
             }
         };
         ui->registerRenderCallbacks(renderUI, nullptr);
@@ -444,9 +483,6 @@ void slOnPluginShutdown()
     // If we used 'evaluate' mechanism reset the callbacks here
     ctx.registerEvaluateCallbacks(kFeatureReflex, nullptr, nullptr);
 
-    //! GPU agnostic latency stats shutdown
-    PCLSTATS_SHUTDOWN();
-
     // Common shutdown
     plugin::onShutdown(api::getContext());
 }
@@ -458,7 +494,7 @@ sl::Result slReflexGetState(sl::ReflexState& state)
     return slGetData(nullptr, &state, nullptr);
 }
 
-sl::Result slReflexSetMarker(sl::ReflexMarker marker, const sl::FrameToken& frame)
+sl::Result slReflexSetMarker(sl::PCLMarker marker, const sl::FrameToken& frame)
 {
     sl::ReflexHelper inputs(marker);
     inputs.next = (BaseStructure*)&frame;
@@ -467,7 +503,7 @@ sl::Result slReflexSetMarker(sl::ReflexMarker marker, const sl::FrameToken& fram
 
 sl::Result slReflexSleep(const sl::FrameToken& frame)
 {
-    sl::ReflexHelper inputs((sl::ReflexMarker)0x1000);
+    sl::ReflexHelper inputs(kReflexMarkerSleep);
     inputs.next = (BaseStructure*)&frame;
     return slSetData(&inputs,nullptr);
 }

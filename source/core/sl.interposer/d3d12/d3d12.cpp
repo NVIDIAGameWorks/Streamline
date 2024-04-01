@@ -1,6 +1,6 @@
 
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -91,12 +91,17 @@ extern "C" HRESULT WINAPI D3D12CreateDevice(
             // Upgrade to the actual interface version requested here
             if (deviceProxy->checkAndUpgradeInterface(riid))
             {
+                // Release the old device (since the device proxy retains a reference to it)
+                ULONG refcount = static_cast<ID3D12Device*>(*ppDevice)->Release();
+                assert(refcount == 1);
+
                 *ppDevice = deviceProxy;
             }
             else // Do not hook object if we do not support the requested interface
             {
-                delete deviceProxy; // Delete instead of release to keep reference count untouched
-                deviceProxy = {};
+                ULONG refcount = deviceProxy->Release();
+                assert(refcount == 0);
+                deviceProxy = nullptr;
             }
             // Legacy way of automatic device selection, in SL 2.0+ host must do it explicitly
             if (deviceProxy && sl::plugin_manager::getInterface()->getHostSDKVersion() < sl::Version(2, 0, 0))

@@ -155,6 +155,60 @@ const TreeNodeFlags kTreeNodeFlagNavLeftJumpsBackHere = 1 << 13; ///! (WIP) Nav:
 const TreeNodeFlags kTreeNodeFlagCollapsingHeader = kTreeNodeFlagFramed | kTreeNodeFlagNoTreePushOnOpen | kTreeNodeFlagNoAutoOpenOnLog;
 
 
+typedef int TableFlags;
+// Flags for ImGui::BeginTable()
+// - Columns can either varying resizing policy: "Fixed", "Stretch" or "AlwaysAutoResize". Toggling ScrollX needs to alter default sizing policy.
+// - Sizing policy have many subtle side effects which may be hard to fully comprehend at first.. They'll eventually make sense.
+//   - with SizingPolicyFixedX (default is ScrollX is on):     Columns can be enlarged as needed. Enable scrollbar if ScrollX is enabled, otherwise extend parent window's contents rect. Only Fixed columns allowed. Weighted columns will calculate their width assuming no scrolling.
+//   - with SizingPolicyStretchX (default is ScrollX is off):  Fit all columns within available table width (so it doesn't make sense to use ScrollX with Stretch columns!). Fixed and Weighted columns allowed.
+enum TableFlags_
+{
+    // Features
+    kTableFlags_None = 0,
+    kTableFlags_Resizable = 1 << 0,   // Allow resizing columns.
+    kTableFlags_Reorderable = 1 << 1,   // Allow reordering columns (need calling TableSetupColumn() + TableAutoHeaders() or TableHeaders() to display headers)
+    kTableFlags_Hideable = 1 << 2,   // Allow hiding columns (with right-click on header) (FIXME-TABLE: allow without headers).
+    kTableFlags_Sortable = 1 << 3,   // Allow sorting on one column (sort_specs_count will always be == 1). Call TableGetSortSpecs() to obtain sort specs.
+    kTableFlags_MultiSortable = 1 << 4,   // Allow sorting on multiple columns by holding Shift (sort_specs_count may be > 1). Call TableGetSortSpecs() to obtain sort specs.
+    kTableFlags_NoSavedSettings = 1 << 5,   // Disable persisting columns order, width and sort settings in the .ini file.
+    // Decoration
+    kTableFlags_RowBg = 1 << 6,   // Use ImGuiCol_TableRowBg and ImGuiCol_TableRowBgAlt colors behind each rows.
+    kTableFlags_BordersHInner = 1 << 7,   // Draw horizontal borders between rows.
+    kTableFlags_BordersHOuter = 1 << 8,   // Draw horizontal borders at the top and bottom.
+    kTableFlags_BordersVInner = 1 << 9,   // Draw vertical borders between columns.
+    kTableFlags_BordersVOuter = 1 << 10,  // Draw vertical borders on the left and right sides.
+    kTableFlags_BordersH = kTableFlags_BordersHInner | kTableFlags_BordersHOuter, // Draw horizontal borders.
+    kTableFlags_BordersV = kTableFlags_BordersVInner | kTableFlags_BordersVOuter, // Draw vertical borders.
+    kTableFlags_BordersInner = kTableFlags_BordersVInner | kTableFlags_BordersHInner, // Draw inner borders.
+    kTableFlags_BordersOuter = kTableFlags_BordersVOuter | kTableFlags_BordersHOuter, // Draw outer borders.
+    kTableFlags_Borders = kTableFlags_BordersInner | kTableFlags_BordersOuter,   // Draw all borders.
+    kTableFlags_BordersVFullHeight = 1 << 11,  // Borders covers all rows even when Headers are being used. Allow resizing from any rows.
+    // Padding, Sizing
+    kTableFlags_NoClipX = 1 << 12,  // Disable pushing clipping rectangle for every individual columns (reduce draw command count, items will be able to overflow)
+    kTableFlags_SizingPolicyFixedX = 1 << 13,  // Default if ScrollX is on. Columns will default to use WidthFixed or WidthAlwaysAutoResize policy. Read description above for more details.
+    kTableFlags_SizingPolicyStretchX = 1 << 14,  // Default if ScrollX is off. Columns will default to use WidthStretch policy. Read description above for more details.
+    kTableFlags_NoHeadersWidth = 1 << 15,  // Disable header width contribution to automatic width calculation.
+    kTableFlags_NoHostExtendY = 1 << 16,  // (FIXME-TABLE: Reword as SizingPolicy?) Disable extending past the limit set by outer_size.y, only meaningful when neither of ScrollX|ScrollY are set (data below the limit will be clipped and not visible)
+    kTableFlags_NoKeepColumnsVisible = 1 << 17,  // (FIXME-TABLE) Disable code that keeps column always minimally visible when table width gets too small.
+    // Scrolling
+    kTableFlags_ScrollX = 1 << 18,  // Enable horizontal scrolling. Require 'outer_size' parameter of BeginTable() to specify the container size. Because this create a child window, ScrollY is currently generally recommended when using ScrollX.
+    kTableFlags_ScrollY = 1 << 19,  // Enable vertical scrolling. Require 'outer_size' parameter of BeginTable() to specify the container size.
+    kTableFlags_Scroll = kTableFlags_ScrollX | kTableFlags_ScrollY,
+    kTableFlags_ScrollFreezeTopRow = 1 << 20,  // We can lock 1 to 3 rows (starting from the top). Use with ScrollY enabled.
+    kTableFlags_ScrollFreeze2Rows = 2 << 20,
+    kTableFlags_ScrollFreeze3Rows = 3 << 20,
+    kTableFlags_ScrollFreezeLeftColumn = 1 << 22,  // We can lock 1 to 3 columns (starting from the left). Use with ScrollX enabled.
+    kTableFlags_ScrollFreeze2Columns = 2 << 22,
+    kTableFlags_ScrollFreeze3Columns = 3 << 22,
+
+    // [Internal] Combinations and masks
+    kTableFlags_SizingPolicyMaskX_ = kTableFlags_SizingPolicyStretchX | kTableFlags_SizingPolicyFixedX,
+    kTableFlags_ScrollFreezeRowsShift_ = 20,
+    kTableFlags_ScrollFreezeColumnsShift_ = 22,
+    kTableFlags_ScrollFreezeRowsMask_ = 0x03 << kTableFlags_ScrollFreezeRowsShift_,
+    kTableFlags_ScrollFreezeColumnsMask_ = 0x03 << kTableFlags_ScrollFreezeColumnsShift_
+};
+
 /**
  * Defines flags to be used in ImGui::selectable()
  */
@@ -417,8 +471,8 @@ enum class StyleVar
     eFrameBorderSize, ///! (float, Style::frameBorderSize)
     eItemSpacing, ///! (Float2, Style::itemSpacing)
     eItemInnerSpacing, ///! (Float2, Style::itemInnerSpacing)
+    eIndentSpacing, ///! (Float2, Style::itemInnerSpacing)
     eCellPadding, ///! ImVec2    CellPadding
-    eIndentSpacing, ///! (float, Style::indentSpacing)
     eScrollbarSize, ///! (float, Style::scrollbarSize)
     eScrollbarRounding, ///! (float, Style::scrollbarRounding)
     eGrabMinSize, ///! (float, Style::grabMinSize)
@@ -857,6 +911,172 @@ enum class KeyIndices : uint32_t
     eCount
 };
 
+// Plot styling variables.
+enum PlotStyleVar_ {
+    // item styling variables
+    eStyleVar_LineWeight,         // float,  plot item line weight in pixels
+    eStyleVar_Marker,             // int,    marker specification
+    eStyleVar_MarkerSize,         // float,  marker size in pixels (roughly the marker's "radius")
+    eStyleVar_MarkerWeight,       // float,  plot outline weight of markers in pixels
+    eStyleVar_FillAlpha,          // float,  alpha modifier applied to all plot item fills
+    eStyleVar_ErrorBarSize,       // float,  error bar whisker width in pixels
+    eStyleVar_ErrorBarWeight,     // float,  error bar whisker weight in pixels
+    eStyleVar_DigitalBitHeight,   // float,  digital channels bit height (at 1) in pixels
+    eStyleVar_DigitalBitGap,      // float,  digital channels bit padding gap in pixels
+    // plot styling variables
+    eStyleVar_PlotBorderSize,     // float,  thickness of border around plot area
+    eStyleVar_MinorAlpha,         // float,  alpha multiplier applied to minor axis grid lines
+    eStyleVar_MajorTickLen,       // ImVec2, major tick lengths for X and Y axes
+    eStyleVar_MinorTickLen,       // ImVec2, minor tick lengths for X and Y axes
+    eStyleVar_MajorTickSize,      // ImVec2, line thickness of major ticks
+    eStyleVar_MinorTickSize,      // ImVec2, line thickness of minor ticks
+    eStyleVar_MajorGridSize,      // ImVec2, line thickness of major grid lines
+    eStyleVar_MinorGridSize,      // ImVec2, line thickness of minor grid lines
+    eStyleVar_PlotPadding,        // ImVec2, padding between widget frame and plot area, labels, or outside legends (i.e. main padding)
+    eStyleVar_LabelPadding,       // ImVec2, padding between axes labels, tick labels, and plot edge
+    eStyleVar_LegendPadding,      // ImVec2, legend padding from plot edges
+    eStyleVar_LegendInnerPadding, // ImVec2, legend inner padding from legend edges
+    eStyleVar_LegendSpacing,      // ImVec2, spacing between legend entries
+    eStyleVar_MousePosPadding,    // ImVec2, padding between plot edge and interior info text
+    eStyleVar_AnnotationPadding,  // ImVec2, text padding around annotation labels
+    eStyleVar_FitPadding,         // ImVec2, additional fit padding as a percentage of the fit extents (e.g. ImVec2(0.1f,0.1f) adds 10% to the fit extents of X and Y)
+    eStyleVar_PlotDefaultSize,    // ImVec2, default size used when ImVec2(0,0) is passed to BeginPlot
+    eStyleVar_PlotMinSize,        // ImVec2, minimum size plot frame can be when shrunk
+    eStyleVar_COUNT
+};
+
+// Options for plots (see BeginPlot).
+enum PlotFlags_ {
+    eFlags_None = 0,       // default
+    eFlags_NoTitle = 1 << 0,  // the plot title will not be displayed (titles are also hidden if preceeded by double hashes, e.g. "##MyPlot")
+    eFlags_NoLegend = 1 << 1,  // the legend will not be displayed
+    eFlags_NoMouseText = 1 << 2,  // the mouse position, in plot coordinates, will not be displayed inside of the plot
+    eFlags_NoInputs = 1 << 3,  // the user will not be able to interact with the plot
+    eFlags_NoMenus = 1 << 4,  // the user will not be able to open context menus
+    eFlags_NoBoxSelect = 1 << 5,  // the user will not be able to box-select
+    eFlags_NoChild = 1 << 6,  // a child window region will not be used to capture mouse scroll (can boost performance for single ImGui window applications)
+    eFlags_NoFrame = 1 << 7,  // the ImGui frame will not be rendered
+    eFlags_Equal = 1 << 8,  // x and y axes pairs will be constrained to have the same units/pixel
+    eFlags_Crosshairs = 1 << 9,  // the default mouse cursor will be replaced with a crosshair when hovered
+    eFlags_CanvasOnly = eFlags_NoTitle | eFlags_NoLegend | eFlags_NoMenus | eFlags_NoBoxSelect | eFlags_NoMouseText
+};
+
+enum PlotAxisFlags_ {
+    eAxisFlags_None = 0,       // default
+    eAxisFlags_NoLabel = 1 << 0,  // the axis label will not be displayed (axis labels are also hidden if the supplied string name is NULL)
+    eAxisFlags_NoGridLines = 1 << 1,  // no grid lines will be displayed
+    eAxisFlags_NoTickMarks = 1 << 2,  // no tick marks will be displayed
+    eAxisFlags_NoTickLabels = 1 << 3,  // no text labels will be displayed
+    eAxisFlags_NoInitialFit = 1 << 4,  // axis will not be initially fit to data extents on the first rendered frame
+    eAxisFlags_NoMenus = 1 << 5,  // the user will not be able to open context menus with right-click
+    eAxisFlags_NoSideSwitch = 1 << 6,  // the user will not be able to switch the axis side by dragging it
+    eAxisFlags_NoHighlight = 1 << 7,  // the axis will not have its background highlighted when hovered or held
+    eAxisFlags_Opposite = 1 << 8,  // axis ticks and labels will be rendered on the conventionally opposite side (i.e, right or top)
+    eAxisFlags_Foreground = 1 << 9,  // grid lines will be displayed in the foreground (i.e. on top of data) instead of the background
+    eAxisFlags_Invert = 1 << 10, // the axis will be inverted
+    eAxisFlags_AutoFit = 1 << 11, // axis will be auto-fitting to data extents
+    eAxisFlags_RangeFit = 1 << 12, // axis will only fit points if the point is in the visible range of the **orthogonal** axis
+    eAxisFlags_PanStretch = 1 << 13, // panning in a locked or constrained state will cause the axis to stretch if possible
+    eAxisFlags_LockMin = 1 << 14, // the axis minimum value will be locked when panning/zooming
+    eAxisFlags_LockMax = 1 << 15, // the axis maximum value will be locked when panning/zooming
+    eAxisFlags_Lock = eAxisFlags_LockMin | eAxisFlags_LockMax,
+    eAxisFlags_NoDecorations = eAxisFlags_NoLabel | eAxisFlags_NoGridLines | eAxisFlags_NoTickMarks | eAxisFlags_NoTickLabels,
+    eAxisFlags_AuxDefault = eAxisFlags_NoGridLines | eAxisFlags_Opposite
+};
+
+enum PlotLocation_ {
+    eLocation_Center = 0,                                          // center-center
+    eLocation_North = 1 << 0,                                     // top-center
+    eLocation_South = 1 << 1,                                     // bottom-center
+    eLocation_West = 1 << 2,                                     // center-left
+    eLocation_East = 1 << 3,                                     // center-right
+    eLocation_NorthWest = eLocation_North | eLocation_West, // top-left
+    eLocation_NorthEast = eLocation_North | eLocation_East, // top-right
+    eLocation_SouthWest = eLocation_South | eLocation_West, // bottom-left
+    eLocation_SouthEast = eLocation_South | eLocation_East  // bottom-right
+};
+
+// Axis indices. The values assigned may change; NEVER hardcode these.
+enum Axis_ {
+    // horizontal axes
+    eAxis_X1 = 0, // enabled by default
+    eAxis_X2,     // disabled by default
+    eAxis_X3,     // disabled by default
+    // vertical axes
+    eAxis_Y1,     // enabled by default
+    eAxis_Y2,     // disabled by default
+    eAxis_Y3,     // disabled by default
+    // bookeeping
+    eAxis_COUNT
+};
+
+// Plot styling colors.
+enum PlotCol_ {
+    // item styling colors
+    ePlotCol_Line,          // plot line/outline color (defaults to next unused color in current colormap)
+    ePlotCol_Fill,          // plot fill color for bars (defaults to the current line color)
+    ePlotCol_MarkerOutline, // marker outline color (defaults to the current line color)
+    ePlotCol_MarkerFill,    // marker fill color (defaults to the current line color)
+    ePlotCol_ErrorBar,      // error bar color (defaults to ImGuiCol_Text)
+    // plot styling colors
+    ePlotCol_FrameBg,       // plot frame background color (defaults to ImGuiCol_FrameBg)
+    ePlotCol_PlotBg,        // plot area background color (defaults to ImGuiCol_WindowBg)
+    ePlotCol_PlotBorder,    // plot area border color (defaults to ImGuiCol_Border)
+    ePlotCol_LegendBg,      // legend background color (defaults to ImGuiCol_PopupBg)
+    ePlotCol_LegendBorder,  // legend border color (defaults to ImPlotCol_PlotBorder)
+    ePlotCol_LegendText,    // legend text color (defaults to ImPlotCol_InlayText)
+    ePlotCol_TitleText,     // plot title text color (defaults to ImGuiCol_Text)
+    ePlotCol_InlayText,     // color of text appearing inside of plots (defaults to ImGuiCol_Text)
+    ePlotCol_AxisText,      // axis label and tick lables color (defaults to ImGuiCol_Text)
+    ePlotCol_AxisGrid,      // axis grid color (defaults to 25% ImPlotCol_AxisText)
+    ePlotCol_AxisTick,      // axis tick color (defaults to AxisGrid)
+    ePlotCol_AxisBg,        // background color of axis hover region (defaults to transparent)
+    ePlotCol_AxisBgHovered, // axis hover color (defaults to ImGuiCol_ButtonHovered)
+    ePlotCol_AxisBgActive,  // axis active color (defaults to ImGuiCol_ButtonActive)
+    ePlotCol_Selection,     // box-selection color (defaults to yellow)
+    ePlotCol_Crosshairs,    // crosshairs color (defaults to ImPlotCol_PlotBorder)
+    ePlotCol_COUNT
+};
+
+struct PlotStyle {
+    // item styling variables
+    float   LineWeight;              // = 1,      item line weight in pixels
+    int     Marker;                  // = ImPlotMarker_None, marker specification
+    float   MarkerSize;              // = 4,      marker size in pixels (roughly the marker's "radius")
+    float   MarkerWeight;            // = 1,      outline weight of markers in pixels
+    float   FillAlpha;               // = 1,      alpha modifier applied to plot fills
+    float   ErrorBarSize;            // = 5,      error bar whisker width in pixels
+    float   ErrorBarWeight;          // = 1.5,    error bar whisker weight in pixels
+    float   DigitalBitHeight;        // = 8,      digital channels bit height (at y = 1.0f) in pixels
+    float   DigitalBitGap;           // = 4,      digital channels bit padding gap in pixels
+    // plot styling variables
+    float   PlotBorderSize;          // = 1,      line thickness of border around plot area
+    float   MinorAlpha;              // = 0.25    alpha multiplier applied to minor axis grid lines
+    type::Float2  MajorTickLen;            // = 10,10   major tick lengths for X and Y axes
+    type::Float2  MinorTickLen;            // = 5,5     minor tick lengths for X and Y axes
+    type::Float2  MajorTickSize;           // = 1,1     line thickness of major ticks
+    type::Float2  MinorTickSize;           // = 1,1     line thickness of minor ticks
+    type::Float2  MajorGridSize;           // = 1,1     line thickness of major grid lines
+    type::Float2  MinorGridSize;           // = 1,1     line thickness of minor grid lines
+    type::Float2  PlotPadding;             // = 10,10   padding between widget frame and plot area, labels, or outside legends (i.e. main padding)
+    type::Float2  LabelPadding;            // = 5,5     padding between axes labels, tick labels, and plot edge
+    type::Float2  LegendPadding;           // = 10,10   legend padding from plot edges
+    type::Float2  LegendInnerPadding;      // = 5,5     legend inner padding from legend edges
+    type::Float2  LegendSpacing;           // = 5,0     spacing between legend entries
+    type::Float2  MousePosPadding;         // = 10,10   padding between plot edge and interior mouse location text
+    type::Float2  AnnotationPadding;       // = 2,2     text padding around annotation labels
+    type::Float2  FitPadding;              // = 0,0     additional fit padding as a percentage of the fit extents (e.g. ImVec2(0.1f,0.1f) adds 10% to the fit extents of X and Y)
+    type::Float2  PlotDefaultSize;         // = 400,300 default size used when ImVec2(0,0) is passed to BeginPlot
+    type::Float2  PlotMinSize;             // = 200,150 minimum size plot frame can be when shrunk
+    // style colors
+    type::Float4  Colors[ePlotCol_COUNT]; // Array of styling colors. Indexable with ImPlotCol_ enums.
+    // colormap
+    int     Colormap;         // The current colormap. Set this to either an ImPlotColormap_ enum or an index returned by AddColormap.
+    // settings/flags
+    bool    UseLocalTime;            // = false,  axis labels will be formatted for your timezone when ImPlotAxisFlag_Time is enabled
+    bool    UseISO8601;              // = false,  dates will be formatted according to ISO 8601 where applicable (e.g. YYYY-MM-DD, YYYY-MM, --MM-DD, etc.)
+    bool    Use24HourClock;          // = false,  times will be formatted using a 24 hour clock
+};
 
 }
 }

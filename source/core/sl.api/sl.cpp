@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -128,6 +128,11 @@ sl::Result slInit(const Preferences &pref, uint64_t sdkVersion)
         log->setLogPath(pref.pathToLogsAndData);
         log->setLogName(L"sl.log");
         log->setLogCallback((void*)pref.logMessageCallback);
+
+        if (sl::interposer::hasInterface())
+        {
+            SL_LOG_WARN("Seems like some DX/VK APIs were invoked before slInit()!!! This may result in incorrect behaviour.");
+        }
 
         if (sl::interposer::getInterface()->isEnabled())
         {
@@ -342,7 +347,17 @@ Result slEvaluateFeature(sl::Feature feature, const sl::FrameToken& frame, const
     SL_EXCEPTION_HANDLE_START;
     SL_CHECK(slValidateState());
     const sl::plugin_manager::FeatureContext* ctx;
-    SL_CHECK(slValidateFeatureContext(sl::kFeatureCommon, ctx));
+    //! First check if plugin provides an override 
+    //!
+    //! This allows flexibility and separation from sl.common if needed.
+    //!
+    //! NOTE: This affects only new plugins which actually export slEval
+    SL_CHECK(slValidateFeatureContext(feature, ctx));
+    if (ctx->evaluate == nullptr)
+    {
+        //! No, default to sl.common
+        SL_CHECK(slValidateFeatureContext(sl::kFeatureCommon, ctx));
+    }
     return ctx->evaluate(feature, frame, inputs, numInputs, cmdBuffer);
     SL_EXCEPTION_HANDLE_END_RETURN(Result::eErrorExceptionHandler);
 }
@@ -630,8 +645,8 @@ Result slIsFeatureSupported(sl::Feature feature, const sl::AdapterInfo& adapterI
         //! 
         SL_CHECK(slValidateState());
 
-        const char* jsonConfig{};
-        if (!plugin_manager::getInterface()->getExternalFeatureConfig(feature, &jsonConfig))
+        std::string jsonConfig{};
+        if (!plugin_manager::getInterface()->getExternalFeatureConfig(feature, jsonConfig))
         {
             return Result::eErrorFeatureMissing;
         }
@@ -737,8 +752,8 @@ Result slGetFeatureVersion(sl::Feature feature, sl::FeatureVersion& version)
     auto getVersion = [](sl::Feature feature, sl::FeatureVersion& version)->Result
     {
         SL_CHECK(slValidateState());
-        const char* jsonConfig{};
-        if (!plugin_manager::getInterface()->getExternalFeatureConfig(feature, &jsonConfig))
+        std::string jsonConfig{};
+        if (!plugin_manager::getInterface()->getExternalFeatureConfig(feature, jsonConfig))
         {
             SL_LOG_ERROR("Feature '%s' was not loaded", getFeatureAsStr(feature));
             return Result::eErrorFeatureMissing;
@@ -790,8 +805,8 @@ Result slGetFeatureRequirements(sl::Feature feature, sl::FeatureRequirements& re
 
         requirements = {};
 
-        const char* jsonConfig{};
-        if (!plugin_manager::getInterface()->getExternalFeatureConfig(feature, &jsonConfig))
+        std::string jsonConfig{};
+        if (!plugin_manager::getInterface()->getExternalFeatureConfig(feature, jsonConfig))
         {
             SL_LOG_ERROR( "Feature '%s' was not loaded", getFeatureAsStr(feature));
             return Result::eErrorFeatureMissing;

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -250,7 +250,7 @@ class CommandListContext : public ICommandListContext
     };
     std::vector<WaitingContext> m_waitingQueue;
 
-    ID3D12CommandQueue* m_cmdQueue{};
+    Microsoft::WRL::ComPtr<ID3D12CommandQueue> m_cmdQueue;
     ID3D12GraphicsCommandList* m_cmdList{};
     std::vector<ID3D12CommandAllocator*> m_allocator{};
     std::vector <ID3D12Fence*> m_fence{};
@@ -333,7 +333,7 @@ public:
 
     CommandQueue getCmdQueue()
     {
-        return m_cmdQueue;
+        return m_cmdQueue.Get();
     }
 
     CommandAllocator getCmdAllocator()
@@ -1944,7 +1944,7 @@ ComputeStatus D3D12::createBufferResourceImpl(ResourceDescription &resourceDesc,
         m_device->CreateCommittedResource(&heapProp, D3D12_HEAP_FLAG_NONE, &bufferDesc, NativeInitialState, nullptr, IID_PPV_ARGS(&res));
     }
 
-    outResource = new sl::Resource(ResourceType::eBuffer, res);
+    outResource = new sl::Resource(ResourceType::eBuffer, res, (uint32_t)NativeInitialState);
     if (!outResource)
     {
         SL_LOG_ERROR( " CreateCommittedResource failed");
@@ -1955,7 +1955,7 @@ ComputeStatus D3D12::createBufferResourceImpl(ResourceDescription &resourceDesc,
 
 ComputeStatus D3D12::setDebugName(Resource res, const char name[])
 {
-#if !(defined SL_PRODUCTION || defined SL_REL_EXT_DEV)
+#ifdef SL_DEBUG
     ID3D12Pageable *resource = (ID3D12Pageable*)(res->native);
     resource->SetPrivateData(WKPDID_D3DDebugObjectName, (UINT)strlen(name), name);
 #endif
@@ -2574,7 +2574,7 @@ ComputeStatus D3D12::notifyOutOfBandCommandQueue(CommandQueue queue, OutOfBandCo
     return ComputeStatus::eOk;
 }
 
-ComputeStatus D3D12::setAsyncFrameMarker(CommandQueue queue, ReflexMarker marker, uint64_t frameId)
+ComputeStatus D3D12::setAsyncFrameMarker(CommandQueue queue, PCLMarker marker, uint64_t frameId)
 {
     NV_LATENCY_MARKER_PARAMS_V1 params = { 0 };
     params.version = NV_LATENCY_MARKER_PARAMS_VER1;

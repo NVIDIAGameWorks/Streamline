@@ -4,11 +4,28 @@ local ROOT = "./"
 
 nvcfg = {}
 
+
 nvcfg.SL_BUILD_DLSS_DN = true
 
 
 
 
+nvcfg.SL_BUILD_DEEPDVC = true
+
+nvcfg.SL_DEEPDVC_PUBLIC_SDK = true
+
+
+
+
+newoption {
+	trigger = "with-nvllvk",
+	description = "Use NvLowLatencyVk",
+	allowed = {
+		{"yes", "yes"},
+		{"no", "no"}
+	},
+	default = "yes"
+}
 
 function os.winSdkVersion()
     local reg_arch = iif( os.is64bit(), "\\Wow6432Node\\", "\\" )
@@ -25,8 +42,8 @@ workspace "streamline"
 	-- Where the project files (vs project, solution, etc) go
 	location( ROOT .. "_project/" .. project_action)
 
-	configurations { "Debug", "Release", "Production", "Profiling", "RelExtDev" }
-	platforms { "x64"}
+	configurations { "Debug", "Develop", "Production" }
+	platforms { "x64" }
 	architecture "x64"
 	language "c++"
 	preferredtoolarchitecture "x86_64"
@@ -36,7 +53,12 @@ workspace "streamline"
 	includedirs 
 	{ 
 		".", ROOT,
-		externaldir .. "json/include/"	
+		externaldir .. "json/include/",
+		externaldir .. "perf-sdk/include",
+		externaldir .. "perf-sdk/include",
+		externaldir .. "perf-sdk/include/windows-desktop-x64",
+		externaldir .. "perf-sdk/NvPerfUtility/include",
+		externaldir .. "vulkan/Include"
 	}
    	 
 	if os.host() == "windows" then
@@ -54,7 +76,10 @@ workspace "streamline"
 	filter {"system:windows", "action:vs*"}
 		flags { "MultiProcessorCompile", "NoMinimalRebuild"}		
 		
-		
+	flags { "FatalWarnings" }
+	-- Enable additional warnings: https://premake.github.io/docs/warnings
+	--warnings "Extra"
+
 	-- building makefiles
 	cppdialect "C++20"
 	
@@ -62,25 +87,15 @@ workspace "streamline"
 		defines { "DEBUG", "_DEBUG", "SL_ENABLE_TIMING=1", "SL_DEBUG" }
 		symbols "Full"
 				
-	filter "configurations:Release"
-		defines { "NDEBUG","SL_ENABLE_TIMING=1", "SL_RELEASE" }
+	filter "configurations:Develop"
+		defines { "NDEBUG","SL_ENABLE_TIMING=0","SL_ENABLE_PROFILING=0", "SL_DEVELOP" }
 		optimize "On"
-		flags { "LinkTimeOptimization" }		
-		
-	filter "configurations:Profiling"
-		defines { "NDEBUG","SL_ENABLE_TIMING=0","SL_ENABLE_PROFILING=1", "SL_PROFILING" }
-		optimize "On"
-		flags { "LinkTimeOptimization" }		
+		flags { "LinkTimeOptimization" }
 
 	filter "configurations:Production"
 		defines { "NDEBUG","SL_ENABLE_TIMING=0","SL_ENABLE_PROFILING=0","SL_PRODUCTION" }
 		optimize "On"
-		flags { "LinkTimeOptimization" }		
-
-	filter "configurations:RelExtDev"
-		defines { "NDEBUG","SL_ENABLE_TIMING=0","SL_ENABLE_PROFILING=0", "SL_REL_EXT_DEV" }
-		optimize "On"
-		flags { "LinkTimeOptimization" }		
+		flags { "LinkTimeOptimization" }
 
 	filter { "files:**.hlsl" }
 		buildmessage 'Compiling shader %{file.relpath} to DXBC/SPIRV with slang'
@@ -149,6 +164,7 @@ project "sl.interposer"
 		"./source/core/sl.security/**.cpp",
 		"./source/core/sl.plugin-manager/**.h",
 		"./source/core/sl.plugin-manager/**.cpp",		
+		"./source/core/sl.plugin/inter_plugin_communication.h",
 	}
 
 	if os.host() == "windows" then
@@ -183,6 +199,7 @@ project "sl.interposer"
 	vpaths { ["params"] = {"./source/core/sl.param/**.h","./source/core/sl.param/**.cpp"}}
 	vpaths { ["security"] = {"./source/core/sl.security/**.h","./source/core/sl.security/**.cpp"}}
 	vpaths { ["version"] = {"./source/core/sl.interposer/versions.h","./source/core/sl.interposer/resource.h","./source/core/sl.interposer/**.rc"}}
+	vpaths { ["plugin"] = {"./source/core/sl.plugin/inter_plugin_communication.h",}}
 
 	removefiles 
 	{ 	
@@ -224,7 +241,11 @@ project "sl.compute"
 			"./source/platforms/sl.chi/generic.cpp",
 			"./source/core/sl.security/**.h",
 			"./source/core/sl.security/**.cpp"
-		}	
+		}
+		filter { "options:with-nvllvk=yes" }
+			defines { "SL_WITH_NVLLVK" }
+			files { "./source/platforms/sl.chi/nvllvk.cpp" }
+		filter {}
 	else
 		files {
 			"./shaders/**.hlsl",
@@ -303,15 +324,20 @@ project "sl.common"
     links
     {     
 		"delayimp.lib", "d3d12.lib", "nvapi64.lib", "dxgi.lib", "dxguid.lib", (ROOT .. "_artifacts/sl.compute/%{cfg.buildcfg}_%{cfg.platform}/sl.compute.lib"),
-		"NvLowLatencyVk.lib", "Version.lib"
+		"Version.lib"
 	}
+
     filter "configurations:Debug"
 	 	links { "nvsdk_ngx_d_dbg.lib" }
-	filter "configurations:Release or Production or Profiling or RelExtDev"
+	filter "configurations:Develop or Production"
 		links { "nvsdk_ngx_d.lib"}
 	filter {}
 
-	linkoptions { "/DELAYLOAD:NvLowLatencyVk.dll" }
+	filter { "options:with-nvllvk=yes" }
+		defines { "SL_WITH_NVLLVK" }
+		links { "NvLowLatencyVk.lib" }
+		linkoptions { "/DELAYLOAD:NvLowLatencyVk.dll" }
+	filter {}
 
 if (os.isdir("./source/plugins/sl.dlss_g")) then
 	project "sl.dlss_g"
@@ -393,6 +419,24 @@ project "sl.reflex"
 	vpaths { ["impl"] = {"./source/plugins/sl.reflex/**.h", "./source/plugins/sl.reflex/**.cpp" }}
 			
 	removefiles {"./source/core/sl.extra/extra.cpp"}
+
+project "sl.pcl"
+	kind "SharedLib"
+	targetdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}")
+	objdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}") 
+	characterset ("MBCS")
+	pluginBasicSetup("pcl")
+	
+	files { 
+		"./source/plugins/sl.pcl/**.json",
+		"./source/plugins/sl.pcl/**.h",
+		"./source/plugins/sl.pcl/**.cpp"
+
+	}
+
+	vpaths { ["impl"] = {"./source/plugins/sl.pcl/**.h", "./source/plugins/sl.pcl/**.cpp" }}
+			
+	removefiles {"./source/core/sl.extra/extra.cpp"}
    	
 project "sl.template"
 	kind "SharedLib"	
@@ -430,6 +474,30 @@ project "sl.nis"
 
 	removefiles {"./source/core/sl.extra/extra.cpp"}
 
+if nvcfg.SL_BUILD_DEEPDVC then
+project "sl.deepdvc"
+	kind "SharedLib"
+	targetdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}")
+	objdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}")
+	characterset ("MBCS")
+	dependson { "sl.compute"}
+	dependson { "sl.common"}
+	pluginBasicSetup("deepdvc")
+
+	files {
+		"./source/core/ngx/**.h",
+		"./source/core/ngx/**.cpp",
+		"./source/plugins/sl.deepdvc/**.json",
+		"./source/plugins/sl.deepdvc/**.h",
+		"./source/plugins/sl.deepdvc/**.cpp"
+	}
+
+	vpaths { ["impl"] = {"./source/plugins/sl.deepdvc/**.h", "./source/plugins/sl.deepdvc/**.cpp" }}
+	vpaths { ["ngx"] = {"./source/core/ngx/**.h", "./source/core/ngx/**.cpp"}}
+
+	removefiles {"./source/core/sl.extra/extra.cpp"}
+end
+
 project "sl.imgui"
 	kind "SharedLib"
 	targetdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}")
@@ -453,6 +521,10 @@ project "sl.imgui"
 	vpaths { ["imgui"] = {"./external/imgui/**.cpp" }}
 	
 	defines {"ImDrawIdx=unsigned int"}
+
+	-- For warning in ryml_all.hpp:
+	-- warning C4996: 'std::aligned_storage': warning STL4034: std::aligned_storage and std::aligned_storage_t are deprecated in C++23. Prefer alignas(T) std::byte t_buff[sizeof(T)].
+	defines {"_SILENCE_CXX23_ALIGNED_STORAGE_DEPRECATION_WARNING"}
 	
 	removefiles {"./source/core/sl.extra/extra.cpp"}
 
@@ -460,5 +532,33 @@ project "sl.imgui"
 
 	links { "d3d12.lib", "vulkan-1.lib"}
 	
+
+if (os.isdir("./source/plugins/sl.nvperf")) then
+	project "sl.nvperf"
+		kind "SharedLib"	
+		targetdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}")
+		objdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}") 
+		characterset ("MBCS")
+		dependson { "sl.imgui"}
+		pluginBasicSetup("nvperf")
+		
+		files { 
+			"./source/plugins/sl.nvperf/**.json",
+			"./source/plugins/sl.nvperf/**.h",
+			"./source/plugins/sl.nvperf/**.cpp"
+		}
+
+		vpaths { ["impl"] = {"./source/plugins/sl.nvperf/**.h", "./source/plugins/sl.nvperf/**.cpp" }}
+
+		-- For warning in ryml_all.hpp:
+		-- warning C4996: 'std::aligned_storage': warning STL4034: std::aligned_storage and std::aligned_storage_t are deprecated in C++23. Prefer alignas(T) std::byte t_buff[sizeof(T)].
+		defines {"_SILENCE_CXX23_ALIGNED_STORAGE_DEPRECATION_WARNING"}
+				
+		removefiles {"./source/core/sl.extra/extra.cpp"}
+		
+		libdirs {externaldir .."vulkan/Lib"}
+
+		links { "d3d12.lib", "vulkan-1.lib"}
+end
 
 group ""

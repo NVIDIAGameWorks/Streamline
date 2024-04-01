@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -30,6 +30,7 @@
 #include "include/sl_dlss.h"
 #include "include/sl_struct.h"
 #include "source/core/sl.api/internal.h"
+#include "source/core/sl.api/internalDataSharing.h"
 #include "source/core/sl.log/log.h"
 #include "source/core/sl.plugin/plugin.h"
 #include "source/core/sl.file/file.h"
@@ -42,6 +43,7 @@
 #include "source/plugins/sl.common/commonInterface.h"
 #include "source/plugins/sl.dlss/versions.h"
 #include "source/plugins/sl.imgui/imgui.h"
+#include "source/plugins/sl.dlss/dlss_shared.h"
 
 #include "source/platforms/sl.chi/capture.h"
 
@@ -73,7 +75,12 @@ struct DLSSViewport
     DLSSOptimalSettings settings;
     NVSDK_NGX_Handle* handle = {};
     sl::chi::Resource mvec;
+    sl::chi::Resource output;
     float2 inputTexelSize;
+
+    // Note: since SR can have multiple viewports, we can never know which one is the "main" one
+    // so sharing data across plugins is tricky without the app telling us
+    // Maybe we should ask for it?
 };
 
 struct UIStats
@@ -173,6 +180,7 @@ constexpr uint32_t kMaxNumViewports = 4;
 static std::string JSON = std::string(dlss_json, &dlss_json[dlss_json_len]);
 
 void updateEmbeddedJSON(json& config);
+internal::shared::Status getSharedData(BaseStructure* requestedData, const BaseStructure* requesterInfo);
 
 SL_PLUGIN_DEFINE("sl.dlss", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON.c_str(), updateEmbeddedJSON, dlss, DLSSContext)
 
@@ -379,6 +387,10 @@ Result dlssBeginEvent(chi::CommandList pCmdList, const common::EventData& data, 
                 if (ctx.commonConsts->motionVectorsJittered == Boolean::eTrue)
                 {
                     dlssCreateFlags |= NVSDK_NGX_DLSS_Feature_Flags_MVJittered;
+                }
+                if (consts->structVersion >= kStructVersion3 && consts->alphaUpscalingEnabled == Boolean::eTrue)
+                {
+                    dlssCreateFlags |= NVSDK_NGX_DLSS_Feature_Flags_AlphaUpscaling;
                 }
 
                 // Optional
@@ -642,6 +654,26 @@ Result dlssEndEvent(chi::CommandList pCmdList, const common::EventData& data, co
                     uint32_t grid[] = { (renderWidth + 16 - 1) / 16, (renderHeight + 16 - 1) / 16, 1 };
                     CHI_VALIDATE(ctx.compute->dispatch(grid[0], grid[1], grid[2]));
                 }
+#if 0
+                if (ctx.viewport->output)
+                {
+                    chi::ResourceDescription desc;
+                    ctx.compute->getResourceDescription(ctx.viewport->output, desc);
+                    if (desc.width != colorOutExt.width || desc.height != colorOutExt.height)
+                    {
+                        ctx.compute->destroyResource(ctx.viewport->output);
+                        ctx.viewport->output = nullptr;
+                    }
+                }
+
+                if (!ctx.viewport->output)
+                {
+                    ctx.compute->beginVRAMSegment("sl.dlss");
+                    ctx.compute->cloneResource(colorOut, ctx.viewport->output, "sl.dlss.output-cached", chi::ResourceState::eStorageRW);
+                    ctx.cacheState(ctx.viewport->output);
+                    ctx.compute->endVRAMSegment();
+                }
+#endif
 
                 if (ctx.ngxContext)
                 {
@@ -720,6 +752,20 @@ Result dlssEndEvent(chi::CommandList pCmdList, const common::EventData& data, co
                     ctx.ngxContext->params->Set(NVSDK_NGX_Parameter_DLSS_Indicator_Invert_Y_Axis, ctx.viewport->consts.indicatorInvertAxisY);
 
                     ctx.ngxContext->evaluateFeature(pCmdList, ctx.viewport->handle, "sl.dlss");
+
+#if 0
+                    {
+                        // Cache the output
+                        extra::ScopedTasks revTransitions;
+                        chi::ResourceTransition transitions[] =
+                        {
+                            {ctx.viewport->output, chi::ResourceState::eCopyDestination, ctx.viewport->output->state},
+                            {colorOut, chi::ResourceState::eCopySource, colorOut.getState()},
+                        };
+                        ctx.compute->transitionResources(pCmdList, transitions, (uint32_t)countof(transitions), &revTransitions);
+                        ctx.compute->copyResource(pCmdList, ctx.viewport->output, colorOut);
+                    }
+#endif
                 }
 
                 float ms = 0;
@@ -859,6 +905,7 @@ Result slFreeResources(Feature feature, const sl::ViewportHandle& viewport)
             ctx.ngxContext->releaseFeature(instance.handle, "sl.dlss");
             // OK to release null resources
             CHI_VALIDATE(ctx.compute->destroyResource(instance.mvec));
+            CHI_VALIDATE(ctx.compute->destroyResource(instance.output));
         }
         ctx.viewports.erase(it);
         return Result::eOk;
@@ -942,6 +989,7 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
     // Update our feature if update is available and host opted in
     ctx.ngxContext->updateFeature(NVSDK_NGX_Feature_SuperSampling);
 
+    parameters->set(internal::shared::getParameterNameForFeature(kFeatureDLSS).c_str(), (void*)getSharedData);
 #ifndef SL_PRODUCTION
     common::PFunGetStringFromModule* func{};
     param::getPointerParam(api::getContext()->parameters, sl::param::common::kPFunGetStringFromModule, &func);
@@ -1043,6 +1091,29 @@ sl::Result slIsSupported(const sl::AdapterInfo& adapterInfo)
     return findAdapter(adapterInfo, ctx.adapterMask);
 }
 
+internal::shared::Status getSharedData(BaseStructure* requestedData, const BaseStructure* requesterInfo)
+{
+    if (!requestedData || requestedData->structType != dlss::DLSSInternalSharedData::s_structType)
+    {
+        SL_LOG_ERROR("Invalid request is made for shared data");
+        return internal::shared::Status::eInvalidRequestedData;
+    }
+    auto& ctx = (*dlss::getContext());
+
+    auto remote = static_cast<dlss::DLSSInternalSharedData*>(requestedData);
+    
+    // v1
+    remote->cachedUpscaledOutput = ctx.viewport ? ctx.viewport->output : nullptr;
+    
+    //! Make sure we let newer requester know what our current version is and what data is available
+    if(remote->structVersion > kStructVersion1)
+    {
+        remote->structVersion = kStructVersion1;
+    }
+
+    return internal::shared::Status::eOk;
+}
+
 SL_EXPORT void *slGetPluginFunction(const char *functionName)
 {
     // Forward declarations
@@ -1063,7 +1134,7 @@ SL_EXPORT void *slGetPluginFunction(const char *functionName)
 
     SL_EXPORT_FUNCTION(slDLSSSetOptions);
     SL_EXPORT_FUNCTION(slDLSSGetOptimalSettings);
-    SL_EXPORT_FUNCTION(slDLSSGetState);
+    SL_EXPORT_FUNCTION(slDLSSGetState);    
 
     return nullptr;
 }

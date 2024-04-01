@@ -1,4 +1,4 @@
-# Streamline (SL) - Version 2.2.1
+# Streamline (SL) - Version 2.4.0
 
 Streamline is an open-sourced cross-IHV solution that simplifies integration of the latest NVIDIA and other independent hardware vendors’ super resolution technologies into applications and games. This framework allows developers to easily implement one single integration and enable multiple super-resolution technologies and other graphics effects supported by the hardware vendor.
 
@@ -48,7 +48,7 @@ Running the `setup.bat` script will cause two things to be done:
 
 To build the project, simply open `_project\vs2017\streamline.sln` in Visual Studio, select the desired build configuration and build, or else use the provided build script:
 
-`./build.bat` with `-{debug|release|production}` (`debug` is default) or use VS IDE and load solution from the `_project` directory
+`./build.bat` with `-{debug|develop|production}` (`debug` is default) or use VS IDE and load solution from the `_project` directory
 
 The default setting is to target x86_64 CPU architecture.
 
@@ -77,7 +77,7 @@ If you would like to recompile the shaders for the NIS plugin, you will need to 
 
 ## SDK Packaging
 
-- Execute `./package.bat` with `-{debug|release|production}` (`production` is default)
+- Execute `./package.bat` with `-{debug|develop|production}` (`production` is default)
 
 The packaged SDK can be found in the generated `_sdk` folder.
 

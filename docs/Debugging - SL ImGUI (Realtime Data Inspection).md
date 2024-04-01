@@ -3,9 +3,6 @@
 > This document applies to non-production, development builds only. `sl.imgui` won't load in production builds.
 > Additionally, you will need to turn off any checks for signed libraries when loading Streamline libraries in order to be able to load the non-production libraries.
 
-> **NOTE 2:**
-> For the time being, `sl.imgui` **will only run if `sl.dlssg` is also on** (i.e., `sl.dlssg` plugin loaded, and feature turned on). 
-
 ## What SL ImGUI Does
 
 At a high level, the `sl.imgui` plugin uses [`imgui`](https://github.com/ocornut/imgui) to show certain metrics/information about specific SL plugins that can be useful for validating and debugging your app integration.

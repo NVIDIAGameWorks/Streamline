@@ -1,0 +1,11 @@
+// These are the hooks we need to do whatever our plugin is trying to do
+{
+    "id" : 4,
+    "priority" : 2,
+    "name" : "sl.pcl",
+    "namespace" : "pcl",
+    "required_plugins" : ["sl.common"],
+    "incompatible_plugins" : ["sl.latency"],
+    "rhi" : ["d3d11", "d3d12", "vk"],
+    "hooks" : []
+}

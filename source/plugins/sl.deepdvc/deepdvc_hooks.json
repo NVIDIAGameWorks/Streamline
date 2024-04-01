@@ -1,0 +1,35 @@
+{
+    "id" : 5,
+    "priority" : 100,
+    "name" : "sl.deepdvc",
+    "namespace" : "deepDVC",
+    "required_plugins" : ["sl.common"],
+    "rhi" : ["d3d11", "d3d12", "vk"],
+    "hooks" :
+    [
+        {
+            "class": "IDXGISwapChain",
+            "target" : "Present",
+            "replacement" : "slHookPresent",
+            "base" : "before"
+        },
+        {
+            "class": "IDXGISwapChain",
+            "target" : "Present1",
+            "replacement" : "slHookPresent1",
+            "base" : "before"
+        },
+        {
+            "class": "IDXGIFactory",
+            "target" : "CreateSwapChainForHwnd",
+            "replacement" : "slHookCreateSwapChainForHwnd",
+            "base" : "before"
+        },
+        {
+            "class": "IDXGIFactory",
+            "target" : "CreateSwapChain",
+            "replacement" : "slHookCreateSwapChain",
+            "base" : "before"
+        }
+    ]
+}

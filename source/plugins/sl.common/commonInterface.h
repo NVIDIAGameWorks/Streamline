@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -26,6 +26,10 @@
 
 #include "include/sl.h"
 #include "include/sl_helpers.h"
+#include "source/platforms/sl.chi/compute.h"
+#include "source/core/sl.param/parameters.h"
+#include "source/core/sl.plugin/plugin.h"
+#include "source/core/sl.log/log.h"
 #include "commonDRSInterface.h"
 
 #define NVAPI_VALIDATE_RF(f) {auto r = f; if(r != NVAPI_OK) { SL_LOG_ERROR( "%s failed error %d", #f, r); return false;} };
@@ -62,8 +66,8 @@ struct CommonResource
     friend sl::Result slSetTagInternal(const sl::Resource* resource, BufferType tag, uint32_t id, const Extent* ext, ResourceLifecycle lifecycle, CommandBuffer* cmdBuffer, bool localTag, const PrecisionInfo* pi);
     friend void getCommonTag(BufferType tagType, uint32_t id, CommonResource& res, const sl::BaseStructure** inputs, uint32_t numInputs);
 
-    inline operator bool() { return clone.resource != nullptr || res.native != nullptr; }
-    inline operator bool() const { return clone.resource != nullptr || res.native != nullptr; }
+    inline operator bool() { return clone || res.native != nullptr; }
+    inline operator bool() const { return clone || res.native != nullptr; }
     
     inline operator const chi::Resource() const
     { 
@@ -77,7 +81,7 @@ struct CommonResource
     }
     inline operator void*()
     {
-        if (clone) return clone.resource->native;
+        if (clone) return clone.getNative();
         return res.native;
     }
     inline CommonResource& operator=(chi::Resource rhs)
@@ -87,10 +91,13 @@ struct CommonResource
     }
     inline operator const Extent& () const { return extent; }
     inline operator const PrecisionInfo& () const { return pi; }
-    inline bool isCloned() const { return clone.resource != nullptr; };
+    inline bool isCloned() const { return clone; };
     inline uint32_t getState() const { return res.state; }
     inline const Extent& getExtent() const { return extent; }
     inline const PrecisionInfo& getPrecisionInfo() const { return pi; }
+    
+    uint64_t uFrameWhenTagged = ~0ull;
+
 private:
     sl::Resource res{};
     Extent extent{};
