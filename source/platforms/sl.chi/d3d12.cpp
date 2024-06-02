@@ -496,6 +496,13 @@ public:
         return { m_fence[m_index], m_fenceValue[m_index] + 1 };
     }
 
+    Fence getNextVkAcquireFence() override final
+    {
+        assert(false);
+        SL_LOG_ERROR("Not implemented");
+        return nullptr;
+    }
+
     int acquireNextBufferIndex(SwapChain chain, uint32_t& index, Fence* waitSemaphore)
     {
         index = ((IDXGISwapChain4*)chain)->GetCurrentBackBufferIndex();
@@ -1796,7 +1803,7 @@ bool D3D12::isSupportedFormat(DXGI_FORMAT format, int flag1, int flag2)
     return false;
 }
 
-ComputeStatus D3D12::createTexture2DResourceSharedImpl(ResourceDescription &resourceDesc, Resource &outResource, bool useNativeFormat, ResourceState initialState)
+ComputeStatus D3D12::createTexture2DResourceSharedImpl(ResourceDescription &resourceDesc, Resource &outResource, bool useNativeFormat, ResourceState initialState, const char InFriendlyName[])
 {
     ID3D12Resource *res = nullptr;
     D3D12_HEAP_TYPE NativeHeapType;
@@ -1897,7 +1904,7 @@ ComputeStatus D3D12::createTexture2DResourceSharedImpl(ResourceDescription &reso
     return ComputeStatus::eOk;
 }
 
-ComputeStatus D3D12::createBufferResourceImpl(ResourceDescription &resourceDesc, Resource &outResource, ResourceState initialState)
+ComputeStatus D3D12::createBufferResourceImpl(ResourceDescription &resourceDesc, Resource &outResource, ResourceState initialState, const char InFriendlyName[])
 {
     ID3D12Resource *res = nullptr;
     D3D12_RESOURCE_DESC bufferDesc = {};

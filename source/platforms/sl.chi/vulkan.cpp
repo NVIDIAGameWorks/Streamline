@@ -50,6 +50,24 @@ ICompute *getVulkan()
     return &s_vulkan;
 }
 
+void KernelDataVK::destroy(const VkLayerDispatchTable& ddt, VkDevice device)
+{
+    if (pipeline)
+    {
+        ddt.DestroyPipeline(device, pipeline, nullptr);
+        ddt.DestroyPipelineLayout(device, pipelineLayout, nullptr);
+        ddt.DestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
+    }
+    if (shaderModule)
+    {
+        ddt.DestroyShaderModule(device, shaderModule, nullptr);
+    }
+    pipeline = VK_NULL_HANDLE;
+    pipelineLayout = VK_NULL_HANDLE;
+    descriptorSetLayout = VK_NULL_HANDLE;
+    shaderModule = VK_NULL_HANDLE;
+}
+
 class CommandListContextVK : public ICommandListContext
 {
     struct WaitInfo
@@ -65,7 +83,9 @@ class CommandListContextVK : public ICommandListContext
     ICompute* m_compute = {};
     VkQueue m_cmdQueue;
     VkSemaphore m_presentSemaphore{};
-    VkSemaphore m_acquireSemaphore{};
+    std::vector<VkSemaphore> m_acquireSemaphore{};  // binary semaphore correspondng to each swapchain buffer passed to swapchain-acquisition VK API.
+    std::vector<VkFence> m_acquireFence{}; // Host-side (CPU) fence correspondng to each swapchain buffer passed to swapchain-acquisition to be able to do CPU wait.
+    uint32_t m_acquireIndex{}; // indexes into m_acquireSemaphore and m_acquireFence list.
     std::vector<VkCommandBuffer> m_cmdBuffer;
     std::vector<VkCommandPool> m_allocator;
     std::vector<VkSemaphore> m_fence;
@@ -95,6 +115,9 @@ public:
         m_name = extra::utf8ToUtf16(debugName);
         m_cmdQueue = (VkQueue)queue->native;
         m_bufferCount = count;
+        m_acquireSemaphore.resize(m_bufferCount);
+        m_acquireFence.resize(m_bufferCount);
+        m_acquireIndex = m_bufferCount - 1;
         // Allocate double, see below why
         m_clCount = m_bufferCount * 2;
         m_allocator.resize(m_clCount);
@@ -107,15 +130,30 @@ public:
         createInfo.pNext = {};
         createInfo.flags = 0;
         VK_CHECK_RV(m_ddt.CreateSemaphore(dev, &createInfo, NULL, &m_presentSemaphore));
-        VK_CHECK_RV(m_ddt.CreateSemaphore(dev, &createInfo, NULL, &m_acquireSemaphore));
-
-        sl::Resource r;
+        sl::Resource r{};
+        r.type = (ResourceType)ResourceType::eFence;
         r.native = m_presentSemaphore;
-        r.type = (ResourceType)ResourceType::eFence;
-        m_compute->setDebugName(&r, "present_semaphore");
-        r.native = m_acquireSemaphore;
-        r.type = (ResourceType)ResourceType::eFence;
-        m_compute->setDebugName(&r, "acquire_semaphore");
+        m_compute->setDebugName(&r, "SL_present_semaphore");
+
+        VkFenceCreateInfo fenceCreateinfo = {};
+        fenceCreateinfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        fenceCreateinfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+        for (uint32_t i = 0; i < m_bufferCount; i++)
+        {
+            VK_CHECK_RV(m_ddt.CreateSemaphore(dev, &createInfo, NULL, &m_acquireSemaphore[i]));
+            r.type = (ResourceType)ResourceType::eFence;
+            r.native = m_acquireSemaphore[i];
+            std::stringstream name{};
+            name << "SL_acquire_semaphore_" << i;
+            m_compute->setDebugName(&r, name.str().c_str());
+
+            VK_CHECK_RV(m_ddt.CreateFence(dev, &fenceCreateinfo, NULL, &m_acquireFence[i]));
+            r.type = (ResourceType)ResourceType::eHostFence;
+            r.native = m_acquireFence[i];
+            name = std::stringstream{};
+            name << "SL_acquire_fence_" << i;
+            m_compute->setDebugName(&r, name.str().c_str());
+        }
 
         SL_LOG_INFO("Creating command context %s - cmd buffers %u - dummy cmd buffers %u", debugName, m_bufferCount, m_clCount - m_bufferCount);
 
@@ -169,17 +207,29 @@ public:
 
     void shutdown()
     {
-        m_ddt.DestroySemaphore(m_device, m_presentSemaphore, nullptr);
-        m_ddt.DestroySemaphore(m_device, m_acquireSemaphore, nullptr);
+        assert(m_device != NULL);
+
         for (uint32_t i = 0; i < 2 * m_bufferCount; i++)
         {
             m_ddt.FreeCommandBuffers(m_device, m_allocator[i], 1, &m_cmdBuffer[i]);
             m_ddt.DestroyCommandPool(m_device, m_allocator[i], nullptr);
             m_ddt.DestroySemaphore(m_device, m_fence[i], nullptr);
         }
+
+        for (uint32_t i = 0; i < m_bufferCount; i++)
+        {
+            m_ddt.DestroyFence(m_device, m_acquireFence[i], NULL);
+            m_ddt.DestroySemaphore(m_device, m_acquireSemaphore[i], nullptr);
+        }
+
+        m_ddt.DestroySemaphore(m_device, m_presentSemaphore, nullptr);
+
         m_cmdBuffer.clear();
-        m_allocator.clear();
+        m_fenceValue.clear();
         m_fence.clear();
+        m_allocator.clear();
+        m_acquireFence.clear();
+        m_acquireSemaphore.clear();
     }
 
     RenderAPI getType() { return RenderAPI::eVulkan; }
@@ -338,10 +388,15 @@ public:
     {
         return m_fenceValue[idx];
     }
-    
+
     SyncPoint getNextSyncPoint()
     {
         return { m_fence[m_index], m_fenceValue[m_index] + 1 };
+    }
+
+    Fence getNextVkAcquireFence() override final
+    {
+        return m_acquireFence[m_acquireIndex];
     }
 
     bool signalAllWaitingOnQueues()
@@ -595,11 +650,15 @@ public:
         bufferIndex = UINT32_MAX;
         // With VK it is important to always return the "error" code
         int res{};
-        VK_CHECK_RE(res, m_ddt.AcquireNextImageKHR(m_device, (VkSwapchainKHR)sc->native, timeout, m_acquireSemaphore, nullptr, &bufferIndex));
+        m_acquireIndex = (m_acquireIndex + 1) % m_bufferCount;
+        // CPU wait not possible with binary semaphores, hence needing corresponding host fence.
+        VK_CHECK_RE(res, m_ddt.WaitForFences(m_device, 1, &m_acquireFence[m_acquireIndex], VK_TRUE, timeout));
+        VK_CHECK_RE(res, m_ddt.ResetFences(m_device, 1, &m_acquireFence[m_acquireIndex]));
+        VK_CHECK_RE(res, m_ddt.AcquireNextImageKHR(m_device, (VkSwapchainKHR)sc->native, timeout, m_acquireSemaphore[m_acquireIndex], nullptr, &bufferIndex));
         m_bufferToPresent = bufferIndex;
         if (waitSemaphore)
         {
-            *waitSemaphore = m_acquireSemaphore;
+            *waitSemaphore = m_acquireSemaphore[m_acquireIndex];
         }
         return res;
     }
@@ -703,11 +762,61 @@ VkImageAspectFlags toVkAspectFlags(uint32_t nativeFormat)
     switch (nativeFormat)
     {
         case VK_FORMAT_D16_UNORM:
-        case VK_FORMAT_D32_SFLOAT: return VK_IMAGE_ASPECT_DEPTH_BIT;
-        case VK_FORMAT_D24_UNORM_S8_UINT: return VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+        case VK_FORMAT_X8_D24_UNORM_PACK32:
+        case VK_FORMAT_D32_SFLOAT:
+            return VK_IMAGE_ASPECT_DEPTH_BIT;
+        case VK_FORMAT_D16_UNORM_S8_UINT:
+        case VK_FORMAT_D24_UNORM_S8_UINT:
+        case VK_FORMAT_D32_SFLOAT_S8_UINT:
+            return VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
         case VK_FORMAT_S8_UINT: return VK_IMAGE_ASPECT_STENCIL_BIT;
         default: return VK_IMAGE_ASPECT_COLOR_BIT;
     }
+}
+
+DispatchData::~DispatchData()
+{
+    assert(pddt != nullptr && device != NULL);
+    if (pddt != nullptr && device != NULL)
+    {
+        for (auto&[bindingDesc, poolDescCombo] : signatureToDesc)
+        {
+            if (bindingDesc != nullptr)
+            {
+                poolDescCombo.descSetData.descSet.clear();
+                poolDescCombo.descSetData = {};
+                pddt->DestroyDescriptorPool(device, poolDescCombo.pool, nullptr);
+            }
+        }
+    }
+    signatureToDesc.clear();
+
+    assert(compute != nullptr);
+    for (auto&[pso, bindingDesc] : psoToSignature)
+    {
+        if (bindingDesc != nullptr)
+        {
+            if (compute != nullptr)
+            {
+                for (auto& descriptor : bindingDesc->descriptors)
+                {
+                    if (descriptor.second.type == DescriptorType::eConstantBuffer)
+                    {
+                        for (auto& handle : descriptor.second.handles)
+                        {
+                            if (handle != nullptr)
+                            {
+                                compute->destroyResource(reinterpret_cast<Resource>(handle), 0);
+                            }
+                        }
+                    }
+                }
+            }
+
+            delete bindingDesc;
+        }
+    }
+    psoToSignature.clear();
 }
 
 ComputeStatus Vulkan::getResourceState(uint32_t states, ResourceState& resourceStates)
@@ -852,10 +961,14 @@ ComputeStatus Vulkan::init(Device device, param::IParameters* params)
     m_vk->getDeviceProcAddr = vk->getDeviceProcAddr;
     m_vk->computeQueueFamily = vk->computeQueueFamily;
     m_vk->computeQueueIndex = vk->computeQueueIndex;
+    m_vk->computeQueueCreateFlags = vk->computeQueueCreateFlags;
     m_vk->graphicsQueueFamily = vk->graphicsQueueFamily;
     m_vk->graphicsQueueIndex = vk->graphicsQueueIndex;
+    m_vk->graphicsQueueCreateFlags = vk->graphicsQueueCreateFlags;
     m_vk->opticalFlowQueueFamily = vk->opticalFlowQueueFamily;
     m_vk->opticalFlowQueueIndex = vk->opticalFlowQueueIndex;
+    m_vk->opticalFlowQueueCreateFlags = vk->opticalFlowQueueCreateFlags;
+    m_vk->hostGraphicsComputeQueueInfo = vk->hostGraphicsComputeQueueInfo;
     m_vk->mapVulkanInstanceAPI(m_instance);
     m_vk->mapVulkanDeviceAPI(m_device);
     m_ddt = m_vk->dispatchDeviceMap[m_device];
@@ -898,6 +1011,7 @@ ComputeStatus Vulkan::init(Device device, param::IParameters* params)
     VkResult result;
     {
         result = m_ddt.CreateSampler(m_device, &samplerCreateInfo, 0, &m_sampler[eSamplerLinearClamp]);
+        setDebugNameVk(m_sampler[eSamplerLinearClamp], "eSamplerLinearClamp");
         assert(result == VK_SUCCESS);
     }
     {
@@ -905,12 +1019,14 @@ ComputeStatus Vulkan::init(Device device, param::IParameters* params)
         samplerCreateInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
         samplerCreateInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
         result = m_ddt.CreateSampler(m_device, &samplerCreateInfo, 0, &m_sampler[eSamplerLinearMirror]);
+        setDebugNameVk(m_sampler[eSamplerLinearClamp], "eSamplerLinearMirror");
         assert(result == VK_SUCCESS);
     }
     {
         samplerCreateInfo.magFilter = VK_FILTER_NEAREST;
         samplerCreateInfo.minFilter = VK_FILTER_NEAREST;
         result = m_ddt.CreateSampler(m_device, &samplerCreateInfo, 0, &m_sampler[eSamplerPointMirror]);
+        setDebugNameVk(m_sampler[eSamplerLinearClamp], "eSamplerPointMirror");
         assert(result == VK_SUCCESS);
     }
     {
@@ -918,6 +1034,7 @@ ComputeStatus Vulkan::init(Device device, param::IParameters* params)
         samplerCreateInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         samplerCreateInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         result = m_ddt.CreateSampler(m_device, &samplerCreateInfo, 0, &m_sampler[eSamplerPointClamp]);
+        setDebugNameVk(m_sampler[eSamplerLinearClamp], "eSamplerPointClamp");
         assert(result == VK_SUCCESS);
     }
     m_idt.GetPhysicalDeviceMemoryProperties(m_physicalDevice, &m_vkPhysicalDeviceMemoryProperties);
@@ -938,6 +1055,7 @@ ComputeStatus Vulkan::init(Device device, param::IParameters* params)
     if (result != VK_SUCCESS) {
         return ComputeStatus::eError;
     }
+    setDebugNameVk(m_imageViewClear.descriptorSetLayout, "SL_imageViewClear_descriptorSetLayout");
 
     VkPushConstantRange range;
     range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -954,6 +1072,7 @@ ComputeStatus Vulkan::init(Device device, param::IParameters* params)
     if (result != VK_SUCCESS) {
         return ComputeStatus::eError;
     }
+    setDebugNameVk(m_imageViewClear.pipelineLayout, "SL_imageViewClear_pipelineLayout");
 
     // Create the compute pipeline for image view clears
     VkShaderModule csm;
@@ -977,6 +1096,7 @@ ComputeStatus Vulkan::init(Device device, param::IParameters* params)
     if (result != VK_SUCCESS) {
         return ComputeStatus::eError;
     }
+    setDebugNameVk(m_imageViewClear.doClear, "SL_imageViewClear_pipeline");
 
     m_ddt.DestroyShaderModule(m_device, csm, nullptr);
 
@@ -990,17 +1110,40 @@ ComputeStatus Vulkan::init(Device device, param::IParameters* params)
 
 ComputeStatus Vulkan::shutdown()
 {
-    if (m_reflex)
+    m_dispatchContext.clear();
+
+    assert(m_device != NULL);
+
+    for (auto Cubin = m_kernels.begin(); Cubin != m_kernels.end(); Cubin++)
     {
-        m_reflex->shutdown();
-        delete m_reflex;
-        m_reflex = {};
+        KernelDataVK *cubinVk = (KernelDataVK *)(*Cubin).second;
+        cubinVk->destroy(m_ddt, m_device);
+        delete (*Cubin).second;
     }
-    
-    if (m_idt.DestroyDebugUtilsMessengerEXT && m_debugUtilsMessenger)
+    m_kernels.clear();
+
     {
-        m_idt.DestroyDebugUtilsMessengerEXT(m_instance, m_debugUtilsMessenger, nullptr);
+        std::scoped_lock lock(m_mutexProfiler);
+        for (uint32_t node = 0; node < MAX_NUM_NODES; ++node)
+        {
+            for (const auto&[key, value] : m_SectionPerfMap[node])
+            {
+                for (uint32_t i = 0; i < SL_READBACK_QUEUE_SIZE; ++i)
+                {
+                    if (value.QueryPool[i] == VK_NULL_HANDLE)
+                        continue;
+                    m_ddt.DestroyQueryPool(m_device, value.QueryPool[i], nullptr);
+                }
+            }
+            m_SectionPerfMap[node].clear();
+        }
     }
+
+    // Clean up image view clear
+    m_ddt.DestroyPipeline(m_device, m_imageViewClear.doClear, nullptr);
+    m_ddt.DestroyPipelineLayout(m_device, m_imageViewClear.pipelineLayout, nullptr);
+    m_ddt.DestroyDescriptorSetLayout(m_device, m_imageViewClear.descriptorSetLayout, nullptr);
+    m_imageViewClear = {};
 
     // cleanup samplers
     for (uint32_t u = 0; u < countof(m_sampler); ++u)
@@ -1012,36 +1155,93 @@ ComputeStatus Vulkan::shutdown()
         }
     }
 
-    // Clean up image view clear
-    m_ddt.DestroyDescriptorSetLayout(m_device, m_imageViewClear.descriptorSetLayout, nullptr);
-    m_ddt.DestroyPipelineLayout(m_device, m_imageViewClear.pipelineLayout, nullptr);
-    m_ddt.DestroyPipeline(m_device, m_imageViewClear.doClear, nullptr);
-
-    Generic::shutdown();
-
-    for (auto Cubin = m_kernels.begin(); Cubin != m_kernels.end(); Cubin++)
+    if (m_idt.DestroyDebugUtilsMessengerEXT && m_debugUtilsMessenger)
     {
-        KernelDataVK *cubinVk = (KernelDataVK *)(*Cubin).second;
-        if (cubinVk->pipeline)
-        {
-            m_ddt.DestroyPipeline(m_device, cubinVk->pipeline, nullptr);
-            m_ddt.DestroyPipelineLayout(m_device, cubinVk->pipelineLayout, nullptr);
-            m_ddt.DestroyDescriptorSetLayout(m_device, cubinVk->descriptorSetLayout, nullptr);
-            m_ddt.DestroyShaderModule(m_device, cubinVk->shaderModule, nullptr);
-        }
-        else
-        {
-            //m_ddt.DestroyCuFunctionNVX(m_device, cubinVk->Function, nullptr);
-            //m_ddt.DestroyCuModuleNVX(m_device, cubinVk->Shader, nullptr);
-        }
-        delete (*Cubin).second;
+        m_idt.DestroyDebugUtilsMessengerEXT(m_instance, m_debugUtilsMessenger, nullptr);
+        m_debugUtilsMessenger = VK_NULL_HANDLE;
     }
-    m_kernels.clear();
 
     delete m_vk;
     m_vk = {};
 
-    return Generic::shutdown();
+    ComputeStatus status = Generic::shutdown();
+
+    if (m_reflex)
+    {
+        m_reflex->shutdown();
+        delete m_reflex;
+        m_reflex = {};
+    }
+
+    return status;
+}
+
+// This function retrieves queue info for presentable queues only but can be extended for any type of queue.
+ComputeStatus Vulkan::getHostQueueInfo(chi::CommandQueue queue, void* pQueueInfo)
+{
+    if (queue == NULL)
+    {
+        SL_LOG_ERROR("Invalid VK queue!");
+        return ComputeStatus::eInvalidArgument;
+    }
+
+    if (pQueueInfo == nullptr)
+    {
+        SL_LOG_ERROR("Invalid VK queue info object!");
+        return ComputeStatus::eInvalidArgument;
+    }
+
+    if (m_vk == nullptr)
+    {
+        SL_LOG_ERROR("Invalid VK table!");
+        return ComputeStatus::eInvalidPointer;
+    }
+
+    if (m_vk->hostGraphicsComputeQueueInfo.empty())
+    {
+        m_vk->hostGraphicsComputeQueueInfo.emplace_back(interposer::QueueVkInfo{ VK_QUEUE_GRAPHICS_BIT, m_vk->graphicsQueueFamily, {}, m_vk->graphicsQueueCreateFlags, m_vk->graphicsQueueIndex });
+        m_vk->hostGraphicsComputeQueueInfo.emplace_back(interposer::QueueVkInfo{ VK_QUEUE_COMPUTE_BIT, m_vk->computeQueueFamily, {}, m_vk->computeQueueCreateFlags, m_vk->computeQueueIndex });
+    }
+
+    VkQueue hostQueue{};
+    auto pQueueVkInfo = reinterpret_cast<interposer::QueueVkInfo*>(pQueueInfo);
+    for (const auto& qInfo : m_vk->hostGraphicsComputeQueueInfo)
+    {
+        for (uint32_t qIndex = 0; qIndex < qInfo.count; qIndex++)
+        {
+            CHI_CHECK(getDeviceQueue(qInfo.familyIndex, qIndex, qInfo.createFlags, hostQueue));
+            if (hostQueue == queue)
+            {
+                pQueueVkInfo->flags = qInfo.flags;
+                pQueueVkInfo->familyIndex = qInfo.familyIndex;
+                pQueueVkInfo->index = qIndex;
+                return ComputeStatus::eOk;
+            }
+        }
+    }
+
+    SL_LOG_ERROR("Invalid VK queue %p - not created by the application!", queue);
+    return ComputeStatus::eInvalidArgument;
+}
+
+ComputeStatus Vulkan::getDeviceQueue(uint32_t queueFamily, uint32_t queueIndex, uint32_t queueCreateFlags, VkQueue& queue)
+{
+    if (queueCreateFlags == 0)
+    {
+        m_ddt.GetDeviceQueue(m_device, queueFamily, queueIndex, &queue);
+    }
+    else
+    {
+        VkDeviceQueueInfo2 queueInfo{ VK_STRUCTURE_TYPE_DEVICE_QUEUE_INFO_2, NULL, queueCreateFlags, queueFamily, queueIndex };
+        m_ddt.GetDeviceQueue2(m_device, &queueInfo, &queue);
+    }
+
+    if (!queue)
+    {
+        return ComputeStatus::eError;
+    }
+
+    return ComputeStatus::eOk;
 }
 
 ComputeStatus Vulkan::waitForIdle(Device device)
@@ -1164,10 +1364,7 @@ ComputeStatus Vulkan::destroyKernel(Kernel& kernel)
     }
 
     KernelDataVK *cubinVk = (KernelDataVK *)(*cubin).second;
-    if (cubinVk->shaderModule)
-    {
-        m_ddt.DestroyShaderModule(m_device, cubinVk->shaderModule, nullptr);
-    }
+    cubinVk->destroy(m_ddt, m_device);
     
     delete (*cubin).second;
     m_kernels.erase(cubin);
@@ -1197,40 +1394,35 @@ ComputeStatus Vulkan::destroyCommandListContext(ICommandListContext* ctx)
 ComputeStatus Vulkan::createCommandQueue(CommandQueueType type, CommandQueue& queue, const char friendlyName[], uint32_t index)
 {
     queue = {};
-    if (type == CommandQueueType::eCompute)
+    uint32_t queueFamily{}, queueIndex{}, queueCreateFlags{};
+    switch (type)
     {
-        VkQueue tmp = {};
-        m_ddt.GetDeviceQueue(m_device, m_vk->computeQueueFamily, m_vk->computeQueueIndex + index, &tmp);
-        if (!tmp)
-        {
-            return ComputeStatus::eError;
-        }
-        queue = new chi::CommandQueueVk{ tmp, type, m_vk->computeQueueFamily, m_vk->computeQueueIndex + index };
-    }
-    else if (type == CommandQueueType::eGraphics)
-    {
-        VkQueue tmp = {};
-        m_ddt.GetDeviceQueue(m_device, m_vk->graphicsQueueFamily, m_vk->graphicsQueueIndex + index, &tmp);
-        if (!tmp)
-        {
-            return ComputeStatus::eError;
-        }
-        queue = new chi::CommandQueueVk{ tmp, type, m_vk->graphicsQueueFamily, m_vk->graphicsQueueIndex + index };
-    }
-    else if (type == CommandQueueType::eOpticalFlow)
-    {
-        VkQueue tmp = {};
-        m_ddt.GetDeviceQueue(m_device, m_vk->opticalFlowQueueFamily, m_vk->opticalFlowQueueIndex + index, &tmp);
-        if (!tmp)
-        {
-            return ComputeStatus::eError;
-        }
-        queue = new chi::CommandQueueVk{ tmp, type, m_vk->opticalFlowQueueFamily, m_vk->opticalFlowQueueIndex + index };
-    }
-    else
-    {
+    case CommandQueueType::eGraphics:
+        queueFamily = m_vk->graphicsQueueFamily;
+        queueIndex = m_vk->graphicsQueueIndex;
+        queueCreateFlags = m_vk->graphicsQueueCreateFlags;
+        break;
+
+    case CommandQueueType::eCompute:
+        queueFamily = m_vk->computeQueueFamily;
+        queueIndex = m_vk->computeQueueIndex;
+        queueCreateFlags = m_vk->computeQueueCreateFlags;
+        break;
+
+    case CommandQueueType::eOpticalFlow:
+        queueFamily = m_vk->opticalFlowQueueFamily;
+        queueIndex = m_vk->opticalFlowQueueIndex;
+        queueCreateFlags = m_vk->opticalFlowQueueCreateFlags;
+        break;
+
+    default:
         return ComputeStatus::eNoImplementation;
     }
+
+    VkQueue tmp{};
+    CHI_CHECK(getDeviceQueue(queueFamily, queueIndex + index, queueCreateFlags, tmp));
+    queue = new chi::CommandQueueVk{ tmp, type, queueFamily, queueIndex + index };
+
     return ComputeStatus::eOk;
 }
 
@@ -1256,19 +1448,19 @@ ComputeStatus Vulkan::createFence(FenceFlags flags, uint64_t initialValue, Fence
 
     VkSemaphore fence;
     VK_CHECK(m_ddt.CreateSemaphore(m_device, &createInfo, NULL, &fence));
+    setDebugNameVk(fence, friendlyName);
 
-    outFence = new SemaphoreVk(fence);
+    outFence = fence;
 
     return ComputeStatus::eOk;
 }
 
-ComputeStatus Vulkan::destroyFence(Fence fence)
+ComputeStatus Vulkan::destroyFence(Fence& fence)
 {
-    auto semaphore = (SemaphoreVk*)fence;
-    if (semaphore)
+    if (fence)
     {
-        m_ddt.DestroySemaphore(m_device, (VkSemaphore)semaphore->native, NULL);
-        delete semaphore;
+        m_ddt.DestroySemaphore(m_device, (VkSemaphore)fence, NULL);
+        fence = VK_NULL_HANDLE;
     }
 
     return ComputeStatus::eOk;
@@ -1294,6 +1486,13 @@ ComputeStatus Vulkan::bindKernel(const Kernel InKernel)
         thread.kernel = (KernelDataVK*)(*it).second;
     }
     
+    if (thread.psoToSignature.empty())
+    {
+        thread.pddt = &m_ddt;
+        thread.device = m_device;
+        thread.compute = this;
+    }
+
     auto it = thread.psoToSignature.find(thread.kernel->hash);
     if (it == thread.psoToSignature.end())
     {
@@ -1329,7 +1528,12 @@ ComputeStatus Vulkan::bindConsts(uint32_t base, uint32_t reg, void *data, size_t
         slot.instance = (slot.instance + 1) % instances;
         uint32_t offset = slot.instance * alignedDataSize;
         memcpy((uint8_t*)slot.mapped + offset, data, dataSize);
-        thread.signature->offsets[slot.offsetIndex] = offset;
+        if (thread.signature->offsets[slot.offsetIndex] != offset)
+        {
+            thread.signature->offsets[slot.offsetIndex] = offset;
+            // ensure descriptor update occurs for all of the new offsets the first time.
+            slot.dirty = true;
+        }
     }
     else
     {
@@ -1340,7 +1544,7 @@ ComputeStatus Vulkan::bindConsts(uint32_t base, uint32_t reg, void *data, size_t
         ResourceDescription cbDesc = ResourceDescription{alignedDataSize * instances,1,chi::NativeFormatUnknown,chi::eHeapTypeUpload, chi::ResourceState::eConstantBuffer};
         Resource cb;
         CHI_CHECK(createBuffer(cbDesc, cb, "const buffer"));
-        slot.handles.push_back(((sl::Resource*)cb)->native);
+        slot.handles.push_back(cb);
         slot.mapped = {};
         auto info = (sl::Resource*)cb;
         VK_CHECK(m_ddt.MapMemory(m_device, (VkDeviceMemory)info->memory, 0, cbDesc.width, 0, &slot.mapped));
@@ -1458,10 +1662,12 @@ ComputeStatus Vulkan::bindRawBuffer(uint32_t base, uint32_t reg, Resource InReso
 
 ComputeStatus Vulkan::processDescriptors(DispatchData& thread)
 {
+    bool needsUpdate = false;
     if (thread.signatureToDesc.find(thread.signature) == thread.signatureToDesc.end())
     {
         std::vector<VkDescriptorSetLayoutBinding> bindings = { };
         std::vector<VkDescriptorPoolSize> poolSizes = { };
+        uint32_t totalDescriptorCount{};
         for (auto it : thread.signature->descriptors)
         {
             auto& slot = it.second;
@@ -1471,6 +1677,7 @@ ComputeStatus Vulkan::processDescriptors(DispatchData& thread)
             binding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
             VkDescriptorPoolSize ps = {};
             ps.descriptorCount = (uint32_t)slot.handles.size();
+            totalDescriptorCount += ps.descriptorCount;
             if (slot.type == DescriptorType::eStorageBuffer)
             {
                 ps.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -1510,6 +1717,7 @@ ComputeStatus Vulkan::processDescriptors(DispatchData& thread)
             dslInfo.pBindings = bindings.data();
             //dslInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
             VK_CHECK(m_ddt.CreateDescriptorSetLayout(m_device, &dslInfo, 0, &thread.kernel->descriptorSetLayout));
+            setDebugNameVk(thread.kernel->descriptorSetLayout, "SL_thread_kernel_descriptorSetLayout");
 
             VkPipelineLayoutCreateInfo plInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
             plInfo.setLayoutCount = 1;
@@ -1517,25 +1725,36 @@ ComputeStatus Vulkan::processDescriptors(DispatchData& thread)
             plInfo.pushConstantRangeCount = 0;
             plInfo.pPushConstantRanges = {};
             VK_CHECK(m_ddt.CreatePipelineLayout(m_device, &plInfo, 0, &thread.kernel->pipelineLayout));
+            setDebugNameVk(thread.kernel->pipelineLayout, "SL_thread_kernel_pipelineLayout");
         }
 
+        auto id = GetCurrentThreadId();
         VkDescriptorPoolCreateInfo descriptorPoolInfo =
         {
             VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
             nullptr,
             (VkDescriptorPoolCreateFlags)0,
-            (uint32_t)thread.kernel->numDescriptors,
+            ((uint32_t)thread.kernel->numDescriptorSets * totalDescriptorCount),
             (uint32_t)(poolSizes.size()),
             poolSizes.data()
         };
         PoolDescCombo& combo = thread.signatureToDesc[thread.signature];
         VK_CHECK(m_ddt.CreateDescriptorPool(m_device, &descriptorPoolInfo, nullptr, &combo.pool));
-        combo.desc.resize(thread.kernel->numDescriptors);
-        for (uint32_t i = 0; i < thread.kernel->numDescriptors; i++)
+        std::stringstream name{};
+        name << "SL_thread_" << id << "_descriptor_pool";
+        setDebugNameVk(combo.pool, name.str().c_str());
+
+        combo.descSetData.descSet.resize(thread.kernel->numDescriptorSets);
+        for (uint32_t i = 0; i < thread.kernel->numDescriptorSets; i++)
         {
             VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO , nullptr, combo.pool, 1, &thread.kernel->descriptorSetLayout };
-            VK_CHECK(m_ddt.AllocateDescriptorSets(m_device, &allocInfo, &combo.desc[i]));
+            VK_CHECK(m_ddt.AllocateDescriptorSets(m_device, &allocInfo, &combo.descSetData.descSet[i]));
+            name = std::stringstream{};
+            name << "SL_thread_" << id << "_kernel_descriptor_set_" << i;
+            setDebugNameVk(combo.descSetData.descSet[i], name.str().c_str());
         }
+
+        needsUpdate = true;
     }
 
     auto writeBufferDescriptorSet = [](VkDescriptorSet dstSet, VkDescriptorType type, uint32_t binding, VkDescriptorBufferInfo* bufferInfo, uint32_t descriptorCount = 1)->VkWriteDescriptorSet
@@ -1567,7 +1786,6 @@ ComputeStatus Vulkan::processDescriptors(DispatchData& thread)
         std::vector<VkWriteDescriptorSet> writeDescriptorSets = {};
         std::vector<VkDescriptorBufferInfo> buffers[16];
         std::vector<VkDescriptorImageInfo> images[16];
-        bool needsUpdate = false;
         for (auto& it : thread.signature->descriptors)
         {
             auto& slot = it.second;
@@ -1576,8 +1794,9 @@ ComputeStatus Vulkan::processDescriptors(DispatchData& thread)
         }
         if (needsUpdate)
         {
-            thread.kernel->descriptorIndex = (thread.kernel->descriptorIndex + 1) % thread.kernel->numDescriptors;
-            auto index = thread.kernel->descriptorIndex;
+            combo.descSetData.descSetIndex = (combo.descSetData.descSetIndex + 1) % thread.kernel->numDescriptorSets;
+            auto& descSet = combo.descSetData.descSet[combo.descSetData.descSetIndex];
+
             for (auto& it : thread.signature->descriptors)
             {
                 auto& slot = it.second;
@@ -1598,7 +1817,7 @@ ComputeStatus Vulkan::processDescriptors(DispatchData& thread)
                         }
                         buffers[slot.registerIndex].push_back(info);
                     }
-                    writeDescriptorSets.push_back(writeBufferDescriptorSet(combo.desc[index], VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, slot.registerIndex, buffers[slot.registerIndex].data(), (uint32_t)slot.handles.size()));
+                    writeDescriptorSets.push_back(writeBufferDescriptorSet(descSet, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, slot.registerIndex, buffers[slot.registerIndex].data(), (uint32_t)slot.handles.size()));
                 }
                 else if (slot.type == DescriptorType::eStorageTexture)
                 {
@@ -1607,7 +1826,7 @@ ComputeStatus Vulkan::processDescriptors(DispatchData& thread)
                         VkDescriptorImageInfo info = { nullptr, (VkImageView)h, VK_IMAGE_LAYOUT_GENERAL };
                         images[slot.registerIndex].push_back(info);
                     }
-                    writeDescriptorSets.push_back(writeImageDescriptorSet(combo.desc[index], VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, slot.registerIndex, images[slot.registerIndex].data(), (uint32_t)slot.handles.size()));
+                    writeDescriptorSets.push_back(writeImageDescriptorSet(descSet, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, slot.registerIndex, images[slot.registerIndex].data(), (uint32_t)slot.handles.size()));
                 }
                 else if (slot.type == DescriptorType::eTexture)
                 {
@@ -1616,7 +1835,7 @@ ComputeStatus Vulkan::processDescriptors(DispatchData& thread)
                         VkDescriptorImageInfo info = { nullptr, (VkImageView)h, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
                         images[slot.registerIndex].push_back(info);
                     }
-                    writeDescriptorSets.push_back(writeImageDescriptorSet(combo.desc[index], VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, slot.registerIndex, images[slot.registerIndex].data(), (uint32_t)slot.handles.size()));
+                    writeDescriptorSets.push_back(writeImageDescriptorSet(descSet, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, slot.registerIndex, images[slot.registerIndex].data(), (uint32_t)slot.handles.size()));
                 }
                 else if (slot.type == DescriptorType::eSampler)
                 {
@@ -1625,11 +1844,11 @@ ComputeStatus Vulkan::processDescriptors(DispatchData& thread)
                         VkDescriptorImageInfo info = { (VkSampler)h,nullptr,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
                         images[slot.registerIndex].push_back(info);
                     }
-                    writeDescriptorSets.push_back(writeImageDescriptorSet(combo.desc[index], VK_DESCRIPTOR_TYPE_SAMPLER, slot.registerIndex, images[slot.registerIndex].data(), (uint32_t)slot.handles.size()));
+                    writeDescriptorSets.push_back(writeImageDescriptorSet(descSet, VK_DESCRIPTOR_TYPE_SAMPLER, slot.registerIndex, images[slot.registerIndex].data(), (uint32_t)slot.handles.size()));
                 }
                 else if (slot.type == DescriptorType::eConstantBuffer)
                 {
-                    auto buffer = (VkBuffer)slot.handles.front();
+                    auto buffer = reinterpret_cast<VkBuffer>(reinterpret_cast<Resource>(slot.handles.front())->native);
                     VkDescriptorBufferInfo info = {};
                     if (buffer)
                     {
@@ -1641,7 +1860,7 @@ ComputeStatus Vulkan::processDescriptors(DispatchData& thread)
                         };
                     }
                     buffers[slot.registerIndex].push_back(info);
-                    writeDescriptorSets.push_back(writeBufferDescriptorSet(combo.desc[index], VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, slot.registerIndex, buffers[slot.registerIndex].data(), (uint32_t)slot.handles.size()));
+                    writeDescriptorSets.push_back(writeBufferDescriptorSet(descSet, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, slot.registerIndex, buffers[slot.registerIndex].data(), (uint32_t)slot.handles.size()));
                 }
                 slot.dirty = false;
             }
@@ -1659,6 +1878,7 @@ ComputeStatus Vulkan::processDescriptors(DispatchData& thread)
         pipelineInfo.stage.module = thread.kernel->shaderModule;
         pipelineInfo.stage.pName = "main";
         VK_CHECK(m_ddt.CreateComputePipelines(m_device, nullptr, 1, &pipelineInfo, 0, &thread.kernel->pipeline));
+        setDebugNameVk(thread.kernel->pipeline, "SL_thread_kernel_pipeline");
     }
     return ComputeStatus::eOk;
 }
@@ -1670,19 +1890,24 @@ ComputeStatus Vulkan::dispatch(unsigned int blockX, unsigned int blockY, unsigne
 
     if (thread.kernel->shaderModule)
     {
-        processDescriptors(thread);
+        ComputeStatus ret = processDescriptors(thread);
+        if (ret != ComputeStatus::eOk)
+        {
+            SL_LOG_ERROR("VK descriptor-processing failed!");
+            return ret;
+        }
 
         auto& combo = thread.signatureToDesc[thread.signature];
 
         m_ddt.CmdBindPipeline(m_cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, thread.kernel->pipeline);
-        m_ddt.CmdBindDescriptorSets(m_cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, thread.kernel->pipelineLayout, 0, 1, &combo.desc[thread.kernel->descriptorIndex], (uint32_t)thread.signature->offsets.size(), thread.signature->offsets.data());
+        m_ddt.CmdBindDescriptorSets(m_cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, thread.kernel->pipelineLayout, 0, 1, &(combo.descSetData.descSet[combo.descSetData.descSetIndex]), (uint32_t)thread.signature->offsets.size(), thread.signature->offsets.data());
         m_ddt.CmdDispatch(m_cmdBuffer, blockX, blockY, blockZ);
     }
 
     return ComputeStatus::eOk;
 }
 
-ComputeStatus Vulkan::createTexture2DResourceSharedImpl(ResourceDescription &resDesc, Resource &outResource, bool UseNativeFormat, ResourceState initialState)
+ComputeStatus Vulkan::createTexture2DResourceSharedImpl(ResourceDescription &resDesc, Resource &outResource, bool UseNativeFormat, ResourceState initialState, const char InFriendlyName[])
 {
     VkImageView imageView{};
     VkImage image{};
@@ -1827,6 +2052,9 @@ ComputeStatus Vulkan::createTexture2DResourceSharedImpl(ResourceDescription &res
             m_ddt.DestroyImage(m_device, image, nullptr);
             return ComputeStatus::eError;
         }
+        std::stringstream name{};
+        name << InFriendlyName << "_device_memory";
+        setDebugNameVk(deviceMemory, name.str().c_str());
 
         result = m_ddt.BindImageMemory(m_device, image, deviceMemory, 0);
         if (result != VK_SUCCESS) {
@@ -1855,6 +2083,9 @@ ComputeStatus Vulkan::createTexture2DResourceSharedImpl(ResourceDescription &res
             m_ddt.DestroyImage(m_device, image, nullptr);
             return ComputeStatus::eError;
         }
+        name = std::stringstream{};
+        name << InFriendlyName << "_image_view";
+        setDebugNameVk(imageView, name.str().c_str());
     }
     
     // This pointer is deleted when DestroyResource is called on the object.
@@ -1871,7 +2102,7 @@ ComputeStatus Vulkan::createTexture2DResourceSharedImpl(ResourceDescription &res
     return ComputeStatus::eOk;
 }
 
-ComputeStatus Vulkan::createBufferResourceImpl(ResourceDescription &resDesc, Resource &outResource, ResourceState initialState)
+ComputeStatus Vulkan::createBufferResourceImpl(ResourceDescription &resDesc, Resource &outResource, ResourceState initialState, const char InFriendlyName[])
 {
     VkBuffer buffer{};
     VkDeviceMemory deviceMemory{};
@@ -1891,7 +2122,7 @@ ComputeStatus Vulkan::createBufferResourceImpl(ResourceDescription &resDesc, Res
                          // can be used as a target of a CopyHostToDeviceBuffer() call which in turn calls into vkCmdCopyBuffer().
                          // The vulkan spec specifies that such a buffer needs to have the VK_BUFFER_USAGE_TRANSFER_DST_BIT flag set on creation.
                          // https://www.khronos.org/registry/vulkan/specs/1.1-extensions/html/vkspec.html#VUID-vkCmdCopyBuffer-dstBuffer-00120
-                         | VK_BUFFER_USAGE_TRANSFER_DST_BIT
+                         | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
                          // Internal buffers created with eHeapTypeDefault heap type
                          // can be added to a shader input/output via SetInputBuffer()/SetOutputBuffer() call which in turn calls
                          // into vkGetBufferDeviceAddress/vkGetBufferDeviceAddressKHR/vkGetBufferDeviceAddressEXT().
@@ -1992,6 +2223,9 @@ ComputeStatus Vulkan::createBufferResourceImpl(ResourceDescription &resDesc, Res
         m_ddt.DestroyBuffer(m_device, buffer, nullptr);
         return ComputeStatus::eError;
     }
+    std::stringstream name{};
+    name << InFriendlyName << "_device_memory";
+    setDebugNameVk(deviceMemory, name.str().c_str());
 
     result = m_ddt.BindBufferMemory(m_device, buffer, deviceMemory, 0);
     if (result != VK_SUCCESS) {
@@ -2221,7 +2455,7 @@ ComputeStatus Vulkan::transitionResourceImpl(CommandList cmdList, const Resource
             barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
             barrier.pNext = nullptr;
             barrier.oldLayout = toVkImageLayout(transitions[i].from);
-            barrier.newLayout = toVkImageLayout(transitions[i].to);
+            barrier.newLayout = toVkImageLayout(transitions[i].to == ResourceState::eUndefined ? ResourceState::eGeneral : transitions[i].to);
             barrier.srcAccessMask = toVkAccessFlags(transitions[i].from);
             barrier.dstAccessMask = toVkAccessFlags(transitions[i].to);
             barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -2658,13 +2892,15 @@ int Vulkan::destroyResourceDeferredImpl(const Resource resource)
     // Note: From SL 2.0 there is no special VK Resource structure, it is all unified with d3d
     
     // Try to find a buffer to free first
+    bool destroyBuffer = false;
+    bool destroyImage = false;
     if (resource->type == ResourceType::eFence)
     {
         m_ddt.DestroySemaphore(m_device, (VkSemaphore)resource->native, nullptr);
     }
     else if(resource->type == ResourceType::eBuffer)
     {
-        m_ddt.DestroyBuffer(m_device, (VkBuffer)resource->native, nullptr);
+        destroyBuffer = true;
     }
     else
     {
@@ -2672,12 +2908,22 @@ int Vulkan::destroyResourceDeferredImpl(const Resource resource)
         if (resource->memory)
         {
             // If there is no memory then we did not create this image
-            m_ddt.DestroyImage(m_device, (VkImage)resource->native, nullptr);
+            destroyImage = true;
         }
     }
+
     if (resource->memory)
     {
         m_ddt.FreeMemory(m_device, (VkDeviceMemory)resource->memory, nullptr);
+    }
+
+    if (destroyBuffer)
+    {
+        m_ddt.DestroyBuffer(m_device, (VkBuffer)resource->native, nullptr);
+    }
+    else if (destroyImage)
+    {
+        m_ddt.DestroyImage(m_device, (VkImage)resource->native, nullptr);
     }
 
     return 0;
@@ -2687,6 +2933,46 @@ std::wstring Vulkan::getDebugName(Resource res)
 {
     return L"Unknown";
 }
+
+#ifdef SL_DEBUG
+#define SET_VK_DEBUG_NAME(type, vk_object_type) \
+    ComputeStatus Vulkan::setDebugNameVk(type vkStruct, const char* name) \
+    { \
+        if (m_ddt.SetDebugUtilsObjectNameEXT == nullptr) \
+        { \
+            return ComputeStatus::eError; \
+        } \
+        const VkDebugUtilsObjectNameInfoEXT info = \
+        { \
+            VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT, \
+            nullptr, \
+            (vk_object_type), \
+            (uint64_t)vkStruct, \
+            (name), \
+        }; \
+        m_ddt.SetDebugUtilsObjectNameEXT(m_device, &info); \
+        return ComputeStatus::eOk; \
+    }
+#else
+#define SET_VK_DEBUG_NAME(type, vk_object_type) \
+    ComputeStatus Vulkan::setDebugNameVk(type , const char* ) \
+    { \
+        return ComputeStatus::eOk; \
+    }
+#endif
+
+SET_VK_DEBUG_NAME(VkDescriptorSet, VK_OBJECT_TYPE_DESCRIPTOR_SET)
+SET_VK_DEBUG_NAME(VkDescriptorSetLayout, VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT)
+SET_VK_DEBUG_NAME(VkDeviceMemory, VK_OBJECT_TYPE_DEVICE_MEMORY)
+SET_VK_DEBUG_NAME(VkPipeline, VK_OBJECT_TYPE_PIPELINE)
+SET_VK_DEBUG_NAME(VkPipelineLayout, VK_OBJECT_TYPE_PIPELINE_LAYOUT)
+SET_VK_DEBUG_NAME(VkQueryPool, VK_OBJECT_TYPE_QUERY_POOL)
+SET_VK_DEBUG_NAME(VkSampler, VK_OBJECT_TYPE_SAMPLER)
+SET_VK_DEBUG_NAME(VkSemaphore, VK_OBJECT_TYPE_SEMAPHORE)
+SET_VK_DEBUG_NAME(VkDescriptorPool, VK_OBJECT_TYPE_DESCRIPTOR_POOL)
+SET_VK_DEBUG_NAME(VkImageView, VK_OBJECT_TYPE_IMAGE_VIEW)
+
+#undef SET_VK_DEBUG_NAME
 
 ComputeStatus Vulkan::setDebugName(Resource InOutResource, const char InFriendlyName[])
 {
@@ -2755,6 +3041,18 @@ ComputeStatus Vulkan::setDebugName(Resource InOutResource, const char InFriendly
             VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
             nullptr,
             VK_OBJECT_TYPE_SEMAPHORE,
+            (uint64_t)vkResource->native,
+            InFriendlyName,
+        };
+        m_ddt.SetDebugUtilsObjectNameEXT(m_device, &ObjectNameInfo);
+    }
+    else if (vkResource->type == ResourceType::eHostFence)
+    {
+        VkDebugUtilsObjectNameInfoEXT ObjectNameInfo =
+        {
+            VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+            nullptr,
+            VK_OBJECT_TYPE_FENCE,
             (uint64_t)vkResource->native,
             InFriendlyName,
         };
@@ -2870,6 +3168,9 @@ ComputeStatus Vulkan::beginPerfSection(CommandList cmdList, const char *key, uns
             SL_LOG_ERROR( "Failed to create query pool");
             return ComputeStatus::eError;
         }
+        std::stringstream name{};
+        name << "SL_query_pool_" << Data.QueryIdx;
+        setDebugNameVk(Data.QueryPool[Data.QueryIdx], name.str().c_str());
         m_ddt.CmdResetQueryPool(commandBuffer, Data.QueryPool[Data.QueryIdx], 0, 2);
     }
     else
@@ -2944,7 +3245,10 @@ ComputeStatus Vulkan::getSwapChainBuffer(SwapChain swapchain, uint32_t index, Re
 
     VkImageView imageView;
     VK_CHECK(m_ddt.CreateImageView(m_device, &texViewCreateInfo, 0, &imageView));
-    
+    std::stringstream name{};
+    name << "SL_swapchain_image_" << index << "_view";
+    setDebugNameVk(imageView, name.str().c_str());
+
     // This pointer is deleted when DestroyResource is called on the object.
     buffer = new sl::Resource{ ResourceType::eTex2d, swapchainImages[index], nullptr, imageView };
     buffer->nativeFormat = sc->info.imageFormat;

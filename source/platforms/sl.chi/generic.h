@@ -153,8 +153,8 @@ protected:
     std::map<void*, TranslatedResource> m_sharedResourceMap{};
 
     virtual int destroyResourceDeferredImpl(const Resource InResource) = 0;
-    virtual ComputeStatus createBufferResourceImpl(ResourceDescription &InOutResourceDesc, Resource &OutResource, ResourceState InitialState) = 0;
-    virtual ComputeStatus createTexture2DResourceSharedImpl(ResourceDescription &InOutResourceDesc, Resource &OutResource, bool UseNativeFormat, ResourceState InitialState) = 0;
+    virtual ComputeStatus createBufferResourceImpl(ResourceDescription &InOutResourceDesc, Resource &OutResource, ResourceState InitialState, const char InFriendlyName[]) = 0;
+    virtual ComputeStatus createTexture2DResourceSharedImpl(ResourceDescription &InOutResourceDesc, Resource &OutResource, bool UseNativeFormat, ResourceState InitialState, const char InFriendlyName[]) = 0;
     virtual ComputeStatus insertGPUBarrierList(CommandList cmdList, const Resource* InResources, unsigned int InResourceCount, BarrierType InBarrierType = eBarrierTypeUAV) override;
     virtual ComputeStatus transitionResourceImpl(CommandList cmdList, const ResourceTransition *transisitions, uint32_t count) = 0;
 
@@ -185,6 +185,8 @@ public:
     //! The following methods are VK specific so by default no implementation
     virtual ComputeStatus getInstance(Instance& instance)  override { return ComputeStatus::eNoImplementation; };
     virtual ComputeStatus getPhysicalDevice(PhysicalDevice& device)  override { return ComputeStatus::eNoImplementation; };
+    virtual ComputeStatus getHostQueueInfo(chi::CommandQueue queue, void* pQueueInfo) override { return ComputeStatus::eOk; }
+
     virtual ComputeStatus waitForIdle(Device device) override
     {
         // This is a Vulkan-only operation. It must not be exersiced in other code paths. Even in Vulkan
@@ -213,7 +215,7 @@ public:
     virtual ComputeStatus createCommandQueue(CommandQueueType type, CommandQueue& queue, const char friendlyName[], uint32_t index) override { return ComputeStatus::eNoImplementation; }
     virtual ComputeStatus destroyCommandQueue(CommandQueue& queue) override { return ComputeStatus::eNoImplementation; }
     virtual ComputeStatus createFence(FenceFlags flags, uint64_t initialValue, Fence& outFence, const char friendlyName[] = "")  override { return ComputeStatus::eNoImplementation; }
-    virtual ComputeStatus destroyFence(Fence fence) override { SL_SAFE_RELEASE(fence); return ComputeStatus::eOk; }
+    virtual ComputeStatus destroyFence(Fence& fence) override { SL_SAFE_RELEASE(fence); return ComputeStatus::eOk; }
     virtual ComputeStatus getDebugName(Resource res, std::wstring& name) { name = getDebugName(res); return ComputeStatus::eOk; }
     virtual ComputeStatus setDebugName(Resource res, const char friendlyName[]) override { return ComputeStatus::eNoImplementation; }
         

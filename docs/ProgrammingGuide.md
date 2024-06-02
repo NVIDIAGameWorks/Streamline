@@ -2,7 +2,7 @@
 Streamline - SL
 =======================
 
-Version 2.4.0
+Version 2.4.10
 =======
 
 1 SETTING UP
@@ -133,7 +133,7 @@ Here is the typical lifecycle for SL features:
 * After device creation, any calls to SL will succeed only if the feature is FULLY functional on that device
   * This means that the set of features that return true from `slIsFeatureSupported` AFTER device creation can be smaller (but not larger) than the set that returned true from `slIsFeatureSupported` after slInit, but before device creation
   * And thus, at this point, any SL method can be used safely since all required and supported features are initialized
-  * In addition, at this point it is possible to [explicitly allocate/free resources used by feature(s)](#2224-resource-allocation-and-de-allocation)
+  * In addition, at this point it is possible to [explicitly allocate/free resources used by feature(s)](#27-explicit-resource-allocation-and-de-allocation)
 
 > **IMPORTANT:**
 > `slInit` must NOT be called within DLLMain entry point in your application because that can cause a deadlock.
@@ -397,7 +397,7 @@ SL_API sl::Result slInit(const sl::Preferences &pref, uint64_t sdkVersion = sl::
 All SL functions return `sl::Result` which is defined in `sl_result.h`. However, since SL can be used as an interposer **it is not always possible to immediately report all errors or warnings after a specific SL API is invoked**. This is because some functionality can be triggered with some delay or asynchronously when DXGI/D3D/Vulkan APIs are called by the host application. Therefore, the SL SDK provides `Preferences::logMessagesCallback` so that any **asynchronous errors or warnings** can be tracked by placing breakpoints when `eLogTypeError` and/or `eLogTypeWarn` messages are received. Another useful feature is the debug console window, which should be enabled in development by setting `Preferences::showConsole` to true. In the debug console window, each error will be highlighted in red while warnings are highlighted in yellow to make it easier to notice them.
 
 > **NOTE:**
-> See [section 2.4](#24-checking-features-configuration) for more details on how to get detailed information if specific feature is not supported or fails to initialize.
+> See [section 2.4](#24-checking-if-a-feature-is-supported) for more details on how to get detailed information if specific feature is not supported or fails to initialize.
 
 #### 2.2.5 OVER THE AIR (OTA) UPDATES
 
@@ -1245,7 +1245,7 @@ By design, SL SDK enables `host assisted replacement or injection of specific re
 SL_API sl::Result slEvaluateFeature(sl::Feature feature, const sl::FrameToken& frame, const sl::BaseStructure** inputs, uint32_t numInputs, sl::CommandBuffer* cmdBuffer);
 ```
 
-Plase note that **host is responsible for restoring the command buffer(list) state** after calling `slEvaluate`. For more details on which states are affected please see [restore pipeline section](./ProgrammingGuideManualHooking.md#80-restoring-command-listbuffer-state)
+Plase note that **host is responsible for restoring the command buffer(list) state** after calling `slEvaluate`. For more details on which states are affected please see [restore pipeline section](./ProgrammingGuideManualHooking.md#70-restoring-command-listbuffer-state)
 
 > **NOTE:**
 > DLSS-G is a unique case since it already has the marker provided by the existing API (SwapChain::Present) hence there is no need to call `slEvaluateFeature` to enable DLSS-G
@@ -1346,6 +1346,14 @@ SL_API sl::Result slShutdown();
 > If shutdown is called too early, any SL features which are enabled and running will stop functioning and the host application will fallback to the
 default implementation. For example, if DLSS is enabled and running and shutdown is called, the `sl.dlss` plugin will be unloaded, hence any `evaluate` or `slIsFeatureSupported` calls will return an error and the host application should fallback to the default implementation (for example TAAU)
 
+### 2.15 MULTIPLE SWAP CHAINS
+
+The current tagging API in Streamline is designed with a single swap chain in mind.  When a resource is tagged with a life-cycle of `eValidUntilPresent` there is no way to specify on which swap chain the Present() is.
+
+So, if Streamline sees multiple swap chains- it will hook the first one, and it will log a warning for all other swap chains.
+
+If an application needs to create multiple swap chains, it can use [manual hooking](ProgrammingGuideManualHooking.md)- and use `slUpgradeInterface()` to inform Streamline which swap chain it needs to attach to.  That way the warning about multiple swap chains may be avoided.
+
 3 VALIDATING SL INTEGRATION WHEN REPLACING PLATFORM LIBRARIES
 -----------------------------
 
@@ -1378,7 +1386,7 @@ The remaining modules are optional depending on which features are enabled in yo
 
 * If Steam overlay is not showing up please ensure that SteamAPI_Init() is called **before** any D3D or DXGI calls (device create, factory create etc.)
 * If D3D debug layer is complaining about incorrect resource states please provide correct state when tagging SL resources (see sl::Resource structure)
-* If you get a crash in Swapchain::Present or some similar unexpected behavior please double check that you are NOT linking dxgi.lib/d3d12.lib together with the sl.interposer.dll. See [section 3](#3-validating-sl-integration) in this guide.
+* If you get a crash in Swapchain::Present or some similar unexpected behavior please double check that you are NOT linking dxgi.lib/d3d12.lib together with the sl.interposer.dll. See [section 3](#3-validating-sl-integration-when-replacing-platform-libraries) in this guide.
 * If SL does not work correctly make sure that some other library which includes `dxgi` or `d3d11/12` is not linked in your application (like for example `WindowsApp.lib`)
 * Third party overlays can disable SL interposer, always make sure to call `slSetD3DDevice` or `slSetVulkanInfo`
 * Make sure that all matrices are multiplied in the correct order and provided in row-major order **without any jitter**

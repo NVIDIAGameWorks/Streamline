@@ -33,6 +33,7 @@
 #include "source/core/sl.plugin/plugin.h"
 #include "source/core/sl.param/parameters.h"
 #include "source/platforms/sl.chi/compute.h"
+#include "source/platforms/sl.chi/vulkan.h"
 #include "source/plugins/sl.nis/versions.h"
 #include "source/plugins/sl.imgui/imgui.h"
 #include "source/plugins/sl.common/commonInterface.h"
@@ -137,6 +138,9 @@ void updateEmbeddedJSON(json& config)
         info.SHA = GIT_LAST_COMMIT_SHORT;
         info.requiredTags = { { kBufferTypeScalingInputColor, ResourceLifecycle::eValidUntilEvaluate}, {kBufferTypeScalingOutputColor, ResourceLifecycle::eValidUntilEvaluate} };
         updateCommonEmbeddedJSONConfig(&config, info);
+
+        // Tell plugin manager to use vk fp16 feature.
+        config["external"]["vk"]["device"]["1.2_features"] = { "shaderFloat16" };
     }
 }
 

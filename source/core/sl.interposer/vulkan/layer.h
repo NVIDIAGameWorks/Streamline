@@ -36,6 +36,15 @@ namespace sl
 namespace interposer
 {
 
+struct QueueVkInfo
+{
+    VkQueueFlags flags{};
+    uint32_t familyIndex{};
+    uint32_t index{};
+    VkDeviceQueueCreateFlags createFlags{};
+    uint32_t count{};
+};
+
 struct VkTable
 {
     VkDevice device;
@@ -46,12 +55,16 @@ struct VkTable
 
     uint32_t computeQueueIndex = 0;
     uint32_t computeQueueFamily = 0;
+    uint32_t computeQueueCreateFlags = 0;
     uint32_t graphicsQueueIndex = 0;
     uint32_t graphicsQueueFamily = 0;
+    uint32_t graphicsQueueCreateFlags = 0;
     uint32_t opticalFlowQueueIndex = 0;
     uint32_t opticalFlowQueueFamily = 0;
+    uint32_t opticalFlowQueueCreateFlags = 0;
 
     bool nativeOpticalFlowHWSupport = false;
+    std::vector<QueueVkInfo> hostGraphicsComputeQueueInfo{};
 
     std::mutex mutex;
     std::map<void*, VkLayerInstanceDispatchTable> dispatchInstanceMap;

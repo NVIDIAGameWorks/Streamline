@@ -3,7 +3,7 @@ Streamline - DLSS-G
 
 NVIDIA DLSS Frame Generation (“DLSS-FG” or “DLSS-G”) is an AI based technology that infers frames based on rendered frames coming from a game engine or rendering pipeline. This document explains how to integrate DLSS-G into a renderer.
 
-Version 2.4.0
+Version 2.4.10
 =======
 
 ### 0.0 Integration checklist
@@ -12,18 +12,18 @@ See Section 15.0 for further details on some of these items, in addition to the 
 
 Item | Reference | Confirmed
 ---|---|---
-All the required inputs are passed to Streamline: depth buffers, motion vectors, HUD-less color buffers  | Section 5.0 |
-Common constants and frame index are provided for **each frame** using slSetConstants and slSetFeatureConstants methods   |  Section 7.0 |
-All tagged buffers are valid at frame present time, and they are not re-used for other purposes | Section 5.0 |
-Buffers to be tagged with unique id 0 | Section 5.0 |
-Make sure that frame index provided with the common constants is matching the presented frame | Section 8.0 |
+All the required inputs are passed to Streamline: depth buffers, motion vectors, HUD-less color buffers  | [Section 5.0](#50-tag-all-required-resources) |
+Common constants and frame index are provided for **each frame** using slSetConstants and slSetFeatureConstants methods   |  [Section 7.0](#70-provide-common-constants) |
+All tagged buffers are valid at frame present time, and they are not re-used for other purposes | [Section 5.0](#50-tag-all-required-resources) |
+Buffers to be tagged with unique id 0 | [Section 5.0](#50-tag-all-required-resources) |
+Make sure that frame index provided with the common constants is matching the presented frame | [Section 8.0](#80-integrate-sl-reflex) |
 Inputs are passed into Streamline look correct, as well as camera matrices and dynamic objects | [SL ImGUI guide](<Debugging - SL ImGUI (Realtime Data Inspection).md>) |
 Application checks the signature of sl.interposer.dll to make sure it is a genuine NVIDIA library | [Streamline programming guide, section 2.1.1](./ProgrammingGuide.md#211-security) |
-Requirements for Dynamic Resolution are met (if the game supports Dynamic Resolution)  | Section 10.0 |
-DLSS-G is turned off (by setting `sl::DLSSGOptions::mode` to `sl::DLSSGMode::eOff`) when the game is paused, loading, in menu and in general NOT rendering game frames and also when modifying resolution & full-screen vs windowed mode | Section 12.0 |
-Swap chain is recreated every time DLSS-G is turned on or off (by changing `sl::DLSSGOptions::mode`) to avoid unnecessary performance overhead when DLSS-G is switched off | Section 19.0 |
-Reduce the amount of motion blur; when DLSS-G enabled, halve the distance/magnitude of motion blur | Section 14.0 |
-Reflex is properly integrated (see checklist in Reflex Programming Guide) | Section 8.0 |
+Requirements for Dynamic Resolution are met (if the game supports Dynamic Resolution)  | [Section 10.0](#100-dlss-g-and-dynamic-resolution) |
+DLSS-G is turned off (by setting `sl::DLSSGOptions::mode` to `sl::DLSSGMode::eOff`) when the game is paused, loading, in menu and in general NOT rendering game frames and also when modifying resolution & full-screen vs windowed mode | [Section 12.0](#120-dlss-g-and-dxgi) |
+Swap chain is recreated every time DLSS-G is turned on or off (by changing `sl::DLSSGOptions::mode`) to avoid unnecessary performance overhead when DLSS-G is switched off | [Section 18.0](#180-how-to-avoid-unnecessary-overhead-when-dlss-g-is-turned-off) |
+Reduce the amount of motion blur; when DLSS-G enabled, halve the distance/magnitude of motion blur | N/A |
+Reflex is properly integrated (see checklist in Reflex Programming Guide) | [Section 8.0](#80-integrate-sl-reflex) |
 In-game UI for enabling/disabling DLSS-G is implemented | [RTX UI Guidelines](<RTX UI Developer Guidelines.pdf>) |
 Only full production non-watermarked libraries are packaged in the release build | N/A |
 No errors or unexpected warnings in Streamline and DLSS-G log files while running the feature | N/A |
@@ -64,7 +64,7 @@ if(SL_FAILED(res, slInit(pref)))
 }
 ```
 
-For more details please see [preferences](ProgrammingGuide.md#221-preferences)
+For more details please see [preferences](ProgrammingGuide.md#222-preferences)
 
 Call `slShutdown()` before destroying dxgi/d3d12/vk instances, devices and other components in your engine.
 
@@ -346,6 +346,8 @@ float2 generateBidirectionalDistortionField(Texture2D output, float2 UV)
 
 ### 6.0 SET DLSS-G OPTIONS
 
+slDLSSGSetOptions() is actioned in the following DXGI / VK Present call. As such, it should not be considered thread safe with respect to that Present call. I.e. the application is expected to add any necessary synchronization logic to ensure these all slDLSSGSetOptions() and Present() calls are received by the Streamline in the correct order.
+
 #### 6.1 TURNING DLSS-G ON/OFF/AUTO
 
 **NOTE: By default DLSS-G interpolation is off, even if the feature is loaded and the required items tagged.  DLSS-G must be explicitly turned on by the application using the DLSS-G-specific constants function.**
@@ -457,11 +459,11 @@ if(!setConstants(consts, *frameToken, viewport))
 }
 ```
 
-For more details please see [common constants](ProgrammingGuide.md#251-common-constants)
+For more details please see [common constants](ProgrammingGuide.md#2101-common-constants)
 
 ### 8.0 INTEGRATE SL REFLEX
 
-**It is required** for sl.reflex to be integrated in the host application. **Please note that any existing regular Reflex SDK integration (not using Streamline) cannot be used by DLSS-G**. Special attention should be paid to the markers `eReflexMarkerPresentStart` and `eReflexMarkerPresentEnd` which must provide correct frame index so that it can be matched to the one provided in the [section 7](#60-provide-common-constants)
+**It is required** for sl.reflex to be integrated in the host application. **Please note that any existing regular Reflex SDK integration (not using Streamline) cannot be used by DLSS-G**. Special attention should be paid to the markers `eReflexMarkerPresentStart` and `eReflexMarkerPresentEnd` which must provide correct frame index so that it can be matched to the one provided in the [section 7](#70-provide-common-constants)
 
 For more details please see [reflex guide](ProgrammingGuideReflex.md)
 
@@ -678,7 +680,7 @@ vkQueuePresent(presentSemaphore, index);
   * If VRAM stats and other extra information is not needed pass `nullptr` for constants for lowest overhead.
 * Call `slGetFeatureRequirements` to obtain requirements for DLSS-G (see [programming guide](./ProgrammingGuide.md#23-checking-features-requirements) and check the following:
   * If any of the items in the `sl::FeatureRequirements` structure like OS, driver etc. are NOT supported inform user accordingly.
-* To avoid an additional overhead when presenting frames while DLSS-G is off **always make sure to re-create the swap-chain when DLSS-G is turned off**. For details please see [section 19](#190-how-to-avoid-unnecessary-overhead-when-dlss-g-is-turned-off)
+* To avoid an additional overhead when presenting frames while DLSS-G is off **always make sure to re-create the swap-chain when DLSS-G is turned off**. For details please see [section 18](#180-how-to-avoid-unnecessary-overhead-when-dlss-g-is-turned-off)
 
 #### 17.1 Game setup for the testing DLSS Frame Generation
 

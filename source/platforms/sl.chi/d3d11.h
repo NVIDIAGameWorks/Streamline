@@ -101,8 +101,8 @@ class D3D11 : public Generic
     virtual std::wstring getDebugName(Resource res) override final;
 
     ComputeStatus transitionResourceImpl(CommandList InCmdList, const ResourceTransition *transisitions, uint32_t count) override final;
-    ComputeStatus createTexture2DResourceSharedImpl(ResourceDescription &InOutResourceDesc, Resource &OutResource, bool UseNativeFormat, ResourceState InitialState) override final;
-    ComputeStatus createBufferResourceImpl(ResourceDescription &InOutResourceDesc, Resource &OutResource, ResourceState InitialState) override final;
+    ComputeStatus createTexture2DResourceSharedImpl(ResourceDescription &InOutResourceDesc, Resource &OutResource, bool UseNativeFormat, ResourceState InitialState, const char InFriendlyName[]) override final;
+    ComputeStatus createBufferResourceImpl(ResourceDescription &InOutResourceDesc, Resource &OutResource, ResourceState InitialState, const char InFriendlyName[]) override final;
     ComputeStatus getLUIDFromDevice(NVSDK_NGX_LUID *OutId);
     ComputeStatus getSurfaceDriverData(Resource resource, ResourceDriverDataD3D11& data, uint32_t mipOffset = 0);
     ComputeStatus getTextureDriverData(Resource resource, ResourceDriverDataD3D11& data, uint32_t mipOffset = 0, uint32_t mipLevels = 0, Sampler sampler = Sampler::eSamplerPointClamp);

@@ -285,8 +285,8 @@ class D3D12 : public Generic
     ComputeStatus getSurfaceDriverData(Resource resource, ResourceDriverData &data, uint32_t mipOffset = 0);
     ComputeStatus getTextureDriverData(Resource resource, ResourceDriverData &data, uint32_t mipOffset = 0, uint32_t mipLevels = 0, Sampler sampler = Sampler::eSamplerPointClamp);
     ComputeStatus transitionResourceImpl(CommandList InCmdList, const ResourceTransition* transisitions, uint32_t count) override final;
-    ComputeStatus createTexture2DResourceSharedImpl(ResourceDescription& InOutResourceDesc, Resource& OutResource, bool UseNativeFormat, ResourceState InitialState) override final;
-    ComputeStatus createBufferResourceImpl(ResourceDescription& InOutResourceDesc, Resource& OutResource, ResourceState InitialState) override final;
+    ComputeStatus createTexture2DResourceSharedImpl(ResourceDescription& InOutResourceDesc, Resource& OutResource, bool UseNativeFormat, ResourceState InitialState, const char InFriendlyName[]) override final;
+    ComputeStatus createBufferResourceImpl(ResourceDescription& InOutResourceDesc, Resource& OutResource, ResourceState InitialState, const char InFriendlyName[]) override final;
 
     bool dx11On12 = false;
     bool isSupportedFormat(DXGI_FORMAT format, int flag1, int flag2);

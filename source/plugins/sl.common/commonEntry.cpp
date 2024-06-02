@@ -49,6 +49,8 @@
 
 #ifdef SL_WINDOWS
 #define NV_WINDOWS
+// NT_SUCCESS macro
+#include <winternl.h>
 // Needed for SHGetKnownFolderPath
 #include <ShlObj.h>
 #pragma comment(lib,"shlwapi.lib")
@@ -1396,6 +1398,7 @@ void slOnPluginShutdown()
 
 using PFunRtlGetVersion = NTSTATUS(WINAPI*)(PRTL_OSVERSIONINFOW);
 using PFunNtSetTimerResolution = NTSTATUS(NTAPI*)(ULONG DesiredResolution, BOOLEAN SetResolution, PULONG CurrentResolution);
+using PFunNtQueryTimerResolution = NTSTATUS(NTAPI*)(PULONG MinimumResolution, PULONG MaximumResolution, PULONG CurrentResolution);
 
 bool getOSVersionAndUpdateTimerResolution(common::SystemCaps* caps)
 {
@@ -1507,22 +1510,44 @@ bool getOSVersionAndUpdateTimerResolution(common::SystemCaps* caps)
         caps->osVersionBuild = vNT.build;
     }
 
+    auto NtQueryTimerResolution = reinterpret_cast<PFunNtQueryTimerResolution>(GetProcAddress(handle, "NtQueryTimerResolution"));
     auto NtSetTimerResolution = reinterpret_cast<PFunNtSetTimerResolution>(GetProcAddress(handle, "NtSetTimerResolution"));
-    if (NtSetTimerResolution)
+    if (NtSetTimerResolution && NtQueryTimerResolution)
     {
-        ULONG currentRes{};
-        if (!NtSetTimerResolution(5000, TRUE, &currentRes))
+        // SL wants a minimum timer resolution of 0.5ms. The application may have already set a finer-grained value, this is fine, and SL should not modify the timer resolution.
+        const ULONG slPreferredTimerRes = 5000UL;
+
+        ULONG minRes = ULONG_MAX;
+        ULONG maxRes = slPreferredTimerRes;
+        ULONG setRes = slPreferredTimerRes;
+        ULONG currentRes = ULONG_MAX;
+
+        if (!NT_SUCCESS(NtQueryTimerResolution(&minRes, &maxRes, &currentRes)))
         {
-            SL_LOG_INFO("Changed high resolution timer resolution to 5000 [100 ns units]");
+            SL_LOG_WARN("Failed to query high resolution timer capabilities, assuming it supports at least %u [100 ns units].", slPreferredTimerRes);
         }
-        else
+
+        if (currentRes > slPreferredTimerRes)
         {
-            SL_LOG_WARN("Failed to change high resolution timer resolution to 5000 [100 ns units]");
+            if (maxRes > slPreferredTimerRes)
+            {
+                SL_LOG_INFO("Preferred high resolution timer resolution (%u) is unsupported, trying %u [100 ns units] instead.", slPreferredTimerRes, maxRes);
+                setRes = maxRes;
+            }
+
+            if (NT_SUCCESS(NtSetTimerResolution(setRes, TRUE, &currentRes)))
+            {
+                SL_LOG_INFO("Changed high resolution timer resolution to %u [100 ns units].", currentRes);
+            }
+            else
+            {
+                SL_LOG_WARN("Failed to change high resolution timer resolution to %u [100 ns units].", setRes);
+            }
         }
     }
     else
     {
-        SL_LOG_WARN("Failed to retrieve the NtSetTimerResolution() function from ntdll.");
+        SL_LOG_WARN("Failed to retrieve the NtQueryTimerResolution() and NtSetTimerResolution() functions from ntdll.");
     }
     return res;
 }

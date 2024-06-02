@@ -79,6 +79,12 @@ sl::Result processVulkanInterface(const sl::VulkanInfo* extension)
     s_vk.graphicsQueueIndex = extension->graphicsQueueIndex;
     s_vk.computeQueueFamily = extension->computeQueueFamily;
     s_vk.computeQueueIndex = extension->computeQueueIndex;
+    if (extension->structVersion >= sl::kStructVersion3)
+    {
+        s_vk.graphicsQueueCreateFlags = extension->graphicsQueueCreateFlags;
+        s_vk.computeQueueCreateFlags = extension->computeQueueCreateFlags;
+        s_vk.opticalFlowQueueCreateFlags = extension->opticalFlowQueueCreateFlags;
+    }
     if (extension->structVersion >= sl::kStructVersion2)
     {
         s_vk.opticalFlowQueueFamily = extension->opticalFlowQueueFamily;
@@ -331,6 +337,13 @@ extern "C"
         createInfo.enabledExtensionCount = (uint32_t)extensions.size();
         createInfo.ppEnabledExtensionNames = extensions.data();
 
+        VkPhysicalDeviceOpticalFlowFeaturesNV supportedOpticalFlowFeaturesNV{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPTICAL_FLOW_FEATURES_NV };
+        VkPhysicalDeviceVulkan13Features supportedPhysicalDevice13Features{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, &supportedOpticalFlowFeaturesNV };
+        VkPhysicalDeviceVulkan12Features supportedPhysicalDevice12Features{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &supportedPhysicalDevice13Features };
+        VkPhysicalDeviceFeatures2 supportedFeatures{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &supportedPhysicalDevice12Features };
+        // Query device support for VK 1.2, 1.3 and optical flow features and only enable supported ones below.
+        vkGetPhysicalDeviceFeatures2(physicalDevice, &supportedFeatures);
+
         // Check if host is already specifying 1.2 features
         VkPhysicalDeviceVulkan12Features* features12{};
         VkPhysicalDeviceTimelineSemaphoreFeatures* pphysicalDeviceTimelineSemaphoreFeatures{};
@@ -339,6 +352,7 @@ extern "C"
         // Check if host is already specifying 1.3 features
         VkPhysicalDeviceVulkan13Features* features13{};
         VkPhysicalDeviceSynchronization2Features* pphysicalDeviceSynchronization2Features{};
+        VkPhysicalDeviceShaderFloat16Int8Features* pphysicalDeviceFloat16Int8Features{};
         VkPhysicalDeviceOpticalFlowFeaturesNV* pphysicalDeviceOpticalFlowFeaturesNV{};
         auto featuresChain = createInfo.pNext;
 
@@ -368,6 +382,10 @@ extern "C"
             {
                 pphysicalDeviceSynchronization2Features = (VkPhysicalDeviceSynchronization2Features*)featuresChain;
             }
+            else if (((VkPhysicalDeviceShaderFloat16Int8Features*)featuresChain)->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES)
+            {
+                pphysicalDeviceFloat16Int8Features = (VkPhysicalDeviceShaderFloat16Int8Features*)featuresChain;
+            }
             else if (((VkPhysicalDeviceOpticalFlowFeaturesNV*)featuresChain)->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPTICAL_FLOW_FEATURES_NV)
             {
                 pphysicalDeviceOpticalFlowFeaturesNV = (VkPhysicalDeviceOpticalFlowFeaturesNV*)featuresChain;
@@ -384,23 +402,23 @@ extern "C"
         {
             if (pphysicalDeviceOpticalFlowFeaturesNV)
             {
-                pphysicalDeviceOpticalFlowFeaturesNV->opticalFlow = true;
+                pphysicalDeviceOpticalFlowFeaturesNV->opticalFlow = supportedOpticalFlowFeaturesNV.opticalFlow;
             }
             else
             {
                 physicalDeviceOpticalFlowFeaturesNV.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPTICAL_FLOW_FEATURES_NV;
-                physicalDeviceOpticalFlowFeaturesNV.opticalFlow = true;
+                physicalDeviceOpticalFlowFeaturesNV.opticalFlow = supportedOpticalFlowFeaturesNV.opticalFlow;
                 physicalDeviceOpticalFlowFeaturesNV.pNext = (void*)createInfo.pNext;
                 createInfo.pNext = &physicalDeviceOpticalFlowFeaturesNV;
             }
 
             if (features13)
             {
-                features13->synchronization2 = true;
+                features13->synchronization2 = supportedPhysicalDevice13Features.synchronization2;
             }
             else if (pphysicalDeviceSynchronization2Features)
             {
-                pphysicalDeviceSynchronization2Features->synchronization2 = true;
+                pphysicalDeviceSynchronization2Features->synchronization2 = supportedPhysicalDevice13Features.synchronization2;
             }
             else
             {
@@ -409,7 +427,7 @@ extern "C"
                 //physicalDeviceSynchronization2Features.pNext = (void*)createInfo.pNext;
                 //createInfo.pNext = &physicalDeviceSynchronization2Features;
                 enable13Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
-                enable13Features.synchronization2 = true;
+                enable13Features.synchronization2 = supportedPhysicalDevice13Features.synchronization2;
                 enable13Features.pNext = (void*)createInfo.pNext;
                 createInfo.pNext = &enable13Features;
             }
@@ -417,9 +435,10 @@ extern "C"
 
         if (features12)
         {
-            features12->timelineSemaphore	= true;
-            features12->descriptorIndexing	= true;
-            features12->bufferDeviceAddress = true;
+            features12->timelineSemaphore	= supportedPhysicalDevice12Features.timelineSemaphore;
+            features12->descriptorIndexing	= supportedPhysicalDevice12Features.descriptorIndexing;
+            features12->bufferDeviceAddress = supportedPhysicalDevice12Features.bufferDeviceAddress;
+            features12->shaderFloat16 = supportedPhysicalDevice12Features.shaderFloat16;
         }
         else
         {
@@ -427,11 +446,11 @@ extern "C"
 
             if (pphysicalDeviceTimelineSemaphoreFeatures)
             {
-                pphysicalDeviceTimelineSemaphoreFeatures->timelineSemaphore = true;
+                pphysicalDeviceTimelineSemaphoreFeatures->timelineSemaphore = supportedPhysicalDevice12Features.timelineSemaphore;
             }
             else
             {
-                enable12Features.timelineSemaphore = true;
+                enable12Features.timelineSemaphore = supportedPhysicalDevice12Features.timelineSemaphore;
             }
             //if (pphysicalDeviceDescriptorIndexingFeatures)
             //{
@@ -443,11 +462,19 @@ extern "C"
             }
             if (pphysicalDeviceBufferDeviceAddressFeatures)
             {
-                pphysicalDeviceBufferDeviceAddressFeatures->bufferDeviceAddress = true;
+                pphysicalDeviceBufferDeviceAddressFeatures->bufferDeviceAddress = supportedPhysicalDevice12Features.bufferDeviceAddress;
             }
             else
             {
-                enable12Features.bufferDeviceAddress = true;
+                enable12Features.bufferDeviceAddress = supportedPhysicalDevice12Features.bufferDeviceAddress;
+            }
+            if (pphysicalDeviceFloat16Int8Features)
+            {
+                pphysicalDeviceFloat16Int8Features->shaderFloat16 = supportedPhysicalDevice12Features.shaderFloat16;
+            }
+            else
+            {
+                enable12Features.shaderFloat16 = supportedPhysicalDevice12Features.shaderFloat16;
             }
 
             enable12Features.pNext = (void*)createInfo.pNext;
@@ -465,6 +492,7 @@ extern "C"
 
         s_vk.graphicsQueueFamily = 0;
         s_vk.computeQueueFamily = 0;
+        std::unordered_map<uint32_t, VkQueueFlags> graphicsComputeQueueFamilyIndex{};
         for (uint32_t i = 0; i < static_cast<uint32_t>(queueFamilyProperties.size()); i++)
         {
             if (!s_vk.nativeOpticalFlowHWSupport || i != s_vk.opticalFlowQueueFamily)
@@ -473,11 +501,13 @@ extern "C"
                 {
                     SL_LOG_VERBOSE("Found Vulkan graphics queue family at index %u - max queues allowed %u", i, queueFamilyProperties[i].queueCount);
                     s_vk.graphicsQueueFamily = i;
+                    graphicsComputeQueueFamilyIndex[i] = VK_QUEUE_GRAPHICS_BIT;
                 }
                 else if ((queueFamilyProperties[i].queueFlags & VK_QUEUE_COMPUTE_BIT))
                 {
                     SL_LOG_VERBOSE("Found Vulkan compute queue family at index %u - max queues allowed %u", i, queueFamilyProperties[i].queueCount);
                     s_vk.computeQueueFamily = i;
+                    graphicsComputeQueueFamilyIndex[i] = VK_QUEUE_COMPUTE_BIT;
                 }
             }
         }
@@ -486,32 +516,47 @@ extern "C"
         s_vk.computeQueueIndex = 0;
         s_vk.graphicsQueueIndex = 0;
         std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
+        const float defaultQueuePriority = 0.0f;
+        std::vector<float> computeQueuePriorities( extraComputeQueues, defaultQueuePriority );
+        std::vector<float> graphicsQueuePriorities(extraGraphicsQueues, defaultQueuePriority);
+        std::vector<float> opticalFlowQueuePriorities(extraOpticalFlowQueues, defaultQueuePriority);
         for (uint32_t i = 0; i < createInfo.queueCreateInfoCount; i++)
         {
             queueCreateInfos.push_back(createInfo.pQueueCreateInfos[i]);
-            if (createInfo.pQueueCreateInfos[i].queueFamilyIndex == s_vk.computeQueueFamily)
+            if (auto search = graphicsComputeQueueFamilyIndex.find(queueCreateInfos.back().queueFamilyIndex); search != graphicsComputeQueueFamilyIndex.end())
+            {
+                s_vk.hostGraphicsComputeQueueInfo.emplace_back(QueueVkInfo{ search->second, search->first, {}, queueCreateInfos.back().flags, queueCreateInfos.back().queueCount });
+            }
+            if (extraComputeQueues != 0 && createInfo.pQueueCreateInfos[i].queueFamilyIndex == s_vk.computeQueueFamily)
             {
                 if (queueFamilyProperties[s_vk.computeQueueFamily].queueCount < queueCreateInfos.back().queueCount + extraComputeQueues)
                 {
                     SL_LOG_WARN("SL feature(s) requiring more compute queues than available on this device");
                     continue;
                 }
-                s_vk.computeQueueIndex++;
+                s_vk.computeQueueCreateFlags = queueCreateInfos.back().flags;
+                s_vk.computeQueueIndex += queueCreateInfos.back().queueCount;
+                computeQueuePriorities.insert(computeQueuePriorities.begin(), queueCreateInfos.back().pQueuePriorities, queueCreateInfos.back().pQueuePriorities + queueCreateInfos.back().queueCount);
+                queueCreateInfos.back().pQueuePriorities = computeQueuePriorities.data();
                 queueCreateInfos.back().queueCount += extraComputeQueues; // defaults to 0 unless requested otherwise by plugin(s)
+                extraComputeQueues = 0;
             }
-            if (createInfo.pQueueCreateInfos[i].queueFamilyIndex == s_vk.graphicsQueueFamily)
+            if (extraGraphicsQueues != 0 && createInfo.pQueueCreateInfos[i].queueFamilyIndex == s_vk.graphicsQueueFamily)
             {
                 if (queueFamilyProperties[s_vk.graphicsQueueFamily].queueCount < queueCreateInfos.back().queueCount + extraGraphicsQueues)
                 {
                     SL_LOG_WARN("SL feature(s) requiring more graphics queues than available on this device");
                     continue;
                 }
-                s_vk.graphicsQueueIndex++;
+                s_vk.graphicsQueueCreateFlags = queueCreateInfos.back().flags;
+                s_vk.graphicsQueueIndex += queueCreateInfos.back().queueCount;
+                graphicsQueuePriorities.insert(graphicsQueuePriorities.begin(), queueCreateInfos.back().pQueuePriorities, queueCreateInfos.back().pQueuePriorities + queueCreateInfos.back().queueCount);
+                queueCreateInfos.back().pQueuePriorities = graphicsQueuePriorities.data();
                 queueCreateInfos.back().queueCount += extraGraphicsQueues; // defaults to 0 unless requested otherwise by plugin(s)
+                extraGraphicsQueues = 0;
             }
         }
 
-        const float defaultQueuePriority = 0.0f;
         VkDeviceQueueCreateInfo queueInfo{};
 
         if (extraComputeQueues > 0 && s_vk.computeQueueIndex == 0 && queueFamilyProperties[s_vk.computeQueueFamily].queueCount >= extraComputeQueues)
@@ -519,18 +564,22 @@ extern "C"
             // We have to add compute queue(s) explicitly since host has none
             queueInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
             queueInfo.queueFamilyIndex = s_vk.computeQueueFamily;
+            queueInfo.flags = s_vk.computeQueueCreateFlags;
             queueInfo.queueCount = extraComputeQueues;
-            queueInfo.pQueuePriorities = &defaultQueuePriority;
+            queueInfo.pQueuePriorities = computeQueuePriorities.data();
             queueCreateInfos.push_back(queueInfo);
+            extraComputeQueues = 0;
         }
 
         if (s_vk.nativeOpticalFlowHWSupport && extraOpticalFlowQueues > 0 && queueFamilyProperties[s_vk.opticalFlowQueueFamily].queueCount >= extraOpticalFlowQueues)
         {
             queueInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
             queueInfo.queueFamilyIndex = s_vk.opticalFlowQueueFamily;
+            queueInfo.flags = s_vk.opticalFlowQueueCreateFlags;
             queueInfo.queueCount = extraOpticalFlowQueues;
-            queueInfo.pQueuePriorities = &defaultQueuePriority;
+            queueInfo.pQueuePriorities = opticalFlowQueuePriorities.data();
             queueCreateInfos.push_back(queueInfo);
+            extraOpticalFlowQueues = 0;
         }
 
         createInfo.pQueueCreateInfos = queueCreateInfos.data();

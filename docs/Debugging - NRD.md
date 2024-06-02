@@ -1,4 +1,7 @@
 # Debugging NRD
+
+> The NRD SL feature has been deprecated and will soon be removed.  Please migrate to integrating the NRD SDK.
+
 Currently NRD plugin supports debbugging through the validation layer.
 
 # VALIDATION LAYER

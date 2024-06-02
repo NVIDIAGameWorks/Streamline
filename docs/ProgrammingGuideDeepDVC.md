@@ -13,7 +13,7 @@ The filter is controlled by two parameters:
 | Intensity | Controls how strong or subtle the filter effect will be on an image. | A low intensity will keep the images closer to the original, while a high intensity will make the filter effect more pronounced. A zero value will result in the original image. | [0, 1] |
 | Saturation Boost | Enhances the colors in your image, making them more vibrant and eye-catching. | This setting will only be active if you've turned up the Intensity. Once active, you'll see colors pop up more, making the image look more lively.  | [0, 1] |
 
-Version 2.4.0
+Version 2.4.10
 =======
 
 ### 1.0 CHECK IF DEEPDVC IS SUPPORTED
@@ -90,7 +90,7 @@ if(useDeepDVC)
 ```
 
 > **IMPORTANT:**
-> Please note that **host is responsible for restoring the command buffer(list) state** after calling `slEvaluate`. For more details on which states are affected please see [restore pipeline section](./ProgrammingGuideManualHooking.md#80-restoring-command-listbuffer-state)
+> Please note that **host is responsible for restoring the command buffer(list) state** after calling `slEvaluate`. For more details on which states are affected please see [restore pipeline section](./ProgrammingGuideManualHooking.md#70-restoring-command-listbuffer-state)
 
 ### 5.0 MULTIPLE VIEWPORTS
 

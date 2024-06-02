@@ -626,7 +626,7 @@ Result dlssEndEvent(chi::CommandList pCmdList, const common::EventData& data, co
                     extra::ScopedTasks revTransitions;
                     chi::ResourceTransition transitions[] =
                     {
-                        {mvecIn, chi::ResourceState::eStorageRW, chi::ResourceState::eTextureRead}
+                        {mvecIn, chi::ResourceState::eStorageRW, ctx.cachedStates[mvecIn]}
                     };
                     ctx.compute->transitionResources(pCmdList, transitions, (uint32_t)countof(transitions), &revTransitions);
                     CHI_VALIDATE(ctx.compute->bindSharedState(pCmdList));

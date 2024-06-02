@@ -4,7 +4,7 @@ Streamline - PCL Stats
 
 >The focus of this guide is on using Streamline to integrate PCL (PC Latency) Stats into an application.
 
-Version 2.4.0
+Version 2.4.10
 =======
 
 The application should not explicitly check for GPU HW, vendor, and driver version.
@@ -47,7 +47,7 @@ if(SL_FAILED(res, slInit(pref)))
 }
 ```
 
-For more details please see [preferences](ProgrammingGuide.md#221-preferences)
+For more details please see [preferences](ProgrammingGuide.md#222-preferences)
 
 Call `slShutdown()` before destroying dxgi/d3d11/d3d12/vk instances, devices and other components in your engine.
 

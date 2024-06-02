@@ -333,7 +333,7 @@ Context* createContext(const ContextDesc& desc)
         info.MinImageCount = NUM_BACK_BUFFERS;
 
         // Create the Render Pass
-        VkRenderPass renderPass;
+        VkRenderPass renderPass{};
         {
             VkAttachmentDescription attachment = {};
             attachment.format = info.Format;
@@ -391,6 +391,7 @@ void destroyContext(Context* ctx)
     else
     {
         ImGui_ImplVulkan_DestroyDeviceObjects();
+        if (pluginCtx.vkInfo.Device != NULL) { vkDestroyRenderPass(pluginCtx.vkInfo.Device, (VkRenderPass)(g_ctx->apiData), NULL); g_ctx->apiData = VK_NULL_HANDLE; }
     }
 
     ImGui::DestroyContext(g_ctx->imgui);

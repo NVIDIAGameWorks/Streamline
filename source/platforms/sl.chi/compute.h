@@ -387,6 +387,7 @@ struct ICommandListContext
     virtual uint32_t getCurrentCommandListIndex() = 0;
     virtual uint64_t getSyncValueAtIndex(uint32_t idx) = 0;
     virtual SyncPoint getNextSyncPoint() = 0;
+    virtual Fence getNextVkAcquireFence() = 0;
     virtual int acquireNextBufferIndex(SwapChain chain, uint32_t& index, Fence* waitSemaphore = nullptr) = 0;
     virtual bool isCommandListRecording() = 0;
     virtual bool beginCommandList() = 0;
@@ -546,6 +547,8 @@ public:
     virtual ComputeStatus getDevice(Device& device) = 0;
     virtual ComputeStatus getInstance(Instance& instance) = 0;
     virtual ComputeStatus getPhysicalDevice(PhysicalDevice& device) = 0;
+    virtual ComputeStatus getHostQueueInfo(chi::CommandQueue queue, void* pQueueInfo) = 0;
+
     virtual ComputeStatus waitForIdle(Device device) = 0;
 
     virtual ComputeStatus clearCache() = 0;
@@ -571,7 +574,7 @@ public:
     virtual ComputeStatus setCallbacks(PFun_ResourceAllocateCallback allocate, PFun_ResourceReleaseCallback release, PFun_GetThreadContext getThreadContext) = 0;
 
     virtual ComputeStatus destroyKernel(Kernel& kernel) = 0;
-    virtual ComputeStatus destroyFence(Fence fence) = 0;
+    virtual ComputeStatus destroyFence(Fence& fence) = 0;
     //! NOTE: Resource destroy methods by default are delayed by 3 frames
     //! 
     //! To trigger immediate resource release set frameDelay to 0

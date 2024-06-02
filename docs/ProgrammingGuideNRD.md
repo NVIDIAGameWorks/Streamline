@@ -1,10 +1,10 @@
-Streamline - NRD (Beta)
-=======================
->This feature is currently in Beta stage. Your experience with this feature may vary.
+Streamline - NRD
+================
+> This SL feature has been deprecated and will soon be removed.  Please migrate to integrating the NRD SDK.
 
 >The focus of this guide is on using Streamline to integrate NVIDIA Real-Time Denoisers (NRD) into an application.  For more information about NRD itself, please visit the [NVIDIA Developer NRD Page](https://developer.nvidia.com/rtx/ray-tracing/rt-denoisers)
 
-Version 2.4.0
+Version 2.4.10
 =======
 
 ### 1.0 INITIALIZE AND SHUTDOWN
@@ -29,7 +29,7 @@ if(!slInit(pref, myApplicationId))
 }
 ```
 
-For more details please see [preferences](ProgrammingGuide.md#221-preferences)
+For more details please see [preferences](ProgrammingGuide.md#222-preferences)
 
 Call `slShutdown()` before destroying dxgi/d3d11/d3d12/vk instances, devices and other components in your engine.
 
@@ -151,7 +151,7 @@ if(!setConstants(consts, myFrameIndex)) // constants are changing per frame so f
     // Handle error, check logs
 }
 ```
-For more details please see [common constants](ProgrammingGuide.md#251-common-constants)
+For more details please see [common constants](ProgrammingGuide.md#2101-common-constants)
 
 
 ### 5.0 TAG ALL REQUIRED RESOURCES
@@ -298,4 +298,4 @@ else
 ```
 
 > **IMPORTANT:**
-> Plase note that **host is responsible for restoring the command buffer(list) state** after calling `slEvaluateFeature`. For more details on which states are affected please see [restore pipeline section](./ProgrammingGuideManualHooking.md#80-restoring-command-listbuffer-state)
+> Plase note that **host is responsible for restoring the command buffer(list) state** after calling `slEvaluateFeature`. For more details on which states are affected please see [restore pipeline section](./ProgrammingGuideManualHooking.md#70-restoring-command-listbuffer-state)

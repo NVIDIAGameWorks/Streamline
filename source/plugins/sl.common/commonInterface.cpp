@@ -140,6 +140,7 @@ bool getSystemCaps(common::SystemCaps*& info)
 
     PFND3DKMT_ENUMADAPTERS2 pfnEnumAdapters2{};
     PFND3DKMT_QUERYADAPTERINFO pfnQueryAdapterInfo{};
+    PFND3DKMT_CLOSEADAPTER pfnCloseAdapter{};
 
     // We support up to kMaxNumSupportedGPUs adapters (currently 8)
     SL_LOG_INFO("Enumerating up to %u adapters but only one of them can be used to create a device - no mGPU support in this SDK", kMaxNumSupportedGPUs);
@@ -152,6 +153,7 @@ bool getSystemCaps(common::SystemCaps*& info)
     {
         pfnEnumAdapters2 = (PFND3DKMT_ENUMADAPTERS2)GetProcAddress(modGDI32, "D3DKMTEnumAdapters2");
         pfnQueryAdapterInfo = (PFND3DKMT_QUERYADAPTERINFO)GetProcAddress(modGDI32, "D3DKMTQueryAdapterInfo");
+        pfnCloseAdapter = (PFND3DKMT_CLOSEADAPTER)GetProcAddress(modGDI32, "D3DKMTCloseAdapter");
 
         // Request adapter info from KMT
         if (pfnEnumAdapters2)
@@ -300,6 +302,20 @@ bool getSystemCaps(common::SystemCaps*& info)
         {
             SL_LOG_WARN("NVAPI failed to initialize, please update your driver if running on NVIDIA hardware");
         }
+    }
+
+    if (pfnCloseAdapter)
+    {
+        for (uint32_t k = 0; k < enumAdapters2.NumAdapters; k++)
+        {
+            const D3DKMT_CLOSEADAPTER adapter { adapterInfo[k].hAdapter };
+            auto res = pfnCloseAdapter(&adapter);
+            if (!NT_SUCCESS(res))
+            {
+                SL_LOG_WARN("Failed to close adapter 0x%x: %u", adapter.hAdapter, res);
+            }
+        }
+        enumAdapters2 = {};
     }
 
     if (modGDI32)

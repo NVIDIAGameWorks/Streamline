@@ -92,6 +92,7 @@ inline const char* getResultAsStr(Result v)
         SL_CASE_STR(Result::eErrorFeatureMissingDependency);
         SL_CASE_STR(Result::eErrorFeatureManagerInvalidState);
         SL_CASE_STR(Result::eErrorInvalidState);
+        SL_CASE_STR(Result::eWarnOutOfVRAM);
     };
     return "Unknown";
 }
@@ -309,6 +310,7 @@ inline const char* getResourceTypeAsStr(ResourceType v)
         SL_CASE_STR(ResourceType::eCommandPool);
         SL_CASE_STR(ResourceType::eFence);
         SL_CASE_STR(ResourceType::eSwapchain);
+        SL_CASE_STR(ResourceType::eHostFence);
     };
     return "Unknown";
 }

@@ -1,22 +1,87 @@
+======== Release 2.4.10 Entries ========
+
+    * Added debug names for Streamline-created Vulkan objects.
+
+    * Added `sl::Result::eWarnOutOfVRAM` to `sl::getResultAsStr()` helper
+      function.
+      Reported on GitHub by @QDanteQ as issue #38
+
+    * Improved support for depth-stencil formats when using Vulkan.
+
+    * Deprecated the `sl.nrd` plugin; this plugin will be removed in a future
+      release.
+
+    * Fixed a regression introduced in SL 2.4.0 where options set via calls to
+      `slDLSSGSetOptions()` would not persist across frames.
+
+    * Fixed a bug in `sl.common` which violated the following Vulkan valid usage IDs:
+        - `VUID-vkCmdCopyBuffer-srcBuffer-00118`
+        - `VUID-vkDestroyDevice-device-05137`
+        - `VUID-VkImageMemoryBarrier-newLayout-01198`
+        - `VUID-VkSubmitInfo-pWaitSemaphores-parameter`
+
+    * Fixed a bug in `sl.common` where descriptor sets may have been used before
+      being properly initialized.
+      Reported on GitHub by @Bizzarrus as issue #30
+
+    * Fixed a bug in `sl.common` where descriptor processing could fail on
+      Vulkan.
+      Reported on GitHub by @Bizzarrus as issue #29
+
+    * Fixed a bug in `sl.common` where calls to `getSystemCaps()` would leak
+      D3DKMTAdapter handles.
+      Reported on GitHub by @Nukem9 as issue #28
+
+    * Fixed a bug in `sl.dlssg` where unused memory would be allocated when
+      `sl::DLSSGFlags::eShowOnlyInterpolatedFrame` was in used.
+
+    * Fixed a bug in `sl.dlssg` which violated the following Vulkan valid usage IDs:
+        - `UNASSIGNED-CoreValidation-DrawState-InvalidImageLayout`
+        - `UNASSIGNED-vkQueueSubmit-QueueForwardProgress`
+        - `VUID-vkAcquireNextImageKHR-semaphore-01779`
+        - `VUID-vkDestroyDevice-device-05137`
+        - `VUID-vkQueueSubmit-pWaitSemaphores-03238`
+
+    * Fixed a bug in `sl.imgui` which violated the following Vulkan valid usage IDs:
+        - `VUID-VkMappedMemoryRange-size-01389`
+
+    * Fixed a bug in `sl.interposer` which violated the following Vulkan valid
+      usage IDs:
+        - `VUID-VkDeviceQueueCreateInfo-pQueuePriorities-00383`
+
+    * Fixed a bug in `sl.nis` where it did not properly request `shaderFloat16`
+      feature support.
+      Reported on GitHub by @dzhdanNV as issue #32
+
+    * Fixed the documentation for `sl.nis` to indicate that `slNISSetOptions`
+      should be used to set `sl::NISOptions`.
+      Reported on GitHub by @Bizzarrus as issue #34
+
+======== Release 2.4.1 Entries ========
+
+    * Fixed a bug in `sl.dlssg` where tagged
+      `sl::kBufferTypeBidirectionalDistortionField` extents were incorrectly
+      applied to `sl::kBufferTypeDepth` inputs, causing visual corruption.
+
 ======== Release 2.4.0 Entries ========
-    
-    * Added support for upscaling Alpha in `sl.dlss`. 
-    
-    * Added support for multiple viewports in `sl.dlss_g`. 
+
+    * Added support for upscaling Alpha in `sl.dlss`.
+
+    * Added support for multiple viewports in `sl.dlss_g`.
       See section 5.0 "MULTIPLE VIEWPORTS" in `ProgrammingGuideDLSS_G.md` for more information.
 
     * Added support for `VK_FORMAT_D32_SFLOAT_S8_UINT`.
-    
-    * Added fullscreen menu detection in `sl.dlss_g`. 
+
+    * Added fullscreen menu detection in `sl.dlss_g`.
       See section 6.3 "AUTOMATICALLY DISABLING DLSS-G IN MENUS" in `ProgrammingGuideDLSS_G.md` for more information.
-      
+
     * Added support for a new preset `sl::DLSSPreset::ePresetE`. This is now the default preset for DLSS SR.
-      
+
     * Deprecated the ambiguous flag `sl::ReflexOptions::useMarkersToOptimize`.
 
 ======== Release 2.3.0 Entries ========
 
-    * Added support for DeepDVC with a new plugin: `sl.deepdvc`. 
+    * Added support for DeepDVC with a new plugin: `sl.deepdvc`.
       See `ProgrammingGuideDeepDVC.md` for more information see.
 
     * Added a new plugin `sl.pcl` for handling the IHV-agnostic functionality
@@ -27,12 +92,12 @@
       the backbuffer size for `sl.dlssg`. See `ProgrammingGuideDLSS_G.md` for
       more information.
 
-    * Added support for the Nsight Perf SDK with a new plugin: `sl.nvperf`. 
+    * Added support for the Nsight Perf SDK with a new plugin: `sl.nvperf`.
       See `Debugging - Nsight-Perf-SDK GUI.md` for more information
 
     * Added a new `sl::DLSSGFlags` enumeration value `eRetainResourcesWhenOff`
-      for controlling resource retention behavior on changes to `sl::DLSSGOptions::mode`. 
-      See section 6.2 "RETAINING RESOURCES WHEN DLSS-G IS OFF" in `ProgrammingGuideDLSS_G.md` 
+      for controlling resource retention behavior on changes to `sl::DLSSGOptions::mode`.
+      See section 6.2 "RETAINING RESOURCES WHEN DLSS-G IS OFF" in `ProgrammingGuideDLSS_G.md`
       for more information.
 
     * Added a CMakeLists file for easier integration into projects using the

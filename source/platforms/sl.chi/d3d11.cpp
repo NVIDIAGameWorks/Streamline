@@ -183,6 +183,13 @@ struct D3D11CommandListContext : public ICommandListContext
         return { m_fence, m_syncValue + 1 };
     }
 
+    Fence getNextVkAcquireFence() override final
+    {
+        assert(false);
+        SL_LOG_ERROR("Not implemented");
+        return nullptr;
+    }
+
     int acquireNextBufferIndex(SwapChain chain, uint32_t& index, sl::chi::Fence* semaphore)
     {
         assert(false);
@@ -1049,7 +1056,7 @@ bool D3D11::isSupportedFormat(DXGI_FORMAT format, int flag1, int flag2)
     return false;
 }
 
-ComputeStatus D3D11::createTexture2DResourceSharedImpl(ResourceDescription &InOutResourceDesc, Resource &OutResource, bool UseNativeFormat, ResourceState InitialState)
+ComputeStatus D3D11::createTexture2DResourceSharedImpl(ResourceDescription &InOutResourceDesc, Resource &OutResource, bool UseNativeFormat, ResourceState InitialState, const char InFriendlyName[])
 {
     ID3D11Texture2D* pResource = nullptr;
 
@@ -1150,7 +1157,7 @@ ComputeStatus D3D11::createTexture2DResourceSharedImpl(ResourceDescription &InOu
     return ComputeStatus::eOk;
 }
 
-ComputeStatus D3D11::createBufferResourceImpl(ResourceDescription &InOutResourceDesc, Resource &OutResource, ResourceState InitialState)
+ComputeStatus D3D11::createBufferResourceImpl(ResourceDescription &InOutResourceDesc, Resource &OutResource, ResourceState InitialState, const char InFriendlyName[])
 {
     ID3D11Buffer* pResource = nullptr;
 

@@ -232,6 +232,7 @@ enum class ResourceType : char
     eCommandPool,
     eFence,
     eSwapchain,
+    eHostFence,
     eCount
 };
 

@@ -58,11 +58,11 @@ struct ThreadContext
     {
         for (auto& t : threads)
         {
-            delete t;
+            t.reset();
         }
         for (auto& t : threadMap)
         {
-            delete t.second;
+            t.second.reset();
         }
         threads.clear();
         threadMap.clear();
@@ -90,13 +90,15 @@ struct ThreadContext
             auto it = threadMap.find(id);
             if (it == threadMap.end())
             {
-                T* context = new T;
-                // If we switched to this later in the game copy our context if any
+                // If we switched to this later in the game, co-own existing context, if any
                 if (threads.size() > (size_t)id && threads[id])
                 {
-                    *context = *threads[id];
+                    threadMap[id] = threads[id];
                 }
-                threadMap[id] = context;
+                else
+                {
+                    threadMap[id] = std::make_shared<T>();
+                }
             }
             return *threadMap[id];
         }
@@ -104,7 +106,7 @@ struct ThreadContext
         // Each thread has different id so no need to sync here
         if (!threads[id])
         {
-            threads[id] = new T();
+            threads[id] = std::make_shared<T>();
             threadCount++;
             SL_LOG_HINT("detected new thread %u - total threads %u", id, threadCount.load());
         }
@@ -115,8 +117,8 @@ protected:
 
     std::atomic<bool> useThreadMap = false;
     std::mutex mutex = {};
-    std::vector<T*> threads = {};
-    std::map<DWORD, T*> threadMap = {};
+    std::vector<std::shared_ptr<T>> threads = {};
+    std::map<DWORD, std::shared_ptr<T>> threadMap = {};
     std::atomic<uint32_t> threadCount = {};
 };
 

@@ -690,21 +690,21 @@ Result slIsFeatureSupported(sl::Feature feature, const sl::AdapterInfo& adapterI
             case RenderAPI::eD3D11:
                 if (!(featureReqs.flags & FeatureRequirementFlags::eD3D11Supported))
                 {
-                    SL_LOG_WARN("D3D11 not supported for this plugin");
+                    SL_LOG_INFO("D3D11 not supported for this plugin");
                     return Result::eErrorMissingOrInvalidAPI;
                 }
                 break;
             case RenderAPI::eD3D12:
                 if (!(featureReqs.flags & FeatureRequirementFlags::eD3D12Supported))
                 {
-                    SL_LOG_WARN("D3D12 not supported for this plugin");
+                    SL_LOG_INFO("D3D12 not supported for this plugin");
                     return Result::eErrorMissingOrInvalidAPI;
                 }
                 break;
             case RenderAPI::eVulkan:
                 if (!(featureReqs.flags & FeatureRequirementFlags::eVulkanSupported))
                 {
-                    SL_LOG_WARN("Vulkan not supported for this plugin");
+                    SL_LOG_INFO("Vulkan not supported for this plugin");
                     return Result::eErrorMissingOrInvalidAPI;
                 }
                 break;

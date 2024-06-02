@@ -5,7 +5,7 @@ Streamline - NIS
 >The focus of this guide is on using Streamline to integrate the NVIDIA Image Scaling (NIS) SDK into an application.  For more information about NIS itself, please visit the [NVIDIA Image Scaling SDK Github Page](https://github.com/NVIDIAGameWorks/NVIDIAImageScaling)  
 >For information on user interface considerations when using the NIS plugin, please see the ["RTX UI Developer Guidelines.pdf"](<RTX UI Developer Guidelines.pdf>) document included with this SDK.
 
-Version 2.4.0
+Version 2.4.10
 =======
 
 ### Introduction
@@ -44,7 +44,7 @@ if(SL_FAILED(res, slInit(pref)))
 }
 ```
 
-For more details please see [preferences](ProgrammingGuide.md#221-preferences)
+For more details please see [preferences](ProgrammingGuide.md#222-preferences)
 
 Call `slShutdown()` before destroying dxgi/d3d11/d3d12/vk instances, devices and other components in your engine.
 
@@ -142,7 +142,7 @@ slSetTag(viewport, inputs, _countof(inputs), cmdList);
 
 ### 4.0 PROVIDE NIS OPTIONS
 
-NIS options must be set so that the NIS plugin can track any changes made by the user. This can be done explicitly using the `slNISSetOptions` or implicitly by adding options as part of the `slEvaluateFeature` call (see below):
+NIS options must be set so that the NIS plugin can track any changes made by the user:
 
 ```cpp
 
@@ -193,5 +193,5 @@ else
 ```
 
 > **IMPORTANT:**
-> Plase note that **host is responsible for restoring the command buffer(list) state** after calling `slEvaluateFeature`. For more details on which states are affected please see [restore pipeline section](./ProgrammingGuideManualHooking.md#80-restoring-command-listbuffer-state)
+> Plase note that **host is responsible for restoring the command buffer(list) state** after calling `slEvaluateFeature`. For more details on which states are affected please see [restore pipeline section](./ProgrammingGuideManualHooking.md#70-restoring-command-listbuffer-state)
 

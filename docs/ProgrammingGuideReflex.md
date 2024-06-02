@@ -5,7 +5,7 @@ Streamline - Reflex
 >The focus of this guide is on using Streamline to integrate Reflex into an application.  For more information about Reflex itself, please visit the [NVIDIA Developer Reflex Page](https://developer.nvidia.com/performance-rendering-tools/reflex)
 >For information on user interface considerations when using this plugin, please see the ["RTX UI Developer Guidelines.pdf"][1] document included with this SDK.
 
-Version 2.4.0
+Version 2.4.10
 =======
 
 Here is an overview list of sub-features in the Reflex plugin:
@@ -52,7 +52,7 @@ if(SL_FAILED(res, slInit(pref)))
 }
 ```
 
-For more details please see [preferences](ProgrammingGuide.md#221-preferences)
+For more details please see [preferences](ProgrammingGuide.md#222-preferences)
 
 Call `slShutdown()` before destroying dxgi/d3d11/d3d12/vk instances, devices and other components in your engine.
 
@@ -209,13 +209,13 @@ Existing Reflex integrations can be easily converted to use SL Reflex by followi
 * Remove NVAPI from your application
 * Remove `reflexstats.h` from your application
 * There is no longer any need to provide a native D3D/VK device when making Reflex calls - SL takes care of that, hence making the integrations easier
-* `NvAPI_D3D_SetSleepMode` is replaced with [set reflex options](#40-set-reflex-constants)
-* `NvAPI_D3D_GetSleepStatus` is replaced with [get reflex state](#30-check-reflex-settings-and-capabilities) - see `sl::ReflexState::lowLatencyAvailable`
-* `NvAPI_D3D_GetLatency` is replaced with [get reflex state](#30-check-reflex-settings-and-capabilities) - see `sl::ReflexReport`
+* `NvAPI_D3D_SetSleepMode` is replaced with [set reflex options](#40-set-reflex-options)
+* `NvAPI_D3D_GetSleepStatus` is replaced with [get reflex state](#30-check-reflex-state-and-capabilities) - see `sl::ReflexState::lowLatencyAvailable`
+* `NvAPI_D3D_GetLatency` is replaced with [get reflex state](#30-check-reflex-state-and-capabilities) - see `sl::ReflexReport`
 * `NvAPI_D3D_SetLatencyMarker` is replaced with `slPCLSetMarker`
 * `NvAPI_D3D_Sleep` is replaced with `slReflexSleep`
 * `NVSTATS*` calls are handled automatically by SL Reflex plugin and are GPU agnostic
-* `NVSTATS_IS_PING_MSG_ID` is replaced with [get reflex options](#30-check-reflex-settings-and-capabilities) - see `sl::ReflexOptions::statsWindowMessage`
+* `NVSTATS_IS_PING_MSG_ID` is replaced with [get reflex state](#30-check-reflex-state-and-capabilities) - see `sl::ReflexOptions::statsWindowMessage`
 
 ### 8.0 NVIDIA REFLEX QA CHECKLIST
 

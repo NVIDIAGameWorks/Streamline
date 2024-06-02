@@ -664,7 +664,7 @@ ComputeStatus Generic::createBuffer(const ResourceDescription& CreateResourceDes
     {
         ResourceDesc.sName = InFriendlyName;
     }
-    CHI_CHECK(createBufferResourceImpl(ResourceDesc, OutResource, ResourceDesc.state));
+    CHI_CHECK(createBufferResourceImpl(ResourceDesc, OutResource, ResourceDesc.state, InFriendlyName));
 
     manageVRAM(OutResource, VRAMOperation::eAlloc);
 
@@ -701,7 +701,7 @@ ComputeStatus Generic::createTexture2DResourceShared(const ResourceDescription& 
     {
         resourceDesc.sName = InFriendlyName;
     }
-    CHI_CHECK(createTexture2DResourceSharedImpl(resourceDesc, OutResource, UseNativeFormat, resourceDesc.state));
+    CHI_CHECK(createTexture2DResourceSharedImpl(resourceDesc, OutResource, UseNativeFormat, resourceDesc.state, InFriendlyName));
 
     manageVRAM(OutResource, VRAMOperation::eAlloc);
 
