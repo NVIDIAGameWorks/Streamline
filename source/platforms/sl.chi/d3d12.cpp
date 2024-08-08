@@ -241,19 +241,113 @@ const char * getDXGIFormatStr(uint32_t format)
     return "DXGI_INVALID_FORMAT";
 }
 
+struct CommandAllocators
+{
+    CommandAllocators() { }
+    void init(ID3D12CommandQueue *pQueue, const std::wstring &sQueueName, uint64_t completedFenceValue)
+    {
+        // shouldn't be creating new allocators if old allocators are still in use
+        assert(completedFenceValue >= m_fenceValueAfterLastSwitch);
+        Microsoft::WRL::ComPtr<ID3D12Device> pDevice;
+        pQueue->GetDevice(IID_PPV_ARGS(&pDevice));
+
+        D3D12_COMMAND_QUEUE_DESC queueDesc = pQueue->GetDesc();
+        m_sName = sQueueName + L".Allocator";
+        for (uint32_t u = 0; u < m_pAllocators.size(); ++u)
+        {
+            if (SUCCEEDED(pDevice->CreateCommandAllocator(queueDesc.Type, IID_PPV_ARGS(&m_pAllocators[u]))))
+            {
+                m_pAllocators[u]->SetName(m_sName.c_str());
+            }
+            else
+            {
+                assert(false);
+            }
+        }
+
+        // new allocators are not used yet - so safe to set this fence value to 0
+        m_fenceValueAfterLastSwitch = 0;
+    }
+    void shutdown(uint64_t completedFenceValue)
+    {
+        std::fill(m_pAllocators.begin(), m_pAllocators.end(), nullptr);
+    }
+    ID3D12CommandAllocator& getAllocator(uint64_t signalledFenceValue, uint64_t completedFenceValue)
+    {
+        // can we switch to a new allocator?
+        if (completedFenceValue >= m_fenceValueAfterLastSwitch)
+        {
+            m_uCurAllocator = (m_uCurAllocator + 1) % m_pAllocators.size();
+            m_pAllocators[m_uCurAllocator]->Reset();
+            // since we need the value AFTER the switch, we have to take signalledFenceValue + 1
+            m_fenceValueAfterLastSwitch = signalledFenceValue + 1;
+
+            m_timerStart = std::chrono::system_clock::now();
+        }
+        else
+        {
+            // detect the cases when allocator isn't reset for long time and report
+            uint64_t uFenceDistance = std::abs((int64_t)(signalledFenceValue - m_fenceValueAfterLastSwitch));
+            static const uint32_t kMaxFenceDistance = 100;
+            if (uFenceDistance >= kMaxFenceDistance)
+            {
+                std::chrono::time_point<std::chrono::system_clock> timerEnd = std::chrono::system_clock::now();
+                std::chrono::duration<double> fSecondsDistance = timerEnd - m_timerStart;
+                static const uint32_t kMaxSecondsDistance = 5;
+                if (fSecondsDistance.count() >= kMaxSecondsDistance)
+                {
+                    assert(false);
+                    SL_LOG_WARN("Couldn't reset the allocator %S for %.2f seconds. signalledFenceValue=%lld, m_fenceValueAfterLastSwitch=%lld",
+                        m_sName.c_str(), fSecondsDistance.count(), signalledFenceValue, m_fenceValueAfterLastSwitch);
+                }
+            }
+        }
+
+        return *m_pAllocators[m_uCurAllocator].Get();
+    }
+
+private:
+    std::array<Microsoft::WRL::ComPtr<ID3D12CommandAllocator>, 2> m_pAllocators;
+    uint32_t m_uCurAllocator = 0;
+    uint64_t m_fenceValueAfterLastSwitch = 0;
+    std::chrono::time_point<std::chrono::system_clock> m_timerStart;
+    std::wstring m_sName;
+};
+
 class CommandListContext : public ICommandListContext
 {
     struct WaitingContext
     {
+        WaitingContext(ID3D12Fence* pFence, uint64_t uSyncValue, const DebugInfo &debugInfo) :
+            fence(pFence),
+            syncValue(uSyncValue),
+            m_debugInfo(debugInfo)
+        {
+        }
         ID3D12Fence* fence{};
         uint64_t syncValue{};
+        DebugInfo m_debugInfo;
     };
     std::vector<WaitingContext> m_waitingQueue;
 
     Microsoft::WRL::ComPtr<ID3D12CommandQueue> m_cmdQueue;
     ID3D12GraphicsCommandList* m_cmdList{};
-    std::vector<ID3D12CommandAllocator*> m_allocator{};
-    std::vector <ID3D12Fence*> m_fence{};
+
+    CommandAllocators m_allocators;
+
+    void updateCompletedFenceValue()
+    {
+        uint64_t value = m_fence->GetCompletedValue();
+        if (value != (uint64_t)-1) // we get -1 when device is lost
+        {
+            m_lastCompletedFenceValue = value;
+        }
+    }
+    Microsoft::WRL::ComPtr<ID3D12Fence> m_fence;
+    uint64_t m_fenceValueGenerator = 0;
+    uint64_t m_lastSignalledFenceValue = 0;
+    uint64_t m_lastCompletedFenceValue = 0;
+
     HANDLE m_fenceEvent{};
     HANDLE m_fenceEventExternal{};
     std::vector<UINT64> m_fenceValue{};
@@ -289,19 +383,17 @@ public:
         m_cmdQueue = queue;
         auto cmdQueueDesc = m_cmdQueue->GetDesc();
         m_bufferCount = count;
-        m_allocator.resize(count);
-        m_fence.resize(count);
+        // To support DX11 fences have to be shared
+        device->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&m_fence));
         m_fenceValue.resize(count);
         for (uint32_t i = 0; i < count; i++)
         {
-            device->CreateCommandAllocator(cmdQueueDesc.Type, IID_PPV_ARGS(&m_allocator[i]));
             m_fenceValue[i] = 0;
-            // To support DX11 fences have to be shared
-            device->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&m_fence[i]));
         }
 
-        
-        device->CreateCommandList(0, cmdQueueDesc.Type, m_allocator[0], nullptr, IID_PPV_ARGS(&m_cmdList));
+        m_allocators.init(queue, m_name, m_lastCompletedFenceValue);
+        ID3D12CommandAllocator &allocator = m_allocators.getAllocator(m_lastSignalledFenceValue, m_lastCompletedFenceValue);
+        device->CreateCommandList(0, cmdQueueDesc.Type, &allocator, nullptr, IID_PPV_ARGS(&m_cmdList));
 
         m_cmdList->Close(); // Immediately close since it will be reset on first use
         m_cmdList->SetName((m_name + L" command list").c_str());
@@ -312,16 +404,12 @@ public:
 
     void shutdown()
     {
+        this->updateCompletedFenceValue();
         SL_SAFE_RELEASE(m_cmdList);
-        for (uint32_t i = 0; i < m_bufferCount; i++)
-        {
-            SL_SAFE_RELEASE(m_allocator[i]);
-            SL_SAFE_RELEASE(m_fence[i]);
-        }
+        m_fence = nullptr;
         CloseHandle(m_fenceEvent);
         CloseHandle(m_fenceEventExternal);
-        m_allocator.clear();
-        m_fence.clear();
+        m_allocators.shutdown(m_lastCompletedFenceValue);
     }
 
     RenderAPI getType() { return RenderAPI::eD3D12; }
@@ -338,7 +426,8 @@ public:
 
     CommandAllocator getCmdAllocator()
     {
-        return m_allocator[m_index];
+        ID3D12CommandAllocator &allocator = m_allocators.getAllocator(m_lastSignalledFenceValue, m_lastCompletedFenceValue);
+        return &allocator;
     }
 
     Handle getFenceEvent()
@@ -348,7 +437,7 @@ public:
 
     Fence getFence(uint32_t index)
     {
-        return m_fence[index];
+        return m_fence.Get();
     }
 
     bool beginCommandList()
@@ -359,13 +448,9 @@ public:
             return false;
         }
 
-        // Only rest allocator if we are done with the work
-        if (m_fence[m_index]->GetCompletedValue() >= m_fenceValue[m_index])
-        {
-            m_allocator[m_index]->Reset();
-        }
-
-        m_cmdListIsRecording = SUCCEEDED(m_cmdList->Reset(m_allocator[m_index], nullptr));
+        this->updateCompletedFenceValue();
+        ID3D12CommandAllocator& allocator = m_allocators.getAllocator(m_lastSignalledFenceValue, m_lastCompletedFenceValue);
+        m_cmdListIsRecording = SUCCEEDED(m_cmdList->Reset(&allocator, nullptr));
         if (!m_cmdListIsRecording)
         {
             SL_LOG_ERROR( "%S command buffer - cannot reset command list", m_name.c_str());
@@ -398,7 +483,8 @@ public:
 
             for (size_t i = 0; i < info->waitSemaphores.size(); i++)
             {
-                waitGPUFence(info->waitSemaphores[i], info->waitValues[i]);
+                waitGPUFence(info->waitSemaphores[i], info->waitValues[i],
+                    chi::DebugInfo(__FILE__, __LINE__));
             }
         }
 
@@ -413,18 +499,13 @@ public:
             }
         }
 
-        auto idx = m_index;
-        const UINT64 syncValue = m_fenceValue[m_index] + 1;
-        m_fenceValue[m_index] = syncValue;
+        if (!this->signalGPUFenceAt(m_index))
+        {
+            return false;
+        }
+
         m_lastIndex = m_index;
         m_index = (m_index + 1) % m_bufferCount;
-
-        if (FAILED(m_cmdQueue->Signal(m_fence[idx], syncValue)))
-        {
-            SL_LOG_ERROR( "%S command buffer - cannot signal command queue", m_name.c_str());
-            return false; // Cannot wait on fence if signaling was not successful
-        }
-        
         m_cmdListIsRecording = false;
 
         return true;
@@ -437,7 +518,7 @@ public:
 
     WaitStatus waitWithoutDeadlock(uint32_t index, uint64_t value)
     {
-        if (SUCCEEDED(m_fence[index]->SetEventOnCompletion(value, m_fenceEvent)))
+        if (SUCCEEDED(m_fence->SetEventOnCompletion(value, m_fenceEvent)))
         {
             DWORD res{};
             uint32_t waitTime = 0;
@@ -458,26 +539,19 @@ public:
 
     WaitStatus flushAll()
     {
-        for (uint32_t i = 0; i < m_bufferCount; i++)
+        // signals complete in the same order they were generated. so we generate a new signal
+        // and wait for it. this guarantees that all signals before it also complete
+        if (signalGPUFenceAt(0))
         {
-            auto syncValue = ++m_fenceValue[i];
-            if (m_fence[i]->GetCompletedValue() >= syncValue)
-            {
-                SL_LOG_ERROR( "Flushing GPU encountered an invalid fence sync value");
-                return WaitStatus::eError;
-            }
-            if (FAILED(m_cmdQueue->Signal(m_fence[i], syncValue)))
-            {
-                return WaitStatus::eError;
-            }
-            return waitWithoutDeadlock(i, m_fenceValue[i]);
+            return waitWithoutDeadlock(0, m_fenceValue[0]);
         }
-        return WaitStatus::eNoTimeout;
+        return WaitStatus::eError;
     }
     
-    uint32_t getBufferCount()
+    uint32_t getPrevCommandListIndex() override
     {
-        return m_bufferCount;
+        assert(m_bufferCount > 0); // can't call this if you don't have any buffers
+        return (m_index + m_bufferCount - 1) % m_bufferCount;
     }
 
     uint32_t getCurrentCommandListIndex()
@@ -491,9 +565,9 @@ public:
         return m_fenceValue[idx];
     }
     
-    SyncPoint getNextSyncPoint()
+    SyncPoint getSyncPointAtIndex(uint32_t idx) override
     {
-        return { m_fence[m_index], m_fenceValue[m_index] + 1 };
+        return { m_fence.Get(), m_fenceValue[idx]};
     }
 
     Fence getNextVkAcquireFence() override final
@@ -514,6 +588,11 @@ public:
         return waitWithoutDeadlock(index, m_fenceValue[index]);
     }
 
+    uint64_t getCompletedValue(Fence fence)
+    {
+        return ((ID3D12Fence*)fence)->GetCompletedValue();
+    }
+
     bool didCommandListFinish(uint32_t index)
     {
         if (index >= m_bufferCount)
@@ -521,7 +600,8 @@ public:
             SL_LOG_ERROR( "Invalid index");
             return true;
         }
-        return m_fence[index]->GetCompletedValue() >= m_fenceValue[index];
+        this->updateCompletedFenceValue();
+        return m_lastCompletedFenceValue >= m_fenceValue[index];
     }
 
     bool signalAllWaitingOnQueues()
@@ -529,19 +609,20 @@ public:
         std::lock_guard<std::mutex> lock(m_mtxQueueList);
         for (auto& other : m_waitingQueue)
         {
-            // We are waiting on GPU for these queues, signal them to get out of the deadlock
+            // We are waiting on the GPU for these fences, signal them to get out of the deadlock
             auto syncValue = other.syncValue;
             auto completedValue = other.fence->GetCompletedValue();
 
             // Desperate times - desperate measures, make sure to signal new value
-            while (completedValue >= syncValue)
+            if (completedValue < syncValue)
             {
-                syncValue++;
-            }
-            if (FAILED(other.fence->Signal(syncValue)))
-            {
-                SL_LOG_ERROR( "Failed to signal fence value %llu", other.syncValue);
-                return false;
+                SL_LOG_WARN("The fence [%s][%d] has timed out - we're letting it go",
+                    other.m_debugInfo.m_sFile, other.m_debugInfo.m_uLine);
+                if (FAILED(other.fence->Signal(syncValue)))
+                {
+                    SL_LOG_ERROR("Failed to signal fence value %llu", other.syncValue);
+                    return false;
+                }
             }
             //SL_LOG_INFO("Signaled %S index %u value %llu", other.ctx->name.c_str(), other.clIndex, other.syncValue);
         }
@@ -549,17 +630,26 @@ public:
         return true;
     }
 
-    void signalGPUFenceAt(uint32_t index)
+    bool signalGPUFenceAt(uint32_t index) override
     {
-        signalGPUFence(m_fence[index], ++m_fenceValue[index]);
+        uint64_t value = InterlockedIncrement(&m_fenceValueGenerator);
+        if (signalGPUFence(m_fence.Get(), value))
+        {
+            m_fenceValue[index] = value;
+            m_lastSignalledFenceValue = value;
+            return true;
+        }
+        return false;
     }
 
-    void signalGPUFence(Fence fence, uint64_t syncValue)
+    bool signalGPUFence(Fence fence, uint64_t syncValue) override
     {
         if (FAILED(m_cmdQueue->Signal((ID3D12Fence*)fence, syncValue)))
         {
             SL_LOG_ERROR( "Failed to signal on the command queue");
+            return false;
         }
+        return true;
     }
 
     WaitStatus waitCPUFence(Fence fence, uint64_t syncValue)
@@ -585,7 +675,7 @@ public:
         return WaitStatus::eNoTimeout;
     }
 
-    void waitGPUFence(Fence fence, uint64_t syncValue)
+    void waitGPUFence(Fence fence, uint64_t syncValue, const DebugInfo &debugInfo) override
     {
         if (FAILED(m_cmdQueue->Wait((ID3D12Fence*)fence, syncValue)))
         {
@@ -605,7 +695,7 @@ public:
         }
         if (!found)
         {
-            m_waitingQueue.push_back({ (ID3D12Fence*)fence, syncValue });
+            m_waitingQueue.push_back({ (ID3D12Fence*)fence, syncValue, debugInfo });
         }
         //SL_LOG_INFO("%S waiting for %S at i%u:%llu", name.c_str(), tmp->name.c_str(), clIndex, tmp->fenceValue[clIndex] + syncValueOffset);
     }
@@ -625,7 +715,8 @@ public:
             }
             for(size_t i = 0; i < info->waitSemaphores.size(); i++)
             {
-                waitGPUFence(info->waitSemaphores[i], info->waitValues[i]);
+                waitGPUFence(info->waitSemaphores[i], info->waitValues[i],
+                    chi::DebugInfo(__FILE__, __LINE__));
             }
             for (size_t i = 0; i < info->signalSemaphores.size(); i++)
             {
@@ -634,7 +725,8 @@ public:
         }
     }
 
-    void waitOnGPUForTheOtherQueue(const ICommandListContext* other, uint32_t clIndex, uint64_t syncValue)
+    void waitOnGPUForTheOtherQueue(const ICommandListContext* other, uint32_t clIndex,
+        uint64_t syncValue, const DebugInfo &debugInfo) override
     {
         auto tmp = (const CommandListContext*)other;
         if (tmp->m_cmdQueue == m_cmdQueue)
@@ -643,7 +735,7 @@ public:
             return;
         }
 
-        waitGPUFence(tmp->m_fence[clIndex], syncValue);
+        waitGPUFence(tmp->m_fence.Get(), syncValue, debugInfo);
     }
 
     WaitStatus waitForCommandList(FlushType ft)

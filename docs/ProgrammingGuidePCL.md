@@ -4,7 +4,7 @@ Streamline - PCL Stats
 
 >The focus of this guide is on using Streamline to integrate PCL (PC Latency) Stats into an application.
 
-Version 2.4.10
+Version 2.4.11
 =======
 
 The application should not explicitly check for GPU HW, vendor, and driver version.
@@ -188,3 +188,4 @@ PCL markers were part of SL Reflex in earlier versions of SL.  If migrating from
     - Markers are no longer in top-level `sl::` namespace, use `sl::PCLMarker::`
     - If you were using the implicit cast to `uint32_t`, it will now need to be explicit
     - `eInputSample` marker was removed, this was already deprecated and removed in the native Reflex SDK but was never propagated to SL
+

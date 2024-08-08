@@ -203,12 +203,19 @@ void getCommonTag(BufferType tagType, uint32_t id, CommonResource& res, const sl
     std::lock_guard<std::mutex> lock(ctx.resourceTagMutex);
     CommonResource& resTmp = ctx.idToResourceMap[uid];
     uint64_t uCurFrame = getCurrentFrame();
-    if (uCurFrame != resTmp.uFrameWhenTagged && resTmp.uFrameWhenTagged != ~0ull)
+    if (resTmp.uFrameWhenTagged != ~0ull && uCurFrame > resTmp.uFrameWhenTagged + 1)
     {
         if (resTmp)
         {
             SL_LOG_WARN("Tags are valid only until Present(). Invalidating the hanging tag %d for viewport %d (created at frame: %d, current frame: %d)", tagType, id, resTmp.uFrameWhenTagged, uCurFrame);
-            ctx.compute->stopTrackingResource(uid, &resTmp.res);
+            if (resTmp.clone)
+            {
+                ctx.pool->recycle(resTmp.clone);
+            }
+            else
+            {
+                ctx.compute->stopTrackingResource(uid, &resTmp.res);
+            }
         }
         resTmp = CommonResource();
     }
@@ -282,6 +289,11 @@ sl::Result slSetTagInternal(const sl::Resource* resource, BufferType tag, uint32
                 {
                     ctx.pool->recycle(prevTag.clone);
                 }
+                else
+                {
+                    ctx.compute->stopTrackingResource(uid, &prevTag.res);
+                }
+
                 // Defaults to eCopyDestination state 
                 cr.clone = ctx.pool->allocate(actualResource, extra::format("sl.tag.{}.volatile.{}", sl::getBufferTypeAsStr(tag), id).c_str());
 
@@ -297,6 +309,10 @@ sl::Result slSetTagInternal(const sl::Resource* resource, BufferType tag, uint32
                 };
                 CHI_CHECK_RR(ctx.compute->transitionResources(cmdBuffer, transitions, (uint32_t)countof(transitions), &revTransitions));
                 CHI_CHECK_RR(ctx.compute->copyResource(cmdBuffer, cr.clone, actualResource));
+
+                // We've made a copy of the original resource and we're not doing AddRef() on the original. So set the
+                // original to nullptr - that way nobody can access it (it may become invalid at some point).
+                cr.res.native = nullptr;
             }
         }
     }

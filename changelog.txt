@@ -1,3 +1,10 @@
+======== Release 2.4.11 Entries ========
+
+    * Fixed a bug in `sl.common` where shared `ID3D12CommandAllocator` objects were not reset, 
+      resulting in a video memory leak.
+
+    * Fixed a bug in `sl.dlss_g` where `sl::Constants::reset` would get set for every frame.
+
 ======== Release 2.4.10 Entries ========
 
     * Added debug names for Streamline-created Vulkan objects.

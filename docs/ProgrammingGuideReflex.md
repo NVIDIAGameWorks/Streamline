@@ -5,7 +5,7 @@ Streamline - Reflex
 >The focus of this guide is on using Streamline to integrate Reflex into an application.  For more information about Reflex itself, please visit the [NVIDIA Developer Reflex Page](https://developer.nvidia.com/performance-rendering-tools/reflex)
 >For information on user interface considerations when using this plugin, please see the ["RTX UI Developer Guidelines.pdf"][1] document included with this SDK.
 
-Version 2.4.10
+Version 2.4.11
 =======
 
 Here is an overview list of sub-features in the Reflex plugin:
@@ -29,26 +29,22 @@ Additionally, [PCL Stats](ProgrammingGuidePCL.md):
 Call `slInit` as early as possible (before any dxgi/d3d11/d3d12 APIs are invoked)
 
 ```cpp
-
-#include <sl.h>
-#include <sl_reflex.h>
-
 sl::Preferences pref{};
 pref.showConsole = true; // for debugging, set to false in production
-pref.logLevel = sl::eLogLevelDefault;
+pref.logLevel = sl::LogLevel::eDefault;
 pref.pathsToPlugins = {}; // change this if Streamline plugins are not located next to the executable
 pref.numPathsToPlugins = 0; // change this if Streamline plugins are not located next to the executable
 pref.pathToLogsAndData = {}; // change this to enable logging to a file
 pref.logMessageCallback = myLogMessageCallback; // highly recommended to track warning/error messages in your callback
 pref.applicationId = myId; // Provided by NVDA, required if using NGX components (DLSS 2/3)
-pref.engineType = myEngine; // If using UE or Unity
+pref.engine = myEngine; // If using UE or Unity
 pref.engineVersion = myEngineVersion; // Optional version
 pref.projectId = myProjectId; // Optional project id
 if(SL_FAILED(res, slInit(pref)))
 {
-    // Handle error, check the logs
-    if(res == sl::Result::eErrorDriverOutOfDate) { /* inform user */}
-    // and so on ...
+	// Handle error, check the logs
+	if(res == sl::Result::eErrorDriverOutOfDate) { /* inform user */}
+	// and so on ...
 }
 ```
 
@@ -367,3 +363,4 @@ GPU Start/End Time | Timestamp | Start = GPU rendering starts; End = GPU renderi
 > All durations and timestamps should be non-zero. Start timestamps must be less than end values (I.e., start must come before end).
 
 [1]: <RTX UI Developer Guidelines.pdf>
+

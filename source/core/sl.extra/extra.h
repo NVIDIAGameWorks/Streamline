@@ -37,6 +37,7 @@
 #include <codecvt>
 #include <locale>
 #include <iomanip>
+#include <array>
 
 #ifdef SL_WINDOWS
 #define SL_IGNOREWARNING_PUSH __pragma(warning(push))
@@ -273,23 +274,24 @@ constexpr size_t kAverageMeterWindowSize = 120;
 //! IMPORTANT: Mainly not thread safe for performance reasons
 //! 
 //! Only selected "get" methods use atomics.
-struct AverageValueMeter
+template <uint32_t WINDOW_SIZE>
+struct TAverageValueMeter
 {
-    AverageValueMeter()
+    TAverageValueMeter()
     {
 #ifdef SL_WINDOWS
         QueryPerformanceFrequency(&frequency);
 #endif
     };
 
-    AverageValueMeter(const AverageValueMeter& rhs) { operator=(rhs); }
+    TAverageValueMeter(const TAverageValueMeter& rhs) { operator=(rhs); }
 
-    inline AverageValueMeter& operator=(const AverageValueMeter& rhs)
+    inline TAverageValueMeter& operator=(const TAverageValueMeter& rhs)
     {
         n = rhs.n.load();
         val = rhs.val.load();
         sum = rhs.sum;
-        memcpy(window, rhs.window, sizeof(double) * kAverageMeterWindowSize);
+        window = rhs.window;
 #ifdef SL_WINDOWS
         frequency = rhs.frequency;
         startTime = rhs.startTime;
@@ -305,7 +307,7 @@ struct AverageValueMeter
         val = 0;
         sum = 0;
         mean = 0;
-        memset(window, 0, sizeof(double) * kAverageMeterWindowSize);
+        std::fill(window.begin(), window.end(), 0);
 #ifdef SL_WINDOWS
         startTime = {};
         elapsedUs = {};
@@ -371,27 +373,28 @@ struct AverageValueMeter
     {
         val = value;
         sum = sum + value;
-        auto i = n.load() % kAverageMeterWindowSize;
-        if (n >= kAverageMeterWindowSize)
+        auto i = n.load() % window.size();
+        if (n >= window.size())
         {
             sum = sum - window[i];
         }
         window[i] = value;
         n++;
-        mean = sum / double(std::min(n.load(), kAverageMeterWindowSize));
+        mean = sum / double(std::min(n.load(), (uint64_t)window.size()));
     }
 
     //! NOT thread safe
     double getMedian()
     {
-        double median = 0;
-        if (n > 0)
+        if (n == 0) return 0.;
+        std::vector<double> tmp(window.begin(), window.begin() + std::min(n.load(), (uint64_t)window.size()));
+        std::sort(tmp.begin(), tmp.end());
+        uint32_t i = ((uint32_t)tmp.size()) / 2;
+        if (i * 2 != tmp.size()) // tmp has an odd number of elements?
         {
-            std::vector<double> tmp(window, window + std::min(n.load(),kAverageMeterWindowSize));
-            std::sort(tmp.begin(), tmp.end());
-            median = tmp[tmp.size() / 2];
+            return tmp[i];
         }
-        return median;
+        return (tmp[i] + tmp[i - 1]) / 2;
     }
 
     //! NOT thread safe
@@ -416,7 +419,7 @@ private:
     std::atomic<uint64_t> n = 0;
 
     double sum{};
-    double window[kAverageMeterWindowSize];
+    std::array<double, WINDOW_SIZE> window;
 
 #ifdef SL_WINDOWS
     LARGE_INTEGER frequency{};
@@ -424,6 +427,7 @@ private:
     LARGE_INTEGER elapsedUs{};
 #endif
 };
+typedef TAverageValueMeter<kAverageMeterWindowSize> AverageValueMeter;
 
 struct ScopedCPUTimer
 {

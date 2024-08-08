@@ -380,13 +380,21 @@ enum class WaitStatus
     eError,
 };
 
+struct DebugInfo
+{
+    DebugInfo(const char* sFile, uint32_t uLine) : m_sFile(sFile), m_uLine(uLine) { }
+    DebugInfo() : m_sFile("NO_FILE") { }
+    const char* m_sFile = nullptr;
+    uint32_t m_uLine = 0;
+};
+
 struct ICommandListContext
 {
     virtual RenderAPI getType() = 0;
-    virtual uint32_t getBufferCount() = 0;
+    virtual uint32_t getPrevCommandListIndex() = 0;
     virtual uint32_t getCurrentCommandListIndex() = 0;
     virtual uint64_t getSyncValueAtIndex(uint32_t idx) = 0;
-    virtual SyncPoint getNextSyncPoint() = 0;
+    virtual SyncPoint getSyncPointAtIndex(uint32_t idx) = 0;
     virtual Fence getNextVkAcquireFence() = 0;
     virtual int acquireNextBufferIndex(SwapChain chain, uint32_t& index, Fence* waitSemaphore = nullptr) = 0;
     virtual bool isCommandListRecording() = 0;
@@ -394,12 +402,14 @@ struct ICommandListContext
     virtual bool executeCommandList(const GPUSyncInfo* info = nullptr) = 0;
     virtual WaitStatus flushAll() = 0;
     virtual void syncGPU(const GPUSyncInfo* info) = 0;
-    virtual void waitOnGPUForTheOtherQueue(const ICommandListContext* other, uint32_t clIndex, uint64_t syncValue) = 0;
+    virtual void waitOnGPUForTheOtherQueue(const ICommandListContext* other, uint32_t clIndex,
+        uint64_t syncValue, const DebugInfo &debugInfo) = 0;
     virtual WaitStatus waitCPUFence(Fence fence, uint64_t syncValue) = 0;
-    virtual void waitGPUFence(Fence fence, uint64_t syncValue) = 0;
-    virtual void signalGPUFence(Fence fence, uint64_t syncValue) = 0;
-    virtual void signalGPUFenceAt(uint32_t index) = 0;
+    virtual void waitGPUFence(Fence fence, uint64_t syncValue, const DebugInfo &debugInfo) = 0;
+    virtual bool signalGPUFence(Fence fence, uint64_t syncValue) = 0;
+    virtual bool signalGPUFenceAt(uint32_t index) = 0;
     virtual WaitStatus waitForCommandList(FlushType ft = FlushType::eDefault) = 0;
+    virtual uint64_t getCompletedValue(Fence fence) = 0;
     virtual bool didCommandListFinish(uint32_t index) = 0;
     virtual WaitStatus waitForCommandListToFinish(uint32_t index) = 0;
     virtual CommandList getCmdList() = 0;

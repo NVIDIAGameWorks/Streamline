@@ -369,9 +369,10 @@ public:
         return WaitStatus::eNoTimeout;
     }
 
-    uint32_t getBufferCount()
+    uint32_t getPrevCommandListIndex() override
     {
-        return m_bufferCount;
+        assert(m_bufferCount > 0); // can't call this if you don't have any buffers
+        return (m_index + m_bufferCount - 1) % m_bufferCount;
     }
 
     uint32_t getCurrentCommandListIndex()
@@ -389,9 +390,9 @@ public:
         return m_fenceValue[idx];
     }
 
-    SyncPoint getNextSyncPoint()
+    SyncPoint getSyncPointAtIndex(uint32_t idx) override
     {
-        return { m_fence[m_index], m_fenceValue[m_index] + 1 };
+        return { m_fence[idx], m_fenceValue[idx] };
     }
 
     Fence getNextVkAcquireFence() override final
@@ -441,6 +442,14 @@ public:
         }
         //SL_LOG_INFO("Flushing on %S index %u value %llu", name.c_str(), i, fenceValue[i]);
         return WaitStatus::eNoTimeout;
+    }
+
+    uint64_t getCompletedValue(Fence fence)
+    {
+        auto semaphore = (VkSemaphore)fence;
+        uint64_t completedValue = 0;
+        VK_CHECK_RF(m_ddt.GetSemaphoreCounterValue(m_device, semaphore, &completedValue));
+        return completedValue;
     }
 
     bool didCommandListFinish(uint32_t index)
@@ -552,20 +561,21 @@ public:
         VK_CHECK_RV(m_ddt.QueueSubmit(m_cmdQueue, 1, &submitInfo, nullptr));
     }
 
-    void signalGPUFenceAt(uint32_t index)
+    bool signalGPUFenceAt(uint32_t index) override
     {
-        signalGPUFence(m_fence[index], ++m_fenceValue[m_index]);
+        return signalGPUFence(m_fence[index], ++m_fenceValue[m_index]);
     }
 
-    void signalGPUFence(Fence fence, uint64_t syncValue)
+    bool signalGPUFence(Fence fence, uint64_t syncValue) override
     {
         GPUSyncInfo info;
         info.signalSemaphores = { (VkSemaphore)fence };
         info.signalValues = { syncValue };
         syncGPU(&info);
+        return true;
     }
 
-    void waitGPUFence(Fence fence, uint64_t syncValue)
+    void waitGPUFence(Fence fence, uint64_t syncValue, const DebugInfo &debugInfo) override
     {
         GPUSyncInfo info;
         info.waitSemaphores = { (VkSemaphore)fence };
@@ -573,7 +583,8 @@ public:
         syncGPU(&info);
     }
 
-    void waitOnGPUForTheOtherQueue(const ICommandListContext* other, uint32_t clIndex, uint64_t syncValue)
+    void waitOnGPUForTheOtherQueue(const ICommandListContext* other, uint32_t clIndex,
+        uint64_t syncValue, const DebugInfo &debugInfo) override
     {
         auto tmp = (const CommandListContextVK*)other;
         if (!tmp || tmp->m_cmdQueue == m_cmdQueue) return;

@@ -77,17 +77,19 @@ struct D3D11CommandListContext : public ICommandListContext
 
     RenderAPI getType() { return RenderAPI::eD3D11; }
 
-    void signalGPUFenceAt(uint32_t index)
+    bool signalGPUFenceAt(uint32_t index) override
     {
-        signalGPUFence(m_fence, ++m_syncValue);
+        return signalGPUFence(m_fence, ++m_syncValue);
     }
 
-    void signalGPUFence(Fence fence, uint64_t syncValue)
+    bool signalGPUFence(Fence fence, uint64_t syncValue) override
     {
         if (FAILED(m_cmdCtxImmediate->Signal((ID3D11Fence*)fence, syncValue)))
         {
             SL_LOG_ERROR( "Failed to signal on the command queue");
+            return false;
         }
+        return true;
     }
 
     WaitStatus waitCPUFence(Fence fence, uint64_t syncValue)
@@ -97,7 +99,7 @@ struct D3D11CommandListContext : public ICommandListContext
         return WaitStatus::eError;
     }
 
-    void waitGPUFence(Fence fence, uint64_t syncValue)
+    void waitGPUFence(Fence fence, uint64_t syncValue, const DebugInfo &debugInfo) override
     {
         if (FAILED(m_cmdCtxImmediate->Wait((ID3D11Fence*)fence, syncValue)))
         {
@@ -161,10 +163,8 @@ struct D3D11CommandListContext : public ICommandListContext
         return WaitStatus::eNoTimeout;
     }
 
-    uint32_t getBufferCount()
+    uint32_t getPrevCommandListIndex() override
     {
-        assert(false);
-        SL_LOG_ERROR( "Not implemented");
         return 0;
     }
 
@@ -178,9 +178,9 @@ struct D3D11CommandListContext : public ICommandListContext
         return m_syncValue;
     }
     
-    SyncPoint getNextSyncPoint()
+    SyncPoint getSyncPointAtIndex(uint32_t idx) override
     {
-        return { m_fence, m_syncValue + 1 };
+        return { m_fence, m_syncValue };
     }
 
     Fence getNextVkAcquireFence() override final
@@ -204,6 +204,13 @@ struct D3D11CommandListContext : public ICommandListContext
         return WaitStatus::eError;
     }
 
+    uint64_t getCompletedValue(Fence fence)
+    {
+        assert(false);
+        SL_LOG_ERROR( "Not implemented");
+        return false;
+    }
+
     bool didCommandListFinish(uint32_t index)
     {
         assert(false);
@@ -217,7 +224,8 @@ struct D3D11CommandListContext : public ICommandListContext
         SL_LOG_ERROR("Not implemented");
     }
 
-    void waitOnGPUForTheOtherQueue(const ICommandListContext* other, uint32_t clIndex, uint64_t syncValue)
+    void waitOnGPUForTheOtherQueue(const ICommandListContext* other, uint32_t clIndex,
+        uint64_t syncValue, const DebugInfo &debugInfo) override
     {
         assert(false);
         SL_LOG_ERROR( "Not implemented");

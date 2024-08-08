@@ -5,7 +5,7 @@ Streamline - NIS
 >The focus of this guide is on using Streamline to integrate the NVIDIA Image Scaling (NIS) SDK into an application.  For more information about NIS itself, please visit the [NVIDIA Image Scaling SDK Github Page](https://github.com/NVIDIAGameWorks/NVIDIAImageScaling)  
 >For information on user interface considerations when using the NIS plugin, please see the ["RTX UI Developer Guidelines.pdf"](<RTX UI Developer Guidelines.pdf>) document included with this SDK.
 
-Version 2.4.10
+Version 2.4.11
 =======
 
 ### Introduction
@@ -194,4 +194,5 @@ else
 
 > **IMPORTANT:**
 > Plase note that **host is responsible for restoring the command buffer(list) state** after calling `slEvaluateFeature`. For more details on which states are affected please see [restore pipeline section](./ProgrammingGuideManualHooking.md#70-restoring-command-listbuffer-state)
+
 

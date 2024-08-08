@@ -147,6 +147,10 @@ struct Extent
     {
         return !operator==(rhs);
     }
+    inline bool isSameRes(const Extent& rhs) const
+    {
+        return width == rhs.width && height == rhs.height;
+    }
 };
 
 //! For cases when value has to be provided and we don't have good default

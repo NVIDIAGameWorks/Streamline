@@ -10,6 +10,7 @@ nvcfg.SL_BUILD_DLSS_DN = true
 
 
 
+
 nvcfg.SL_BUILD_DEEPDVC = true
 
 nvcfg.SL_DEEPDVC_PUBLIC_SDK = true
@@ -25,6 +26,11 @@ newoption {
 		{"no", "no"}
 	},
 	default = "yes"
+}
+
+newoption {
+	trigger = "with-toolset",
+	description = "Specify premake toolset"
 }
 
 function os.winSdkVersion()
@@ -47,6 +53,10 @@ workspace "streamline"
 	architecture "x64"
 	language "c++"
 	preferredtoolarchitecture "x86_64"
+	if (_OPTIONS["with-toolset"]) then
+		toolset (_OPTIONS["with-toolset"])
+	end
+	
 		  
 	local externaldir = (ROOT .."external/")
 
@@ -103,8 +113,8 @@ workspace "streamline"
 			path.translate("../../external/slang/bin/windows-x64/release/")..'slangc "%{file.relpath}" -entry main -target spirv -o "../../_artifacts/shaders/%{file.basename}.spv"',
 			path.translate("../../external/slang/bin/windows-x64/release/")..'slangc "%{file.relpath}" -profile sm_5_0 -entry main -target dxbc -o "../../_artifacts/shaders/%{file.basename}.cs"',
 			'pushd '..path.translate("../../_artifacts/shaders"),
-			'powershell.exe -ExecutionPolicy Bypass '..path.translate("../../tools/")..'bin2cheader.ps1 -i "%{file.basename}.spv"  > "%{file.basename}_spv.h"',
-			'powershell.exe -ExecutionPolicy Bypass '..path.translate("../../tools/")..'bin2cheader.ps1 -i "%{file.basename}.cs"  > "%{file.basename}_cs.h"',
+			'powershell.exe -NoProfile -ExecutionPolicy Bypass '..path.translate("../../tools/")..'bin2cheader.ps1 -i "%{file.basename}.spv"  > "%{file.basename}_spv.h"',
+			'powershell.exe -NoProfile -ExecutionPolicy Bypass '..path.translate("../../tools/")..'bin2cheader.ps1 -i "%{file.basename}.cs"  > "%{file.basename}_cs.h"',
 			'popd'
 		 }	  
 		 -- One or more outputs resulting from the build (required)
@@ -117,7 +127,7 @@ workspace "streamline"
 		buildcommands {
 			'copy "%{file.relpath}" "../../_artifacts/json/%{file.name}"',
 			'pushd '..path.translate("../../_artifacts/json"),
-			'powershell.exe -ExecutionPolicy Bypass '..path.translate("../../tools/")..'bin2cheader.ps1 -i "%{file.basename}.json"  > "../../_artifacts/json/%{file.basename}_json.h"',
+			'powershell.exe -NoProfile -ExecutionPolicy Bypass '..path.translate("../../tools/")..'bin2cheader.ps1 -i "%{file.basename}.json"  > "../../_artifacts/json/%{file.basename}_json.h"',
 			'popd'
 		}
 		-- One or more outputs resulting from the build (required)
@@ -130,7 +140,8 @@ workspace "streamline"
 	filter {} -- clear filter when you know you no longer need it!
 	
 	vpaths { ["shaders"] = {"**.hlsl" } }
-		
+
+
 group "core"
 
 project "sl.interposer"

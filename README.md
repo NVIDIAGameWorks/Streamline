@@ -1,4 +1,4 @@
-# Streamline (SL) - Version 2.4.10
+# Streamline (SL) - Version 2.4.11
 
 Streamline is an open-sourced cross-IHV solution that simplifies integration of the latest NVIDIA and other independent hardware vendors’ super resolution technologies into applications and games. This framework allows developers to easily implement one single integration and enable multiple super-resolution technologies and other graphics effects supported by the hardware vendor.
 
@@ -111,3 +111,4 @@ A sample Streamline plugin source code is located [here](source/plugins/sl.templ
 ## Sample App and Source
 
 A sample application using Streamline may be found in [this git repo](https://github.com/NVIDIAGameWorks/Streamline_Sample)
+

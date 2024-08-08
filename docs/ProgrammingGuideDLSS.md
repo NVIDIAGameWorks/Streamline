@@ -5,7 +5,7 @@ Streamline - DLSS
 >The focus of this guide is on using Streamline to integrate DLSS into an application.  For more information about DLSS itself, please visit the [NVIDIA Developer DLSS Page](https://developer.nvidia.com/rtx/dlss)
 >For information on user interface considerations when using the DLSS plugin, please see the ["RTX UI Developer Guidelines.pdf"](<RTX UI Developer Guidelines.pdf>) document included with this SDK.
 
-Version 2.4.10
+Version 2.4.11
 =======
 
 ### 1.0 INITIALIZE AND SHUTDOWN
@@ -333,3 +333,4 @@ If the DLSS output does not look right please check the following:
 * Make sure that jitter offset values are in pixel space
 * `NVSDK_NGX_Parameter_FreeMemOnRelease` is replaced with `slFreeResources`
 * `NVSDK_NGX_DLSS_Feature_Flags_MVLowRes` is handled automatically based on tagged motion vector buffer's size and extent.
+

@@ -113,6 +113,8 @@ struct CommonInterfaceContext
         }
         return threadsVulkan->getContext();
     }
+
+    UINT64 m_maxMemoryUsage = 0;
 };
 
 //! Our secondary context
@@ -573,6 +575,11 @@ void presentCommon(UINT Flags)
                 DXGI_QUERY_VIDEO_MEMORY_INFO videoMemoryInfo{};
                 ctx.adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &videoMemoryInfo);
                 ctx.compute->setVRAMBudget(videoMemoryInfo.CurrentUsage, videoMemoryInfo.Budget);
+                if (videoMemoryInfo.CurrentUsage > ctx.m_maxMemoryUsage)
+                {
+                    ctx.m_maxMemoryUsage = videoMemoryInfo.CurrentUsage;
+                    SL_LOG_VERBOSE("max recorded mem usage: %.2lf GB", ctx.m_maxMemoryUsage / (double)(1024 * 1024 * 1024));
+                }
             }
         }
         else
@@ -685,6 +692,8 @@ void presentCommon(UINT Flags)
 #endif
         }
 
+        ++ctx.currentFrame;
+
         // This will release any resources scheduled to be destroyed few frames behind
         CHI_VALIDATE(ctx.compute->collectGarbage((uint32_t)ctx.currentFrame));
         // This will release unused recycled resources (volatile tag copies)
@@ -715,7 +724,6 @@ void afterPresentCommon(UINT Flags)
     {
         return;
     }
-    ++ctx.currentFrame;
 }
 
 HRESULT slHookPresent1(IDXGISwapChain* swapChain, UINT SyncInterval, UINT Flags, DXGI_PRESENT_PARAMETERS* params, bool& Skip)

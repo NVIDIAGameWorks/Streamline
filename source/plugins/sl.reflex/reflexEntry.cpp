@@ -182,6 +182,7 @@ Result slSetData(const BaseStructure* inputs, CommandBuffer* cmdBuffer)
 
     if (!ctx.compute)
     {
+        SL_LOG_WARN("Reflex: no compute interface");
         return Result::eErrorInvalidIntegration;
     }
 
@@ -202,6 +203,10 @@ Result slSetData(const BaseStructure* inputs, CommandBuffer* cmdBuffer)
 #else
                 ctx.sleepMeter.begin();
                 ctx.lowLatencyAvailable = ctx.compute->sleep() == chi::ComputeStatus::eOk;
+                if (!ctx.lowLatencyAvailable)
+                {
+                    SL_LOG_WARN("Reflex sleep failed");
+                }
                 ctx.sleepMeter.end();
 #endif
             }
@@ -253,6 +258,7 @@ Result slSetData(const BaseStructure* inputs, CommandBuffer* cmdBuffer)
     {
         if (!consts)
         {
+            SL_LOG_WARN("Reflex: no consts");
             return Result::eErrorMissingInputParameter;
         }
         if (!ctx.lowLatencyAvailable)

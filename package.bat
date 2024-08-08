@@ -109,8 +109,10 @@ IF "%copy_cfg%"=="Production" (
 
 :: DLSS Frame Generation
 IF "%copy_cfg%"=="Production" (
+    copy %features_src%\sl.dlss_g.dll %copy_dest% /Y
     copy %src%\_artifacts\sl.dlss_g\%copy_cfg%_x64\sl.dlss_g.dll %copy_dest% /Y
 ) ELSE (
+    copy %features_src%\development\sl.dlss_g.dll %copy_dest% /Y
     copy %src%\_artifacts\sl.dlss_g\Develop_x64\sl.dlss_g.dll %copy_dest% /Y
 )
 
