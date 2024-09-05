@@ -67,6 +67,20 @@ namespace imgui
 //! 
 //! Here we can keep whatever global state we need
 //! 
+
+struct VKSwapchainInfo
+{
+    VkSwapchainCreateInfoKHR vkSwapChainParams{};
+    std::vector<VkImage> vkSwapchainImages{};
+    uint32_t backBufferFormat{};
+    uint32_t backBufferWidth{};
+    uint32_t backBufferHeight{};
+    uint32_t bufferCount{};
+    HWND backBufferHwnd{};
+};
+
+// TODO: Add missing synchronization for some of the graphics APIs such as swapchain-related ones
+// accessing ImGUI data structures in a potentially multi-threaded manner.
 struct IMGUIContext
 {
     SL_PLUGIN_CONTEXT_CREATE_DESTROY(IMGUIContext);
@@ -105,8 +119,7 @@ struct IMGUIContext
     ImGui_ImplVulkan_InitInfo                  vkInfo{};
     std::vector<std::pair<VkSurfaceKHR, HWND>> surfaceWindows{};
     VkSwapchainCreateInfoKHR                   vkSwapChainParams{};
-    VkImage                                    vkSwapchainImages[NUM_BACK_BUFFERS]{};
-
+    std::vector<VkImage> vkSwapchainImages{};
     HHOOK inputHook = nullptr;
 
     bool                      renderInternal         = true;   // true = render in this plugin, false = render in dlss_g
@@ -122,6 +135,8 @@ struct IMGUIContext
     uint32_t                  bufferCount            = 0;
     
     extra::AverageValueMeter  frameMeter             = {};
+    VkSwapchainKHR vkSwapchain{};
+    std::unordered_map<VkSwapchainKHR, VKSwapchainInfo> vkSwapchainInfoMap{};
 };
 }
 
@@ -383,16 +398,34 @@ void destroyContext(Context* ctx)
 {
     (void)(ctx);
     auto& pluginCtx = (*sl::imgui::getContext());
-    if (pluginCtx.platform == RenderAPI::eD3D12 || pluginCtx.platform == RenderAPI::eD3D11)
+
+    if (pluginCtx.platform == RenderAPI::eVulkan)
     {
-        // In both cases we use D3D12
-        ImGui_ImplDX12_InvalidateDeviceObjects();
+        if (pluginCtx.vkInfo.Device != NULL)
+        {
+            for (uint32_t i = 0; i < NUM_BACK_BUFFERS; i++)
+            {
+                vkDestroyFramebuffer(pluginCtx.vkInfo.Device, pluginCtx.vkFrameBuffers[i], nullptr);
+                pluginCtx.vkFrameBuffers[i] = VK_NULL_HANDLE;
+                vkDestroyImageView(pluginCtx.vkInfo.Device, pluginCtx.vkImageViews[i], nullptr);
+                pluginCtx.vkImageViews[i] = VK_NULL_HANDLE;
+            }
+            vkDestroyRenderPass(pluginCtx.vkInfo.Device, (VkRenderPass)(g_ctx->apiData), NULL);
+            g_ctx->apiData = VK_NULL_HANDLE;
+        }
+
+        pluginCtx.vkSwapchainImages.clear();
+
+        ImGui_ImplVulkan_Shutdown();
     }
     else
     {
-        ImGui_ImplVulkan_DestroyDeviceObjects();
-        if (pluginCtx.vkInfo.Device != NULL) { vkDestroyRenderPass(pluginCtx.vkInfo.Device, (VkRenderPass)(g_ctx->apiData), NULL); g_ctx->apiData = VK_NULL_HANDLE; }
+        ImGui_ImplDX12_Shutdown();
+        SL_SAFE_RELEASE(pluginCtx.pd3dRtvDescHeap);
+        SL_SAFE_RELEASE(pluginCtx.pd3dSrvDescHeap);
     }
+
+    ImGui_ImplWin32_Shutdown();
 
     ImGui::DestroyContext(g_ctx->imgui);
     ImPlot::DestroyContext(g_ctx->plot);
@@ -503,6 +536,7 @@ void render(void* commandList, void* backBuffer, uint32_t index)
                 VkImageSubresourceRange image_range = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
                 info.subresourceRange = image_range;
                 info.image = (VkImage)backBuffer;
+                assert(ctx.vkImageViews[index] == nullptr);
                 vkCreateImageView(ctx.vkInfo.Device, &info, nullptr, &ctx.vkImageViews[index]);
             }
 
@@ -518,6 +552,7 @@ void render(void* commandList, void* backBuffer, uint32_t index)
                 info.height = (uint32_t)io.DisplaySize.y;
                 info.layers = 1;
                 attachment[0] = ctx.vkImageViews[index];
+                assert(ctx.vkFrameBuffers[index] == nullptr);
                 vkCreateFramebuffer(ctx.vkInfo.Device, &info, nullptr, &ctx.vkFrameBuffers[index]);
             }
         }
@@ -3858,22 +3893,15 @@ void slOnPluginShutdown()
 {
     auto& ctx = (*imgui::getContext());
 
-    ImGui_ImplWin32_Shutdown();
-
-    if (ctx.platform == RenderAPI::eVulkan)
+    if (imgui::g_ctx != nullptr)
     {
-        for (uint32_t i = 0; i < NUM_BACK_BUFFERS; i++)
+        imgui::destroyContext(nullptr);
+        if (ctx.platform == RenderAPI::eVulkan)
         {
-            vkDestroyFramebuffer(ctx.vkInfo.Device, ctx.vkFrameBuffers[i], nullptr);
-            vkDestroyImageView(ctx.vkInfo.Device, ctx.vkImageViews[i], nullptr);
+            delete ctx.cmdQueue;
         }
-        ImGui_ImplVulkan_Shutdown();
-    }
-    else
-    {
-        ImGui_ImplDX12_Shutdown();
-        SL_SAFE_RELEASE(ctx.pd3dRtvDescHeap);
-        SL_SAFE_RELEASE(ctx.pd3dSrvDescHeap);
+        ctx.cmdQueue = nullptr;
+        ctx.vkSwapchainInfoMap.clear();
     }
 
     UnhookWindowsHookEx(ctx.inputHook);
@@ -4100,34 +4128,44 @@ VkResult slHookVkCreateSwapchainKHR(VkDevice Device, const VkSwapchainCreateInfo
     return VK_SUCCESS;
 }
 
+VkResult slHookVkCreateSwapchainKHRPost(VkDevice Device, const VkSwapchainCreateInfoKHR* CreateInfo, const VkAllocationCallbacks* Allocator, VkSwapchainKHR* Swapchain)
+{
+    auto& ctx = (*sl::imgui::getContext());
+
+    if (ctx.renderInternal)
+    {
+        ctx.vkSwapchainInfoMap[*Swapchain] = imgui::VKSwapchainInfo{ ctx.vkSwapChainParams, {}, ctx.backBufferFormat, ctx.backBufferWidth, ctx.backBufferHeight, ctx.bufferCount, ctx.backBufferHwnd };
+    }
+
+    return VK_SUCCESS;
+}
+
 void slHookVkDestroySwapchainKHR(VkDevice Device, VkSwapchainKHR Swapchain, const VkAllocationCallbacks* Allocator, bool& Skip)
 {
     auto& ctx = (*sl::imgui::getContext());
 
     if (ctx.renderInternal)
     {
-        ctx.vkSwapChainParams = {};
-        ctx.backBufferFormat = {};
-        ctx.backBufferWidth = {};
-        ctx.backBufferHeight = {};
-        ctx.bufferCount = {};
-        ctx.backBufferHwnd = {};
+        if (auto search = ctx.vkSwapchainInfoMap.find(Swapchain); search != ctx.vkSwapchainInfoMap.end())
+        {
+            ctx.vkSwapchainInfoMap.erase(search);
+        }
 
-        if (sl::imgui::g_ctx != nullptr)
+        if (ctx.vkSwapchain == Swapchain && sl::imgui::g_ctx != nullptr)
         {
             ctx.ui.destroyContext(nullptr);
         }
 
-        for (uint32_t i = 0; i < NUM_BACK_BUFFERS; i++)
+        if (ctx.vkSwapchainInfoMap.empty())
         {
-            if (ctx.vkFrameBuffers[i])
-            {
-                vkDestroyFramebuffer(ctx.vkInfo.Device, ctx.vkFrameBuffers[i], nullptr);
-            }
-            if (ctx.vkImageViews[i])
-            {
-                vkDestroyImageView(ctx.vkInfo.Device, ctx.vkImageViews[i], nullptr);
-            }
+            ctx.vkSwapChainParams = {};
+            ctx.vkSwapchainImages.clear();
+            ctx.backBufferFormat = {};
+            ctx.backBufferWidth = {};
+            ctx.backBufferHeight = {};
+            ctx.bufferCount = {};
+            ctx.backBufferHwnd = {};
+            ctx.vkSwapchain = {};
         }
     }
 }
@@ -4150,9 +4188,16 @@ VkResult slHookVkGetSwapchainImagesKHR(VkDevice Device, VkSwapchainKHR Swapchain
     auto& ctx = (*sl::imgui::getContext());
     if (ctx.renderInternal)
     {
-        uint32_t imageCount = ctx.vkSwapChainParams.minImageCount;
-        vkGetSwapchainImagesKHR(Device, Swapchain, &imageCount, ctx.vkSwapchainImages);
+        auto& vkSwapchainImages = ctx.vkSwapchainInfoMap[Swapchain].vkSwapchainImages;
+        uint32_t imageCount{ static_cast<uint32_t>(vkSwapchainImages.size()) };
+        vkGetSwapchainImagesKHR(Device, Swapchain, &imageCount, SwapchainImages == NULL ? NULL : vkSwapchainImages.data());
+        if (imageCount != 0 && vkSwapchainImages.size() != imageCount)
+        {
+            vkSwapchainImages.resize(imageCount);
+            ctx.vkSwapchainInfoMap[Swapchain].bufferCount = imageCount;
+        }
     }
+
     return VK_SUCCESS;
 }
 
@@ -4162,17 +4207,55 @@ VkResult slHookVkPresent(VkQueue Queue, const VkPresentInfoKHR* PresentInfo, boo
 
     if (ctx.renderInternal)
     {
+        // This may have to be modified to account for presents on multiple swapchains in future (PresentInfo->swapchainCount > 1)
+        assert(PresentInfo->swapchainCount == 1);
+        auto currentSwapChain = PresentInfo->pSwapchains[0];
+        auto search = ctx.vkSwapchainInfoMap.find(currentSwapChain);
+        if (search == ctx.vkSwapchainInfoMap.end())
+        {
+            SL_LOG_ERROR("Invalid swapchain %p, not created by VkCreateSwapchainKHR API, passed in! Using previous valid swapchain data", currentSwapChain);
+        }
+        else
+        {
+            const auto& swapchainData = search->second;
+            ctx.vkSwapChainParams = swapchainData.vkSwapChainParams;
+            ctx.vkSwapchainImages = swapchainData.vkSwapchainImages;
+            ctx.backBufferFormat = swapchainData.backBufferFormat;
+            ctx.backBufferWidth = swapchainData.backBufferWidth;
+            ctx.backBufferHeight = swapchainData.backBufferHeight;
+            ctx.backBufferHwnd = swapchainData.backBufferHwnd;
+            ctx.bufferCount = swapchainData.bufferCount;
+        }
+
         if (sl::imgui::g_ctx == nullptr)
         {
             // 1: Queue
-            ctx.cmdQueue = Queue;
+            uint32_t presentQueueFamilyIndex{}, presentQueueIndex{};
+            auto hostPresentQueue = reinterpret_cast<chi::CommandQueue>(Queue);
+            interposer::QueueVkInfo qInfo{};
+            if (ctx.compute->getHostQueueInfo(hostPresentQueue, &qInfo) != chi::ComputeStatus::eOk)
+            {
+                SL_LOG_ERROR("Invalid VK app queue - %p!", Queue);
+            }
+            // ImGUI can render only using graphics queue.
+            assert((qInfo.flags & VK_QUEUE_GRAPHICS_BIT) != 0);
+            if (ctx.cmdQueue == nullptr)
+            {
+                ctx.cmdQueue = new chi::CommandQueueVk(Queue, chi::CommandQueueType::eGraphics, qInfo.familyIndex, qInfo.index);
+            }
+            else
+            {
+                chi::CommandQueueVk* pCmdQueue = reinterpret_cast<chi::CommandQueueVk*>(ctx.cmdQueue);
+                pCmdQueue->native = Queue;
+                pCmdQueue->family = qInfo.familyIndex;
+                pCmdQueue->index = qInfo.index;
+            }
 
             // 2: Command list            
             if (ctx.cmdList != nullptr)
             {
                 ctx.compute->destroyCommandListContext(ctx.cmdList);
             }
-
             chi::ComputeStatus ret = ctx.compute->createCommandListContext(ctx.cmdQueue, ctx.bufferCount, ctx.cmdList, "imgui-cmdlist");
             if (ret != chi::ComputeStatus::eOk)
             {
@@ -4190,6 +4273,7 @@ VkResult slHookVkPresent(VkQueue Queue, const VkPresentInfoKHR* PresentInfo, boo
 
             sl::imgui::Context* imguiCtx = ctx.ui.createContext(contextDesc);
             ctx.ui.setCurrentContext(imguiCtx);
+            ctx.vkSwapchain = currentSwapChain;
             auto style = ctx.ui.getStyle();
             ctx.ui.setStyleColors(style, imgui::StyleColorsPreset::eNvidiaDark);           
         }
@@ -4225,6 +4309,7 @@ SL_EXPORT void* slGetPluginFunction(const char* functionName)
     SL_EXPORT_FUNCTION(slHookPresent);
     SL_EXPORT_FUNCTION(slHookPresent1);
     SL_EXPORT_FUNCTION(slHookVkCreateSwapchainKHR);
+    SL_EXPORT_FUNCTION(slHookVkCreateSwapchainKHRPost);
     SL_EXPORT_FUNCTION(slHookVkDestroySwapchainKHR);
     SL_EXPORT_FUNCTION(slHookVkCreateWin32SurfaceKHR);
     SL_EXPORT_FUNCTION(slHookVkDestroySurfaceKHR);

@@ -1,0 +1,11 @@
+{
+    "id" : 1003,
+    "priority" : 100,
+    "required_plugins" : ["sl.common"],
+    "name" : "sl.directsr",
+    "namespace" : "directsr",
+    "rhi" : ["d3d12"],
+    "hooks" :
+    [
+    ]
+}

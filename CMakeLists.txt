@@ -39,6 +39,7 @@ option(STREAMLINE_FEATURE_REFLEX    "Include Reflex dll"          OFF)
 option(STREAMLINE_FEATURE_NIS       "Include NIS dll"             OFF)
 option(STREAMLINE_FEATURE_DLSS_FG   "Include DLSS-FG dll"         OFF)
 option(STREAMLINE_FEATURE_DEEPDVC   "Include DEEPDVC dll"   OFF)
+option(STREAMLINE_FEATURE_DIRECTSR  "Include DirectSR dll"  OFF)
 
 option(STREAMLINE_IMPORT_AS_INTERFACE "Import Streamline as an Interface without lib" OFF)
 
@@ -80,6 +81,10 @@ endif()
 
 if (STREAMLINE_FEATURE_DEEPDVC)
     list (APPEND STREAMLINE_DLLS "${STREAMLINE_PLUGIN_DLL_DIR}sl.deepdvc.dll" "${STREAMLINE_SUPPORT_DLL_DIR}nvngx_DeepDVC.dll")
+endif()
+
+if (STREAMLINE_FEATURE_DIRECTSR)
+    list (APPEND STREAMLINE_DLLS "${STREAMLINE_PLUGIN_DLL_DIR}sl.directsr.dll")
 endif()
 
 # We copy all the Jsons that may be present. 

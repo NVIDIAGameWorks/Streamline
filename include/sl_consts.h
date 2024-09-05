@@ -151,6 +151,11 @@ struct Extent
     {
         return width == rhs.width && height == rhs.height;
     }
+
+#if defined(_WINDEF_)
+    // Cast helper for sl::Extent->RECT when windef.h has been included
+    inline operator RECT() const { return RECT { (LONG)left, (LONG)top, (LONG)(left + width), (LONG)(top + height) }; }
+#endif
 };
 
 //! For cases when value has to be provided and we don't have good default

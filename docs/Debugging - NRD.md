@@ -38,3 +38,4 @@ where:
 - Viewport 11 - number of accumulated frames for specular signal (red = `history reset`)
 - Viewport 12 - input normalized `hitT` for diffuse signal (ambient occlusion, AO)
 - Viewport 15 - input normalized `hitT` for specular signal (specular occlusion, SO)
+

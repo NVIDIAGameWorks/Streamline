@@ -158,3 +158,4 @@ Place the `sl.dlss_g.json` file (located in `./scripts/`) in the game's working 
 	"showDebugText" : true
 }
 ```
+

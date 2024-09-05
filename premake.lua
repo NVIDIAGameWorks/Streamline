@@ -17,6 +17,11 @@ nvcfg.SL_DEEPDVC_PUBLIC_SDK = true
 
 
 
+nvcfg.SL_DIRECTSR_PUBLIC_SDK = true
+-- SL DirectSR plugin build config option. Enabling this will enable the DirectSR plugin build
+nvcfg.SL_BUILD_DIRECTSR = true
+
+
 
 newoption {
 	trigger = "with-nvllvk",
@@ -543,6 +548,26 @@ project "sl.imgui"
 
 	links { "d3d12.lib", "vulkan-1.lib"}
 	
+
+if nvcfg.SL_BUILD_DIRECTSR then
+    project "sl.directsr"
+	    kind "SharedLib"
+	    targetdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}")
+	    objdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}")
+	    characterset ("MBCS")
+	    dependson { "sl.common" }
+	    pluginBasicSetup("directsr")
+
+	    files {
+			"./source/core/ngx/**.h",
+			"./source/core/ngx/**.cpp",
+			"./source/plugins/sl.directsr/**.json",
+			"./source/plugins/sl.directsr/**.h",
+			"./source/plugins/sl.directsr/**.cpp"
+	    }
+
+	    removefiles {"./source/core/sl.extra/extra.cpp"}
+end
 
 if (os.isdir("./source/plugins/sl.nvperf")) then
 	project "sl.nvperf"

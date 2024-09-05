@@ -115,3 +115,4 @@ Streamline 2.0 **includes all the above mentioned v1.5 changes with the followin
 
 * Removed `slGetHook*` API
 * New API `slGetNativeInterface` in combination with `slUpgradeIntercace` is now used to significantly simplify manual hooking.
+

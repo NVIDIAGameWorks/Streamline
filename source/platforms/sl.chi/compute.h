@@ -270,6 +270,7 @@ struct ResourceDescription
     uint64_t gpuVirtualAddress = 0;
     ResourceFlags flags = ResourceFlags::eNone;
     std::string sName;
+    bool createImageViewTypeStencil = false;
 };
 
 struct ResourceInfo
@@ -339,7 +340,6 @@ struct GPUSyncInfo
     std::vector<uint64_t> signalValues{};
     chi::Fence fence{};
     bool signalPresentSemaphore{};
-    bool useEmptyCmdBuffer = true;
 };
 
 struct TranslatedResource

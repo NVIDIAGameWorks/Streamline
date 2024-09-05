@@ -1,3 +1,26 @@
+======== Release 2.4.15 Entries ========
+
+    * Added support for DirectSR with a new plugin: `sl.directsr`.
+      See `ProgrammingGuideDirectSR.md` for more information.
+
+    * Fixed a bug in `sl.dlss_g` where the correct `sl::Resource::Type` of a VK resource was not set.
+
+    * Fixed a bug in `sl.dlss_g` which violated the following Vulkan valid usage IDs:
+        - `VUID-VkDescriptorImageInfo-imageView-01976`
+
+    * Fixed a bug in `sl.dlss_g` which led `vkAcquireNextImageKHR` to stall unnecessarily.
+
+    * Fixed a bug in `sl.imgui` where the native `VkQueue` was passed instead of `sl::chi::CommandQueueVk`,
+      resulting in a crash.
+
+    * Fixed a bug in `sl.imgui` which could cause a crash during swapchain recreation.
+
+    * Fixed a bug in `sl.dlss_g` where the fence passed to `slHookVkAcquireNextImageKHR` 
+      was not used.
+
+    * Fixed a bug in `sl.dlss_g` where an old `VkQueue` would get used if the presenting queue 
+      changed, resulting in a crash.
+
 ======== Release 2.4.11 Entries ========
 
     * Fixed a bug in `sl.common` where shared `ID3D12CommandAllocator` objects were not reset, 

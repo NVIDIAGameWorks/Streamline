@@ -161,6 +161,10 @@ copy %src%\_artifacts\sl.nvperf\%copy_cfg%_x64\sl.nvperf.pdb %sym_dest% /Y
 copy %src%\_artifacts\sl.pcl\%copy_cfg%_x64\sl.pcl.dll %copy_dest% /Y
 copy %src%\_artifacts\sl.pcl\%copy_cfg%_x64\sl.pcl.pdb %sym_dest% /Y
 
+:: DirectSR
+copy %src%\_artifacts\sl.directsr\%copy_cfg%_x64\sl.directsr.dll %copy_dest% /Y
+copy %src%\_artifacts\sl.directsr\%copy_cfg%_x64\sl.directsr.pdb %sym_dest% /Y
+
 :: Reflex
 copy %src%\_artifacts\sl.reflex\%copy_cfg%_x64\sl.reflex.dll %copy_dest% /Y
 copy %src%\_artifacts\sl.reflex\%copy_cfg%_x64\sl.reflex.pdb %sym_dest% /Y
@@ -207,6 +211,7 @@ copy %src%\include\sl_version.h        %dest%\include
 copy %src%\include\sl_deepdvc.h        %dest%\include
 copy %src%\include\sl_dlss.h           %dest%\include
 copy %src%\include\sl_dlss_g.h         %dest%\include
+copy %src%\include\sl_directsr.h             %dest%\include
 copy %src%\include\sl_nis.h            %dest%\include
 copy %src%\include\sl_nrd.h            %dest%\include
 copy %src%\include\sl_nvperf.h         %dest%\include
@@ -313,6 +318,15 @@ IF "%include_source%"=="True" (
     xcopy %src%\source\plugins\sl.common   %dest%\source\plugins\sl.common   /S
     mkdir %dest%\source\plugins\sl.deepdvc
     xcopy %src%\source\plugins\sl.deepdvc  %dest%\source\plugins\sl.deepdvc  /S
+    mkdir %dest%\source\plugins\sl.directsr
+    xcopy %src%\source\plugins\sl.directsr %dest%\source\plugins\sl.directsr /S
+
+    mkdir %dest%\external\dx-agility-sdk-headers-1.714.0-preview\
+    mkdir %dest%\external\dx-agility-sdk-headers-1.714.0-preview\include\
+    mkdir %dest%\external\dx-agility-sdk-headers-1.714.0-preview\include\d3dx12\
+    xcopy %src%\external\dx-agility-sdk-headers-1.714.0-preview\ %dest%\external\dx-agility-sdk-headers-1.714.0-preview /S
+    xcopy %src%\external\dx-agility-sdk-headers-1.714.0-preview\include\ %dest%\external\dx-agility-sdk-headers-1.714.0-preview\include /S
+    xcopy %src%\external\dx-agility-sdk-headers-1.714.0-preview\include\d3dx12 %dest%\external\dx-agility-sdk-headers-1.714.0-preview\include\d3dx12 /S
     mkdir %dest%\source\plugins\sl.dlss
     xcopy %src%\source\plugins\sl.dlss     %dest%\source\plugins\sl.dlss     /S
     mkdir %dest%\source\plugins\sl.imgui

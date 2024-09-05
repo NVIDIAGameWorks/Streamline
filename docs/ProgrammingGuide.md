@@ -2,7 +2,7 @@
 Streamline - SL
 =======================
 
-Version 2.4.11
+Version 2.4.15
 =======
 
 1 SETTING UP
@@ -868,7 +868,8 @@ if(SL_FAILED(result, slSetTag(viewport, inputs, _countof(inputs), cmdList)))
 ```
 
 > **NOTE:**
-> When using d3d11 please make sure to use state 0 (D3D12_RESOURCE_STATE_COMMON) for all tags
+* When using d3d11 please make sure to use state 0 (D3D12_RESOURCE_STATE_COMMON) for all tags.
+* When using Vulkan, ensure to specify aspect mask of the image view member of depth buffer `sl::Resource`, containing both depth and stencil bits in its format, to be of type depth only, during its tagging. This is because SL features use depth data from depth-stencil buffer and as per [VUID-VkDescriptorImageInfo-imageView-01976](https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VkDescriptorImageInfo.html#VUID-VkDescriptorImageInfo-imageView-01976), if the Vulkan image view is being used for texturing, then its aspect mask can either be of type depth or stencil but not both.
 
 Instead of using global scope and `slSetTag`, resources can also be tagged in local scope by passing them in directly when calling `slEvaluateFeature` if that is more convenient, here is an example:
 

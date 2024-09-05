@@ -203,6 +203,8 @@ constexpr Feature kFeatureDLSS_RR = 1001;
 
 constexpr Feature kFeatureNvPerf = 1002;
 
+constexpr Feature kFeatureDirectSR = 1003;
+
 // ImGUI 
 constexpr Feature kFeatureImGUI = 9999;
 

@@ -20,6 +20,8 @@
 * SOFTWARE.
 */
 
+#include <unordered_set>
+
 #include "include/sl.h"
 #include "include/sl_consts.h"
 #include "source/core/sl.log/log.h"
@@ -155,6 +157,12 @@ void updateEmbeddedJSON(json& config)
         }
     }
 
+    std::unordered_set<std::string> deviceExtensions
+    {
+        "VK_NV_low_latency"
+    };
+
+    config["external"]["vk"]["device"]["extensions"] = deviceExtensions;
     config["external"]["reflex"]["lowLatencyAvailable"] = ctx.lowLatencyAvailable;
     config["external"]["reflex"]["flashIndicatorDriverControlled"] = ctx.flashIndicatorDriverControlled;
 }

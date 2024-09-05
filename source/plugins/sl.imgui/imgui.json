@@ -15,6 +15,12 @@
     },
     {
       "class": "Vulkan",
+      "target": "CreateSwapchainKHR",
+      "replacement": "slHookVkCreateSwapchainKHRPost",
+      "base": "after"
+    },
+    {
+      "class": "Vulkan",
       "target": "DestroySwapchainKHR",
       "replacement": "slHookVkDestroySwapchainKHR",
       "base": "before"

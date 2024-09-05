@@ -3,7 +3,7 @@ Streamline - DLSS-G
 
 NVIDIA DLSS Frame Generation (“DLSS-FG” or “DLSS-G”) is an AI based technology that infers frames based on rendered frames coming from a game engine or rendering pipeline. This document explains how to integrate DLSS-G into a renderer.
 
-Version 2.4.11
+Version 2.4.15
 =======
 
 ### 0.0 Integration checklist
@@ -216,7 +216,7 @@ In order to run DLSS-G on final color subrect region:
   * SL will warn if it doesn't match the SL-provided backbuffer resource being presented.
 
 > NOTE:
-> SL will hold a reference to all `sl::ResourceLifecycle::eValidUntilPresent` resources until a null tag is set, therefore the application will not crash if host releases tagged resource before `present frame` event is reached.
+> SL will hold a reference to all `sl::ResourceLifecycle::eValidUntilPresent` resources until a null tag is set, therefore the application will not crash if host releases tagged resource before `present frame` event is reached. This does not apply to Vulkan.
 
 ```cpp
 

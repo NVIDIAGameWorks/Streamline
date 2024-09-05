@@ -263,6 +263,7 @@ inline const char* getFeatureAsStr(Feature f)
         SL_CASE_STR(kFeatureCommon);
         SL_CASE_STR(kFeatureDLSS_RR);
         SL_CASE_STR(kFeatureDeepDVC);
+        SL_CASE_STR(kFeatureDirectSR);
     }
     return "Unknown";
 }
@@ -284,6 +285,7 @@ inline const char* getFeatureFilenameAsStrNoSL(Feature f)
         case kFeatureImGUI: return "imgui";
         case kFeatureCommon: return "common";
         case kFeatureDLSS_RR: return "dlss_d";
+        case kFeatureDirectSR: return "directsr";
         default: return "Unknown";
     }
 }

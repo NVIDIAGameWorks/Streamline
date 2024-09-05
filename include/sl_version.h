@@ -23,7 +23,7 @@
 
 #define SL_VERSION_MAJOR 2
 #define SL_VERSION_MINOR 4
-#define SL_VERSION_PATCH 11
+#define SL_VERSION_PATCH 15
 
 #include <string>
 

@@ -91,10 +91,8 @@ class CommandListContextVK : public ICommandListContext
     std::vector<VkSemaphore> m_fence;
     std::vector<uint64_t> m_fenceValue = {};
     bool m_cmdListIsRecording = false;
-    uint32_t m_emptyIndex = 0; // used for WAR see below
     uint32_t m_index = 0;
     uint32_t m_lastIndex = UINT_MAX;
-    uint32_t m_clCount = 0;
     uint32_t m_bufferCount = 0;
     uint32_t m_bufferToPresent = 0;
     std::wstring m_name;
@@ -118,12 +116,10 @@ public:
         m_acquireSemaphore.resize(m_bufferCount);
         m_acquireFence.resize(m_bufferCount);
         m_acquireIndex = m_bufferCount - 1;
-        // Allocate double, see below why
-        m_clCount = m_bufferCount * 2;
-        m_allocator.resize(m_clCount);
-        m_fence.resize(m_clCount);
-        m_fenceValue.resize(m_clCount);
-        m_cmdBuffer.resize(m_clCount);
+        m_allocator.resize(m_bufferCount);
+        m_fence.resize(m_bufferCount);
+        m_fenceValue.resize(m_bufferCount);
+        m_cmdBuffer.resize(m_bufferCount);
     
         VkSemaphoreCreateInfo createInfo;
         createInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -155,10 +151,9 @@ public:
             m_compute->setDebugName(&r, name.str().c_str());
         }
 
-        SL_LOG_INFO("Creating command context %s - cmd buffers %u - dummy cmd buffers %u", debugName, m_bufferCount, m_clCount - m_bufferCount);
+        SL_LOG_INFO("Creating command context %s - cmd buffers %u", debugName, m_bufferCount);
 
-        // First N used for regular work submission, second N empty buffers for driver WAR when waiting with no workload
-        for (uint32_t i = 0; i < m_clCount; i++)
+        for (uint32_t i = 0; i < m_bufferCount; i++)
         {
             {
                 VkSemaphoreTypeCreateInfo timelineCreateInfo;
@@ -209,15 +204,11 @@ public:
     {
         assert(m_device != NULL);
 
-        for (uint32_t i = 0; i < 2 * m_bufferCount; i++)
+        for (uint32_t i = 0; i < m_bufferCount; i++)
         {
             m_ddt.FreeCommandBuffers(m_device, m_allocator[i], 1, &m_cmdBuffer[i]);
             m_ddt.DestroyCommandPool(m_device, m_allocator[i], nullptr);
             m_ddt.DestroySemaphore(m_device, m_fence[i], nullptr);
-        }
-
-        for (uint32_t i = 0; i < m_bufferCount; i++)
-        {
             m_ddt.DestroyFence(m_device, m_acquireFence[i], NULL);
             m_ddt.DestroySemaphore(m_device, m_acquireSemaphore[i], nullptr);
         }
@@ -361,7 +352,7 @@ public:
         waitInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
         waitInfo.pNext = NULL;
         waitInfo.flags = 0;
-        waitInfo.semaphoreCount = m_clCount;
+        waitInfo.semaphoreCount = m_bufferCount;
         waitInfo.pSemaphores = &m_fence[0];
         waitInfo.pValues = &m_fenceValue[0];
         VK_CHECK_RWS(m_ddt.WaitSemaphores(m_device, &waitInfo, kMaxSemaphoreWaitUs));
@@ -480,50 +471,10 @@ public:
 
     void syncGPU(const GPUSyncInfo* info)
     {
-        // IMPORTANT: When using Vulkan we cannot submit null command buffer and expect it to 
-        // wait on semaphore, dummy command buffer is required!
-        // 
-        // Hack due to bug in the driver 3869204, open close empty cmd buffer but keep doing
-        // N-buffering to avoid reusing same empty cmd buffer for multiple wait requests.
-
         std::vector<chi::Fence> waitSemaphores;
         std::vector<uint64_t> waitValues;
         std::vector<chi::Fence> signalSemaphores;
         std::vector<uint64_t> signalValues;
-
-        if (info->useEmptyCmdBuffer)
-        {
-            // Note that we are using upper N cmd buffers as empty hence + bufferCount
-            m_emptyIndex = ((m_emptyIndex + 1) % m_bufferCount + m_bufferCount);
-            uint64_t completedValue;
-            VK_CHECK_RV(m_ddt.GetSemaphoreCounterValue(m_device, m_fence[m_emptyIndex], &completedValue));
-            if (completedValue < m_fenceValue[m_emptyIndex])
-            {
-                VkSemaphoreWaitInfo waitInfo;
-                waitInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
-                waitInfo.pNext = NULL;
-                waitInfo.flags = 0;
-                waitInfo.semaphoreCount = 1;
-                waitInfo.pSemaphores = &m_fence[m_emptyIndex];
-                waitInfo.pValues = &m_fenceValue[m_emptyIndex];
-                VK_CHECK_RV(m_ddt.WaitSemaphores(m_device, &waitInfo, kMaxSemaphoreWaitUs));
-            }
-
-            auto signalFence = m_fence[m_emptyIndex];
-            auto signalFenceValue = ++m_fenceValue[m_emptyIndex];
-
-            const VkCommandBufferBeginInfo cmdBufferInfo =
-            {
-                VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr,
-                VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, nullptr
-            };
-            VK_CHECK_RV(m_ddt.BeginCommandBuffer(m_cmdBuffer[m_emptyIndex], &cmdBufferInfo));
-            VK_CHECK_RV(m_ddt.EndCommandBuffer(m_cmdBuffer[m_emptyIndex]));
-
-            // Our "empty" signal
-            signalSemaphores.push_back(signalFence);
-            signalValues.push_back(signalFenceValue);
-        }
 
         // External semaphores (if any)
         if (info)
@@ -552,13 +503,8 @@ public:
         submitInfo.pWaitSemaphores = (VkSemaphore*)waitSemaphores.data();
         submitInfo.signalSemaphoreCount = (uint32_t)signalSemaphores.size();
         submitInfo.pSignalSemaphores = (VkSemaphore*)signalSemaphores.data();
-        if (info->useEmptyCmdBuffer)
-        {
-            submitInfo.commandBufferCount = 1;
-            submitInfo.pCommandBuffers = &m_cmdBuffer[m_emptyIndex];
-        }
         submitInfo.pWaitDstStageMask = waitDstStageMask;
-        VK_CHECK_RV(m_ddt.QueueSubmit(m_cmdQueue, 1, &submitInfo, nullptr));
+        VK_CHECK_RV(m_ddt.QueueSubmit(m_cmdQueue, 1, &submitInfo, info ? (VkFence)info->fence : VK_NULL_HANDLE));
     }
 
     bool signalGPUFenceAt(uint32_t index) override
@@ -768,20 +714,22 @@ VkAccessFlags toVkAccessFlags(ResourceState state)
     }
 }
 
-VkImageAspectFlags toVkAspectFlags(uint32_t nativeFormat)
+VkImageAspectFlags toVkAspectFlags(uint32_t nativeFormat, bool isImageViewForTexture, bool isImageViewTypeStencil)
 {
     switch (nativeFormat)
     {
-        case VK_FORMAT_D16_UNORM:
-        case VK_FORMAT_X8_D24_UNORM_PACK32:
-        case VK_FORMAT_D32_SFLOAT:
-            return VK_IMAGE_ASPECT_DEPTH_BIT;
-        case VK_FORMAT_D16_UNORM_S8_UINT:
-        case VK_FORMAT_D24_UNORM_S8_UINT:
-        case VK_FORMAT_D32_SFLOAT_S8_UINT:
-            return VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
-        case VK_FORMAT_S8_UINT: return VK_IMAGE_ASPECT_STENCIL_BIT;
-        default: return VK_IMAGE_ASPECT_COLOR_BIT;
+    case VK_FORMAT_D16_UNORM:
+    case VK_FORMAT_X8_D24_UNORM_PACK32:
+    case VK_FORMAT_D32_SFLOAT:
+        return VK_IMAGE_ASPECT_DEPTH_BIT;
+    case VK_FORMAT_D16_UNORM_S8_UINT:
+    case VK_FORMAT_D24_UNORM_S8_UINT:
+    case VK_FORMAT_D32_SFLOAT_S8_UINT:
+        // VUID - VkDescriptorImageInfo - imageView - 01976: If imageView is created from a depth / stencil image, the aspectMask used to create the imageView must include
+        // either VK_IMAGE_ASPECT_DEPTH_BIT or VK_IMAGE_ASPECT_STENCIL_BIT but not both.
+        return isImageViewForTexture ? (isImageViewTypeStencil ? VK_IMAGE_ASPECT_STENCIL_BIT : VK_IMAGE_ASPECT_DEPTH_BIT) : (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
+    case VK_FORMAT_S8_UINT: return VK_IMAGE_ASPECT_STENCIL_BIT;
+    default: return VK_IMAGE_ASPECT_COLOR_BIT;
     }
 }
 
@@ -2033,7 +1981,7 @@ ComputeStatus Vulkan::createTexture2DResourceSharedImpl(ResourceDescription &res
         VkMemoryRequirements memReqs = { };
         m_ddt.GetImageMemoryRequirements(m_device, image, &memReqs);
 
-        // Find an available memory type that satifies the requested properties.
+        // Find an available memory type that satisfies the requested properties.
         uint32_t memoryTypeIndex;
         for (memoryTypeIndex = 0; memoryTypeIndex < m_vkPhysicalDeviceMemoryProperties.memoryTypeCount; ++memoryTypeIndex) {
             if (!(memReqs.memoryTypeBits & (1 << memoryTypeIndex))) {
@@ -2082,7 +2030,8 @@ ComputeStatus Vulkan::createTexture2DResourceSharedImpl(ResourceDescription &res
         texViewCreateInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
         texViewCreateInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
         texViewCreateInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-        texViewCreateInfo.subresourceRange.aspectMask = toVkAspectFlags(resDesc.nativeFormat);
+        bool isImageViewForTexture = true, isImageViewTypeStencil = false;
+        texViewCreateInfo.subresourceRange.aspectMask = toVkAspectFlags(resDesc.nativeFormat, isImageViewForTexture, isImageViewTypeStencil);
         texViewCreateInfo.subresourceRange.baseMipLevel = 0;
         texViewCreateInfo.subresourceRange.levelCount = 1;
         texViewCreateInfo.subresourceRange.baseArrayLayer = 0;
@@ -2189,7 +2138,7 @@ ComputeStatus Vulkan::createBufferResourceImpl(ResourceDescription &resDesc, Res
     VkMemoryRequirements memReqs = { };
     m_ddt.GetBufferMemoryRequirements(m_device, buffer, &memReqs);
 
-    // Find an available memory type that satifies the requested properties.
+    // Find an available memory type that satisfies the requested properties.
     uint32_t memoryTypeIndex;
     for (memoryTypeIndex = 0; memoryTypeIndex < m_vkPhysicalDeviceMemoryProperties.memoryTypeCount; ++memoryTypeIndex) {
         if (!(memReqs.memoryTypeBits & (1 << memoryTypeIndex))) {
@@ -2333,6 +2282,7 @@ ComputeStatus Vulkan::copyHostToDeviceTexture(CommandList InCmdList, uint64_t In
     memcpy(stagingPtr, InData, InSize);
     m_ddt.UnmapMemory(m_device, mem);
 
+    bool isImageViewForTexture = false, isImageViewTypeStencil = false;
     {
         const VkImageMemoryBarrier transferBarrier{
             VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -2344,7 +2294,7 @@ ComputeStatus Vulkan::copyHostToDeviceTexture(CommandList InCmdList, uint64_t In
             VK_QUEUE_FAMILY_IGNORED,
             VK_QUEUE_FAMILY_IGNORED,
             dst,
-            {toVkAspectFlags(dstResource->nativeFormat), 0, 1, 0, 1}
+            {toVkAspectFlags(dstResource->nativeFormat, isImageViewForTexture, isImageViewTypeStencil), 0, 1, 0, 1}
         };
         m_ddt.CmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &transferBarrier);
     }
@@ -2354,7 +2304,7 @@ ComputeStatus Vulkan::copyHostToDeviceTexture(CommandList InCmdList, uint64_t In
 
     // Copy from staging to texture
     VkBufferImageCopy buffImageCopyRegions{};
-    buffImageCopyRegions.imageSubresource.aspectMask = toVkAspectFlags(dstResource->nativeFormat);
+    buffImageCopyRegions.imageSubresource.aspectMask = toVkAspectFlags(dstResource->nativeFormat, isImageViewForTexture, isImageViewTypeStencil);
     buffImageCopyRegions.imageSubresource.layerCount = 1;
     buffImageCopyRegions.imageExtent = { desc.width, desc.height, 1 };
     m_ddt.CmdCopyBufferToImage(commandBuffer, scratch, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &buffImageCopyRegions);
@@ -2370,7 +2320,7 @@ ComputeStatus Vulkan::copyHostToDeviceTexture(CommandList InCmdList, uint64_t In
             VK_QUEUE_FAMILY_IGNORED,
             VK_QUEUE_FAMILY_IGNORED,
             dst,
-            {toVkAspectFlags(dstResource->nativeFormat), 0, 1, 0, 1}
+            {toVkAspectFlags(dstResource->nativeFormat, isImageViewForTexture, isImageViewTypeStencil), 0, 1, 0, 1}
         };
         m_ddt.CmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &useBarrier);
     }
@@ -2405,6 +2355,7 @@ ComputeStatus Vulkan::insertGPUBarrier(CommandList InCmdList, Resource InResourc
         }
         else
         {
+            bool isImageViewForTexture = false, isImageViewTypeStencil = false;
             VkImageMemoryBarrier memoryBarrier = {
                 VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
                 NULL,
@@ -2415,7 +2366,7 @@ ComputeStatus Vulkan::insertGPUBarrier(CommandList InCmdList, Resource InResourc
                 VK_QUEUE_FAMILY_IGNORED,
                 VK_QUEUE_FAMILY_IGNORED,
                 (VkImage)inResourceVK->native,
-                { toVkAspectFlags(inResourceVK->nativeFormat), 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}
+                { toVkAspectFlags(inResourceVK->nativeFormat, isImageViewForTexture, isImageViewTypeStencil), 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS}
             };
 
             m_ddt.CmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, 0, 0, 0, 1, &memoryBarrier);
@@ -2472,7 +2423,8 @@ ComputeStatus Vulkan::transitionResourceImpl(CommandList cmdList, const Resource
             barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier.image = (VkImage)info->native;
-            barrier.subresourceRange.aspectMask = toVkAspectFlags(info->nativeFormat);
+            bool isImageViewForTexture = false, isImageViewTypeStencil = false;
+            barrier.subresourceRange.aspectMask = toVkAspectFlags(info->nativeFormat, isImageViewForTexture, isImageViewTypeStencil);
             barrier.subresourceRange.baseArrayLayer = 0;
             barrier.subresourceRange.baseMipLevel = 0;
             barrier.subresourceRange.levelCount = VK_REMAINING_MIP_LEVELS;
@@ -2763,11 +2715,12 @@ ComputeStatus Vulkan::copyResource(CommandList InCmdList, Resource InDstResource
     }
     else
     {
-        VkImageCopy copyRegion = 
+        bool isImageViewForTexture = false, isImageViewTypeStencil = false;
+        VkImageCopy copyRegion =
         { 
-            { toVkAspectFlags(src->nativeFormat), 0, 0, 1 },
+            { toVkAspectFlags(src->nativeFormat, isImageViewForTexture, isImageViewTypeStencil), 0, 0, 1 },
             {0,0,0},
-            { toVkAspectFlags(dst->nativeFormat), 0, 0, 1 },
+            { toVkAspectFlags(dst->nativeFormat, isImageViewForTexture, isImageViewTypeStencil), 0, 0, 1 },
             {0, 0, 0},
             {desc.width, desc.height, 1}
         };
@@ -2805,6 +2758,11 @@ ComputeStatus Vulkan::cloneResource(Resource InResource, Resource &OutResource, 
     }
     else
     {
+        // SL features until now don't explicitly use stencil data from the depth buffer. Hence, setting the default VK image view type to be used to not be of stencil type.
+        // If this requirement changes in future, then depth buffer image view aspect mask needs to be a member of sl::Resource which SL client needs to explicitly set during resource tagging
+        // and ensure the image view type is either depth or stencil but not both, even if the depth buffer format has both depth and stencil bits, if the image view is being used for texturing.
+        // This satisfies VK spec requirement: VUID-VkDescriptorImageInfo-imageView-01976
+        desc.createImageViewTypeStencil = false;
         createTexture2D(desc, OutResource, friendlyName);
     }
     return ComputeStatus::eOk;
@@ -2833,7 +2791,8 @@ ComputeStatus Vulkan::clearView(CommandList InCmdList, Resource InResource, cons
         clearColor.float32[2] = Color.z;
         clearColor.float32[3] = Color.w;
         VkImageSubresourceRange subresourceRange;
-        subresourceRange.aspectMask = toVkAspectFlags(vkResource->nativeFormat);
+        bool isImageViewForTexture = false, isImageViewTypeStencil = false;
+        subresourceRange.aspectMask = toVkAspectFlags(vkResource->nativeFormat, isImageViewForTexture, isImageViewTypeStencil);
         subresourceRange.baseMipLevel = 0;
         subresourceRange.levelCount = 1;
         subresourceRange.baseArrayLayer = 0;

@@ -1,0 +1,285 @@
+/*-------------------------------------------------------------------------------------
+ *
+ * Copyright (c) Microsoft Corporation
+ *
+ *-------------------------------------------------------------------------------------*/
+import "oaidl.idl";
+import "ocidl.idl";
+
+import "d3d12.idl";
+
+
+cpp_quote("#include <winapifamily.h>")
+
+#pragma region App Family
+cpp_quote("#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP | WINAPI_PARTITION_GAMES)")
+
+typedef enum DSR_SUPERRES_VARIANT_FLAGS
+{
+    DSR_SUPERRES_VARIANT_FLAG_NONE                                = 0x0,
+    DSR_SUPERRES_VARIANT_FLAG_SUPPORTS_EXPOSURE_SCALE_TEXTURE     = 0x1,
+    DSR_SUPERRES_VARIANT_FLAG_SUPPORTS_IGNORE_HISTORY_MASK        = 0x2,
+    DSR_SUPERRES_VARIANT_FLAG_NATIVE                              = 0x4,
+    DSR_SUPERRES_VARIANT_FLAG_SUPPORTS_REACTIVE_MASK              = 0x8,
+    DSR_SUPERRES_VARIANT_FLAG_SUPPORTS_SHARPNESS                  = 0x10,
+    DSR_SUPERRES_VARIANT_FLAG_DISALLOWS_REGION_OFFSETS            = 0x20,
+} DSR_SUPERRES_VARIANT_FLAGS;
+cpp_quote("DEFINE_ENUM_FLAG_OPERATORS( DSR_SUPERRES_VARIANT_FLAGS )")
+
+typedef enum DSR_OPTIMIZATION_TYPE
+{
+    DSR_OPTIMIZATION_TYPE_BALANCED,
+    DSR_OPTIMIZATION_TYPE_HIGH_QUALITY,
+    DSR_OPTIMIZATION_TYPE_MAX_QUALITY,
+    DSR_OPTIMIZATION_TYPE_HIGH_PERFORMANCE,
+    DSR_OPTIMIZATION_TYPE_MAX_PERFORMANCE,
+    DSR_OPTIMIZATION_TYPE_POWER_SAVING,
+    DSR_OPTIMIZATION_TYPE_MAX_POWER_SAVING,
+    DSR_NUM_OPTIMIZATION_TYPES
+} DSR_OPTIMIZATION_TYPE;
+
+typedef enum DSR_SUPERRES_CREATE_ENGINE_FLAGS
+{
+    DSR_SUPERRES_CREATE_ENGINE_FLAG_NONE = 0x0,
+    DSR_SUPERRES_CREATE_ENGINE_FLAG_MOTION_VECTORS_USE_TARGET_DIMENSIONS = 0x1,
+    DSR_SUPERRES_CREATE_ENGINE_FLAG_AUTO_EXPOSURE = 0x2,
+    DSR_SUPERRES_CREATE_ENGINE_FLAG_ALLOW_DRS = 0x4,
+    DSR_SUPERRES_CREATE_ENGINE_FLAG_MOTION_VECTORS_USE_JITTER_OFFSETS = 0x8,
+    DSR_SUPERRES_CREATE_ENGINE_FLAG_ALLOW_SUBRECT_OUTPUT = 0x10,
+    DSR_SUPERRES_CREATE_ENGINE_FLAG_LINEAR_DEPTH = 0x20,
+    DSR_SUPERRES_CREATE_ENGINE_FLAG_ENABLE_SHARPENING = 0x40,
+    DSR_SUPERRES_CREATE_ENGINE_FLAG_FORCE_LDR_COLORS = 0x80,
+} DSR_SUPERRES_CREATE_ENGINE_FLAGS;
+cpp_quote("DEFINE_ENUM_FLAG_OPERATORS( DSR_SUPERRES_CREATE_ENGINE_FLAGS )")
+
+typedef enum DSR_SUPERRES_UPSCALER_EXECUTE_FLAGS
+{
+    DSR_SUPERRES_UPSCALER_EXECUTE_FLAG_NONE =             0,
+    DSR_SUPERRES_UPSCALER_EXECUTE_FLAG_RESET_HISTORY =    0x1,
+    DSR_SUPERRES_UPSCALER_EXECUTE_FLAGS_VALID_MASK =      0x1
+} DSR_SUPERRES_UPSCALER_EXECUTE_FLAGS;
+cpp_quote("DEFINE_ENUM_FLAG_OPERATORS( DSR_SUPERRES_UPSCALER_EXECUTE_FLAGS )")
+
+typedef struct DSR_FLOAT2
+{
+    float X;
+    float Y;
+} DSR_FLOAT2;
+
+typedef struct DSR_SIZE
+{
+    UINT Width;
+    UINT Height;
+} DSR_SIZE;
+
+typedef struct DSR_SUPERRES_SOURCE_SETTINGS
+{
+    DSR_SIZE OptimalSize;
+    DSR_SIZE MinDynamicSize;
+    DSR_SIZE MaxDynamicSize;
+    DXGI_FORMAT OptimalColorFormat;
+    DXGI_FORMAT OptimalDepthFormat;
+} DSR_SUPERRES_SOURCE_SETTINGS;
+
+typedef struct DSR_SUPERRES_CREATE_ENGINE_PARAMETERS
+{
+    GUID VariantId;
+    DXGI_FORMAT TargetFormat;
+    DXGI_FORMAT SourceColorFormat;
+    DXGI_FORMAT SourceDepthFormat;
+    DXGI_FORMAT ExposureScaleFormat;
+    DSR_SUPERRES_CREATE_ENGINE_FLAGS Flags;
+    DSR_SIZE MaxSourceSize;
+    DSR_SIZE TargetSize;
+    } DSR_SUPERRES_CREATE_ENGINE_PARAMETERS;
+
+typedef struct DSR_SUPERRES_VARIANT_DESC
+{
+    GUID VariantId;
+    CHAR VariantName[128];
+    DSR_SUPERRES_VARIANT_FLAGS Flags;
+    DSR_OPTIMIZATION_TYPE OptimizationRankings[DSR_NUM_OPTIMIZATION_TYPES];
+    DXGI_FORMAT OptimalTargetFormat;
+} DSR_SUPERRES_VARIANT_DESC;
+
+typedef struct DSR_SUPERRES_UPSCALER_EXECUTE_PARAMETERS
+{
+    ID3D12Resource *pTargetTexture;
+    D3D12_RECT TargetRegion;
+
+    // Required inputs
+
+    ID3D12Resource *pSourceColorTexture;
+    D3D12_RECT SourceColorRegion;
+
+    ID3D12Resource *pSourceDepthTexture;
+    D3D12_RECT SourceDepthRegion;
+
+    ID3D12Resource *pMotionVectorsTexture;
+    D3D12_RECT MotionVectorsRegion;
+
+    DSR_FLOAT2 MotionVectorScale;
+    DSR_FLOAT2 CameraJitter;
+    float ExposureScale;
+    float PreExposure;
+    float Sharpness;
+    float CameraNear;
+    float CameraFar;
+    float CameraFovAngleVert;
+
+    // Optional inputs
+
+    ID3D12Resource *pExposureScaleTexture;
+
+    ID3D12Resource *pIgnoreHistoryMaskTexture;
+    D3D12_RECT IgnoreHistoryMaskRegion;
+
+    ID3D12Resource *pReactiveMaskTexture;
+    D3D12_RECT ReactiveMaskRegion;
+} DSR_SUPERRES_UPSCALER_EXECUTE_PARAMETERS;
+
+[ uuid( 994659a7-31ad-4912-9414-159f16630306 ), object, local, pointer_default( unique ) ]
+interface IDSRDevice
+    : IUnknown
+{
+    UINT GetNumSuperResVariants();
+
+    HRESULT GetSuperResVariantDesc(
+        UINT VariantIndex,
+        [annotation("_Out_")] DSR_SUPERRES_VARIANT_DESC *pVariantDesc);
+
+    HRESULT QuerySuperResSourceSettings(
+        UINT VariantIndex,
+        DSR_SIZE TargetSize,
+        DXGI_FORMAT TargetFormat,
+        DSR_OPTIMIZATION_TYPE OptimizationType,
+        DSR_SUPERRES_CREATE_ENGINE_FLAGS CreateFlags,
+        [annotation("_Out_")] DSR_SUPERRES_SOURCE_SETTINGS *pSourceSettings);
+
+    HRESULT CreateSuperResEngine(
+        [annotation("_In_")] const DSR_SUPERRES_CREATE_ENGINE_PARAMETERS *pCreateParams,
+        [annotation("_In_")] REFIID iid,
+        [annotation("_COM_Outptr_opt_")] void **ppEngine);
+}
+
+[ uuid( 2adc388c-1b5a-4a87-9377-64822e489c12 ), object, local, pointer_default( unique ) ]
+interface IDSRSuperResUpscaler
+    : IUnknown
+{
+    HRESULT Execute(
+        [annotation("_In_")] const DSR_SUPERRES_UPSCALER_EXECUTE_PARAMETERS *pExecuteParams,
+        float TimeDeltaInSeconds,
+        DSR_SUPERRES_UPSCALER_EXECUTE_FLAGS Flags);
+
+    HRESULT Evict();
+    HRESULT MakeResident();
+}
+
+[ uuid( 4bfd72e2-2767-4800-bcf4-cedc0d07ea5a ), object, local, pointer_default( unique ) ]
+interface IDSRSuperResEngine
+    : IUnknown
+{
+    HRESULT GetOptimalJitterPattern(
+        DSR_SIZE SourceSize,
+        DSR_SIZE TargetSize,
+        [annotation("_Inout_")] UINT *pSize,
+        [annotation("_Out_opt_")] DSR_FLOAT2 *pPattern);
+
+    HRESULT CreateUpscaler(
+        [annotation("_In_")] ID3D12CommandQueue *pCommandQueue,
+        [annotation("_In_")] REFIID,
+        [annotation("_COM_Outptr_")] void **ppUpscaler);
+
+    IDSRDevice *GetDevice();
+}
+
+typedef enum DSR_EX_VERSION
+{
+    DSR_EX_VERSION_NONE = 0,
+    DSR_EX_VERSION_1_0,
+} DSR_EX_VERSION;
+
+
+cpp_quote( "typedef void * DSRExSuperResEngineHandle;" )
+cpp_quote( "typedef void * DSRExSuperResUpscalerHandle;" )
+cpp_quote( "" )
+cpp_quote( "typedef HRESULT (WINAPI *FNDSRExGetVersionedFunctionTable)(" )
+cpp_quote( "    DSR_EX_VERSION Version," )
+cpp_quote( "    void *pFunctionTable," )
+cpp_quote( "    UINT TableSizeInBytes);" )
+cpp_quote( "" )
+cpp_quote( "typedef UINT (WINAPI *FNDSRExSuperResGetNumVariants)(" )
+cpp_quote( "    ID3D12Device *pDevice);" )
+cpp_quote( "" )
+cpp_quote( "typedef HRESULT (WINAPI *FNDSRExSuperResEnumVariant)(" )
+cpp_quote( "    UINT VariantIndex," )
+cpp_quote( "    ID3D12Device *pDevice," )
+cpp_quote( "    struct DSR_SUPERRES_VARIANT_DESC *pVariantDesc);" )
+cpp_quote( "" )
+cpp_quote( "typedef HRESULT (WINAPI *FNDSRExSuperResQuerySourceSettings)(" )
+cpp_quote( "    UINT VariantIndex," )
+cpp_quote( "    ID3D12Device *pDevice," )
+cpp_quote( "    const DSR_SIZE &TargetSize," )
+cpp_quote( "    DXGI_FORMAT TargetFormat,")
+cpp_quote( "    DSR_OPTIMIZATION_TYPE OptimizationType," )
+cpp_quote( "    DSR_SUPERRES_CREATE_ENGINE_FLAGS CreateFlags," )
+cpp_quote( "    DSR_SUPERRES_SOURCE_SETTINGS *pSourceSettings);" )
+cpp_quote( "" )
+cpp_quote( "typedef HRESULT (WINAPI *FNDSRExSuperResCreateEngine)(" )
+cpp_quote( "    UINT VariantIndex," )
+cpp_quote( "    ID3D12Device* pDevice," )
+cpp_quote( "    const struct DSR_SUPERRES_CREATE_ENGINE_PARAMETERS* pCreateParams," )
+cpp_quote( "    DSRExSuperResEngineHandle* pSREngineHandle);" )
+cpp_quote( "" )
+cpp_quote( "typedef HRESULT (WINAPI *FNDSRExSuperResDestroyEngine)(DSRExSuperResEngineHandle SREngine);" )
+cpp_quote( "" )
+cpp_quote( "typedef HRESULT (WINAPI *FNDSRExSuperResCreateUpscaler)(" )
+cpp_quote( "    DSRExSuperResEngineHandle EngineHandle," )
+cpp_quote( "    ID3D12CommandQueue *pCommandQueue,")
+cpp_quote( "    DSRExSuperResUpscalerHandle* pSRUpscalerHandle);" )
+cpp_quote( "" )
+cpp_quote( "typedef HRESULT (WINAPI *FNDSRExSuperResDestroyUpscaler)(DSRExSuperResUpscalerHandle SRUpscaler);" )
+cpp_quote( "" )
+cpp_quote( "typedef HRESULT (WINAPI *FNDSRExSuperResGetOptimalJitterPattern)(" )
+cpp_quote( "    DSRExSuperResEngineHandle SREngineHandle," )
+cpp_quote( "    const DSR_SIZE &SourceSize," )
+cpp_quote( "    const DSR_SIZE &TargetSize," )
+cpp_quote( "    UINT *pSize," )
+cpp_quote( "    DSR_FLOAT2 *pPattern);" )
+cpp_quote( "" )
+cpp_quote( "typedef HRESULT (WINAPI *FNDSRExSuperResExecuteUpscaler)(" )
+cpp_quote( "    DSRExSuperResUpscalerHandle SRUpscalerHandle," )
+cpp_quote( "    const DSR_SUPERRES_UPSCALER_EXECUTE_PARAMETERS *pParams," )
+cpp_quote( "    float TimeDeltaInSeconds," )
+cpp_quote( "    DSR_SUPERRES_UPSCALER_EXECUTE_FLAGS Flags);" )
+cpp_quote( "" )
+cpp_quote( "typedef HRESULT (WINAPI *FNDSRExSuperResUpscalerEvict)(" )
+cpp_quote( "    DSRExSuperResUpscalerHandle SRUpscalerHandle);" )
+cpp_quote( "" )
+cpp_quote( "typedef HRESULT (WINAPI *FNDSRExSuperResUpscalerMakeResident)(" )
+cpp_quote( "    DSRExSuperResUpscalerHandle SRUpscalerHandle);" )
+cpp_quote( "" )
+
+cpp_quote( "typedef struct DSR_EX_FUNCTION_TABLE_1_0" )
+cpp_quote( "{" )
+cpp_quote( "    FNDSRExSuperResGetNumVariants pfnDSRExSuperResGetNumVariants;" )
+cpp_quote( "    FNDSRExSuperResEnumVariant pfnDSRExSuperResEnumVariant;" )
+cpp_quote( "    FNDSRExSuperResQuerySourceSettings pfnDSRExSuperResQuerySourceSettings;" )
+cpp_quote( "    FNDSRExSuperResCreateEngine pfnDSRExSuperResCreateEngine;" )
+cpp_quote( "    FNDSRExSuperResDestroyEngine pfnDSRExSuperResDestroyEngine;" )
+cpp_quote( "    FNDSRExSuperResCreateUpscaler pfnDSRExSuperResCreateUpscaler;" )
+cpp_quote( "    FNDSRExSuperResDestroyUpscaler pfnDSRExSuperResDestroyUpscaler;" )
+cpp_quote( "    FNDSRExSuperResGetOptimalJitterPattern pfnDSRExSuperResGetOptimalJitterPattern;" )
+cpp_quote( "    FNDSRExSuperResExecuteUpscaler pfnDSRExSuperResExecuteUpscaler;" )
+cpp_quote( "    FNDSRExSuperResUpscalerEvict pfnDSRExSuperResUpscalerEvict;" )
+cpp_quote( "    FNDSRExSuperResUpscalerMakeResident pfnDSRExSuperResUpscalerMakeResident;" )
+cpp_quote( "} DSR_EX_FUNCTION_TABLE_1_0;" )
+cpp_quote( "" )
+
+
+cpp_quote("#endif /* WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP | WINAPI_PARTITION_GAMES) */")
+#pragma endregion
+
+cpp_quote( "DEFINE_GUID(IID_IDSRDevice,0x994659a7,0x31ad,0x4912,0x94,0x14,0x15,0x9f,0x16,0x63,0x03,0x06);" )
+cpp_quote( "DEFINE_GUID(IID_IDSRSuperResUpscaler,0x2adc388c,0x1b5a,0x4a87,0x93,0x77,0x64,0x82,0x2e,0x48,0x9c,0x12);" )
+cpp_quote( "DEFINE_GUID(IID_IDSRSuperResEngine,0x4bfd72e2,0x2767,0x4800,0xbc,0xf4,0xce,0xdc,0x0d,0x07,0xea,0x5a);" )

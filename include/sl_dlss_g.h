@@ -28,7 +28,7 @@
 
 // Forward declarations matching MS and VK specs
 using HRESULT = long;
-enum VkResult : int;
+enum VkResult;
 
 namespace sl
 {
