@@ -1,9 +1,9 @@
 {
-    "id" : 1,
+    "id" : 1001,
     "priority" : 100,
-    "name" : "sl.nrd",
-    "namespace" : "nrd",
     "required_plugins" : ["sl.common"],
+    "name" : "sl.dlss_d",
+    "namespace" : "dlss_d",
     "rhi" : ["d3d11", "d3d12", "vk"],
     "hooks" :
     [

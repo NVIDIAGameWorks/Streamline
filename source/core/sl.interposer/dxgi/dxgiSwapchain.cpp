@@ -209,6 +209,11 @@ ULONG   STDMETHODCALLTYPE DXGISwapChain::Release()
     g_swapChainTracker.notifySwapChainReleased(this);
     delete this;
 
+    if (refOrigSC > 0)
+    {
+        SL_LOG_WARN("We are releasing the SL SwapChain, but the native swap chain still has refcount %ld", refOrigSC);
+    }
+
     return 0;
 }
 

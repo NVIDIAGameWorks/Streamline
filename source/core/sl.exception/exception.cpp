@@ -100,10 +100,14 @@ struct Exception : IException
             SL_LOG_ERROR( "Failed to create file '%S'", path.c_str());
         }
         // Flush logs here in case this also triggers an exception so we already have the dump
-        log::getInterface()->shutdown();
+        log::getInterface()->flush();
 
         // Copy log file to dump location
-        file::copy(logDst.c_str(), logSrc.c_str());
+        // File may not exist if log path was never set with Log::setLogPath()
+        if (file::exists(logSrc.c_str()))
+        {
+            file::copy(logDst.c_str(), logSrc.c_str());
+        }
 
         return EXCEPTION_EXECUTE_HANDLER;
     }

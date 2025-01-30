@@ -24,11 +24,9 @@
 
 #include "sl.h"
 #include "sl_consts.h"
+#include "sl_core_types.h"
 #include <vector>
 
-// Forward declarations matching MS and VK specs
-using HRESULT = long;
-enum VkResult;
 
 namespace sl
 {
@@ -50,26 +48,30 @@ enum class DLSSGFlags : uint32_t
     eEnableFullscreenMenuDetection = 1 << 4,
 };
 
+enum class DLSSGQueueParallelismMode : uint32_t
+{
+    //! Default mode in which client's presenting queue is blocked until DLSSG workload execution completes.
+    eBlockPresentingClientQueue,
+    //! This mode is only supported on Vulkan presently. Even if set by any D3D client, it would default to
+    //! eBlockPresentingClientQueue as before. eBlockNoClientQueues mode helps achieve maximum performance benefit
+    //! from queue-level paralleism in Vulkan during DLSS-G processing. In this mode, client must must wait on
+    //! DLSSGState::inputsProcessingCompletionFence and associated value, before it can modify or destroy the tagged
+    //! resources input to DLSS-G enabled for the corresponding previously presented frame on any client queue.
+    eBlockNoClientQueues,
+    eCount
+};
+
 // Adds various useful operators for our enum
 SL_ENUM_OPERATORS_32(DLSSGFlags)
 
-//! Returns an error returned by DXGI or Vulkan API calls 'vkQueuePresentKHR' and 'vkAcquireNextImageKHR'
-struct APIError
-{
-    union
-    {
-        HRESULT hres;
-        VkResult vkRes;
-    };
-};
-
-using PFunOnAPIErrorCallback = void(const APIError& lastError);
-
 // {FAC5F1CB-2DFD-4F36-A1E6-3A9E865256C5}
-SL_STRUCT(DLSSGOptions, StructType({ 0xfac5f1cb, 0x2dfd, 0x4f36, { 0xa1, 0xe6, 0x3a, 0x9e, 0x86, 0x52, 0x56, 0xc5 } }), kStructVersion1)
+SL_STRUCT_BEGIN(DLSSGOptions, StructType({ 0xfac5f1cb, 0x2dfd, 0x4f36, { 0xa1, 0xe6, 0x3a, 0x9e, 0x86, 0x52, 0x56, 0xc5 } }), kStructVersion3)
     //! Specifies which mode should be used.
     DLSSGMode mode = DLSSGMode::eOff;
-    //! Must be 1
+    //! Number of frames to generate inbetween fully rendered frames. Cannot exceed DLSSGState::numFramesToGenerateMax.
+    //!     For 2x frame multiplier, numFramesToGenerate is 1.
+    //!     For 3x frame multiplier, numFramesToGenerate is 2.
+    //!     For 4x frame multiplier, numFramesToGenerate is 3.
     uint32_t numFramesToGenerate = 1;
     //! Optional - Flags used to enable or disable certain functionality
     DLSSGFlags flags{};
@@ -99,9 +101,13 @@ SL_STRUCT(DLSSGOptions, StructType({ 0xfac5f1cb, 0x2dfd, 0x4f36, { 0xa1, 0xe6, 0
     uint32_t uiBufferFormat{};
     //! Optional - if specified DLSSG will return any errors which occur when calling underlying API (DXGI or Vulkan)
     PFunOnAPIErrorCallback* onErrorCallback{};
-
+    // kStructVersion2
+    Boolean bReserved15 = eInvalid;
+    // kStructVersion3
+    //! Optional - determines the level of client and DLSSG queue parallelism to use for performance gain - must be same for all viewports.
+    DLSSGQueueParallelismMode queueParallelismMode{};
     //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
-};
+SL_STRUCT_END()
 
 
 enum class DLSSGStatus : uint32_t
@@ -117,14 +123,15 @@ enum class DLSSGStatus : uint32_t
     //! Some constants are invalid, see programming guide for more details
     eFailCommonConstantsInvalid = 1 << 3,
     //! D3D integrations must use SwapChain::GetCurrentBackBufferIndex API
-    eFailGetCurrentBackBufferIndexNotCalled = 1 << 4
+    eFailGetCurrentBackBufferIndexNotCalled = 1 << 4,
+    eReserved5 = 1 << 5
 };
 
 // Adds various useful operators for our enum
 SL_ENUM_OPERATORS_32(DLSSGStatus)
 
 // {CC8AC8E1-A179-44F5-97FA-E74112F9BC61}
-SL_STRUCT(DLSSGState, StructType({ 0xcc8ac8e1, 0xa179, 0x44f5, { 0x97, 0xfa, 0xe7, 0x41, 0x12, 0xf9, 0xbc, 0x61 } }), kStructVersion1)
+SL_STRUCT_BEGIN(DLSSGState, StructType({ 0xcc8ac8e1, 0xa179, 0x44f5, { 0x97, 0xfa, 0xe7, 0x41, 0x12, 0xf9, 0xbc, 0x61 } }), kStructVersion3)
     //! Specifies the amount of memory expected to be used
     uint64_t estimatedVRAMUsageInBytes{};
     //! Specifies current status of DLSS-G
@@ -133,9 +140,25 @@ SL_STRUCT(DLSSGState, StructType({ 0xcc8ac8e1, 0xa179, 0x44f5, { 0x97, 0xfa, 0xe
     uint32_t minWidthOrHeight{};
     //! Number of frames presented since the last 'slDLSSGGetState' call
     uint32_t numFramesActuallyPresented{};
+    // kStructVersion2
+    //! Maximum number of frames possible to generate on this gpu architecture.
+    //!     For 2x only supporting devices, numFramesToGenerateMax is 1.
+    //!     For 3x and 4x supporting devices, numFramesToGenerateMax is 3.
+    uint32_t numFramesToGenerateMax{};
+    sl::Boolean bReserved4{};
+    //! Hint to the application to display VSync support in the user interface
+    sl::Boolean bIsVsyncSupportAvailable{};
 
+    //! SL client must wait on SL DLSS-G plugin-internal fence and associated value, before it can modify or destroy the tagged resources input
+    //! to DLSS-G enabled for the corresponding previously presented frame on a non-presenting queue.
+    //! If modified on client's presenting queue, then it's recommended but not required.
+    //! However, if DLSSGQueueParallelismMode::eBlockNoClientQueues is set, then it's always required.
+    //! It must call slDLSSGGetState on the present thread to retrieve the fence value for the inputs consumed by FG, on which client would
+    //! wait in the frame it would modify those inputs.
+    void* inputsProcessingCompletionFence{};
+    uint64_t lastPresentInputsProcessingCompletionFenceValue{};
     //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
-};
+SL_STRUCT_END()
 
 }
 

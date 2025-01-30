@@ -47,6 +47,7 @@
 #include "_artifacts/gitVersion.h"
 #include "include/sl_helpers.h"
 
+
 namespace sl
 {
 
@@ -66,40 +67,22 @@ class PluginManager : public IPluginManager
 public:
 
     PluginManager();
-    
+
     PluginManager(const PluginManager&) = delete;
     PluginManager& operator=(const PluginManager&) = delete;
 
     virtual Result loadPlugins() override final;
-    virtual void unloadPlugins() override final;
+    virtual Result unloadPlugins() override final;
+
+
     virtual Result initializePlugins() override final;
 
     virtual const HookList& getBeforeHooks(FunctionHookID functionHookID) override final;
     virtual const HookList& getAfterHooks(FunctionHookID functionHookID) override final;
     virtual const HookList& getBeforeHooksWithoutLazyInit(FunctionHookID functionHookID) override final;
     virtual const HookList& getAfterHooksWithoutLazyInit(FunctionHookID functionHookID) override final;
-    
-    virtual Result setHostSDKVersion(uint64_t sdkVersion) override final
-    {
-        // SL version is 64bit split in four 16bit values
-        // 
-        // major | minor | patch | magic
-        //
-        if ((sdkVersion & kSDKVersionMagic) == kSDKVersionMagic)
-        {
-            m_hostSDKVersion = { (sdkVersion >> 48) & 0xffff, (sdkVersion >> 32) & 0xffff, (sdkVersion >> 16) & 0xffff };
-        }
-        else
-        {
-            // Legacy titles use redirection which reports SL 1.5.0, this must be a genuine integration bug
-            m_hostSDKVersion = { 2, 0, 0 };
-            SL_LOG_ERROR("Invalid host SDK version detected - did you forget to pass in 'kSDKVersion' on slInit?");
-            return Result::eErrorInvalidParameter;
-        }
 
-        SL_LOG_INFO("Streamline v%u.%u.%u.%s - built on %s - host SDK v%s", VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH, GIT_LAST_COMMIT_SHORT, __TIMESTAMP__, m_hostSDKVersion.toStr().c_str());
-        return Result::eOk;
-    }
+    virtual Result setHostSDKVersion(uint64_t sdkVersion) override final;
 
     virtual const Version& getHostSDKVersion() override final
     {
@@ -189,13 +172,14 @@ public:
         m_vkDevice = device;
         m_vkInstance = instance;
     }
-    
+
     virtual Result setFeatureEnabled(Feature feature, bool value) override final;
 
     virtual ID3D12Device* getD3D12Device() const override final { return m_d3d12Device; }
     virtual ID3D11Device* getD3D11Device() const override final { return m_d3d11Device; }
     virtual VkDevice getVulkanDevice() const override final { return m_vkDevice; }
     virtual bool isProxyNeeded(const char* className) override final;
+
     virtual bool isInitialized() const  override final { return s_status == PluginManagerStatus::ePluginsInitialized; }
     virtual bool arePluginsLoaded() const  override final { return s_status == PluginManagerStatus::ePluginsInitialized || s_status == PluginManagerStatus::ePluginsLoaded; }
 
@@ -218,9 +202,6 @@ public:
             return &(*it).second->context;
         }
         return nullptr;
-
-
-
     }
 
     virtual bool getExternalFeatureConfig(Feature feature, std::string& configAsText) override final
@@ -271,8 +252,8 @@ public:
 
 private:
 
-    Result mapPlugins(std::vector<std::wstring>& files);
-    Result findPlugins(const std::wstring& path, std::vector<std::wstring>& files);
+    Result mapPlugins(std::vector<fs::path>& files);
+    Result findPlugins(const fs::path& path, std::vector<fs::path>& files);
     
 
     struct Plugin
@@ -281,16 +262,19 @@ private:
         Plugin(const Plugin& rhs) = delete;
         Plugin& operator=(const Plugin& rhs) = delete;
 
-        Feature id{};
-        std::string sha{};
-        int priority{};
         Version version{};
-        Version api{};
         HMODULE lib{};
-        json config{};
         std::string name{};
+        std::string sha{};
+
         fs::path filename{};
         fs::path fullpath{};
+
+        Version api{};
+
+        Feature id{};
+        int priority{};
+        json config{};
         std::string paramNamespace{};
         api::PFuncOnPluginStartup* onStartup{};
         api::PFuncOnPluginShutdown* onShutdown{};
@@ -304,6 +288,7 @@ private:
     };
 
     bool loadPlugin(const fs::path path, Plugin **ppPlugin);
+
     void processPluginHooks(const Plugin* plugin);
     void mapPluginCallbacks(Plugin* plugin);
     uint32_t getFunctionHookID(const std::string& name);
@@ -328,21 +313,22 @@ private:
     std::unordered_map<std::string, FunctionHookID> m_functionHookIDMap;
 
     using PluginList = std::vector<Plugin*>;
+    PluginList m_plugins;
+
     using PluginMap = std::map<Feature,Plugin*>;
     using ConfigMap = std::map<Feature, json>;
 
-    PluginList m_plugins;
     PluginMap m_featurePluginsMap;
     ConfigMap m_featureExternalConfigMap;
 
     int m_appId = 0;
     inline static PluginManagerStatus s_status = PluginManagerStatus::eUnknown;
-    
+
     EngineType m_engine = EngineType::eCustom;
     std::string m_engineVersion{};
     std::string m_projectId{};
 
-    std::wstring m_pluginPath{};
+    fs::path m_pluginPath{};
     std::vector<std::wstring> m_pathsToPlugins{};
     std::vector<Feature> m_featuresToLoad{};
     std::map<Feature, std::string> m_externalJSONConfigs{};
@@ -367,6 +353,28 @@ void destroyInterface()
 {
     delete PluginManager::s_manager;
     PluginManager::s_manager = {};
+}
+
+Result PluginManager::setHostSDKVersion(uint64_t sdkVersion)
+{
+    // SL version is 64bit split in four 16bit values
+    //
+    // major | minor | patch | magic
+    //
+    if ((sdkVersion & kSDKVersionMagic) == kSDKVersionMagic)
+    {
+        m_hostSDKVersion = { (sdkVersion >> 48) & 0xffff, (sdkVersion >> 32) & 0xffff, (sdkVersion >> 16) & 0xffff };
+    }
+    else
+    {
+        // Legacy titles use redirection which reports SL 1.5.0, this must be a genuine integration bug
+        m_hostSDKVersion = { 2, 0, 0 };
+        SL_LOG_ERROR("Invalid host SDK version detected - did you forget to pass in 'kSDKVersion' on slInit?");
+        return Result::eErrorInvalidParameter;
+    }
+
+    SL_LOG_INFO("Streamline v%u.%u.%u.%s - built on %s - host SDK v%s", VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH, GIT_LAST_COMMIT_SHORT, __TIMESTAMP__, m_hostSDKVersion.toStr().c_str());
+    return Result::eOk;
 }
 
 PluginManager::Plugin* PluginManager::isPluginLoaded(const std::string& name) const
@@ -433,6 +441,14 @@ Result PluginManager::setFeatureEnabled(Feature feature, bool value)
         SL_LOG_WARN("Feature '%s' not supported on any available adapter", getFeatureAsStr(feature));
         return Result::eErrorNoSupportedAdapterFound;
     }
+
+    auto extCfg = m_featureExternalConfigMap[feature];
+    if (extCfg.contains("/feature/supported"_json_pointer) && !extCfg["feature"]["supported"])
+    {
+        SL_LOG_WARN("Feature '%s' is not supported on this platform", getFeatureAsStr(feature));
+        return Result::eErrorFeatureNotSupported;
+    }  
+
     if (ctx.enabled == value)
     {
         SL_LOG_VERBOSE("Feature '%s' is already in the requested 'loaded' state", getFeatureAsStr(feature));
@@ -468,7 +484,7 @@ Result PluginManager::setFeatureEnabled(Feature feature, bool value)
     return Result::eOk;
 }
 
-Result PluginManager::findPlugins(const std::wstring& directory, std::vector<std::wstring>& files)
+Result PluginManager::findPlugins(const fs::path& directory, std::vector<fs::path>& files)
 {
 #ifdef SL_WINDOWS
     std::wstring dynamicLibraryExt = L".dll";
@@ -487,7 +503,7 @@ Result PluginManager::findPlugins(const std::wstring& directory, std::vector<std
             // Make sure this is a dynamic library and it starts with "sl." but ignore "sl.interposer.dll"
             if (ext == dynamicLibraryExt && name.find(L"sl.") == 0 && name.find(L"sl.interposer") == std::string::npos)
             {
-                auto fullPath = directory + L"/" + name + ext;
+                fs::path fullPath = fs::path(directory.wstring() + L"/" + name + ext);
                 // IMPORTANT: sl.common must be first in the list always because initialization must be executed in the correct priority order
                 if (name == L"sl.common" && !files.empty())
                 {
@@ -586,7 +602,7 @@ bool PluginManager::loadPlugin(const fs::path pluginFullPath, Plugin **ppPlugin)
         // Plugin has already populated OS, driver and other custom requirements.
         extCfg["feature"]["lastError"] = "ok";
         extCfg["feature"]["rhi"] = plugin->config.at("rhi");
-        extCfg["feature"]["supported"] = plugin->context.supportedAdapters != 0;
+        extCfg["feature"]["supported"] = (plugin->context.supportedAdapters != 0 && extCfg.contains("/feature/supported"_json_pointer) ? extCfg["feature"]["supported"].operator bool() : true);
         extCfg["feature"]["unloaded"] = false;
         extCfg["feature"]["api"]["detected"] = plugin->api.toStr();
         extCfg["feature"]["api"]["requested"] = m_api.toStr();
@@ -606,7 +622,7 @@ bool PluginManager::loadPlugin(const fs::path pluginFullPath, Plugin **ppPlugin)
     return true;
 }
 
-Result PluginManager::mapPlugins(std::vector<std::wstring>& files)
+Result PluginManager::mapPlugins(std::vector<fs::path>& files)
 {
     using namespace sl::api;
 
@@ -617,11 +633,10 @@ Result PluginManager::mapPlugins(std::vector<std::wstring>& files)
         *plugin = nullptr;
     };
 
-    for (auto fileName : files)
+    for (auto pluginFullPath : files)
     {
         // From this point any error is fatal since user requested specific set of features
         Plugin *plugin = nullptr;
-        fs::path pluginFullPath(fileName);
         if (loadPlugin(pluginFullPath, &plugin))
         {
             auto& extCfg = m_featureExternalConfigMap[plugin->id];
@@ -645,6 +660,7 @@ Result PluginManager::mapPlugins(std::vector<std::wstring>& files)
                     break;
                 }
             }
+
             extCfg["feature"]["requested"] = requested;
 
             bool pluginNeedsInterposer = false;
@@ -842,7 +858,7 @@ Result PluginManager::loadPlugins()
     //!
     //! Two options - look next to the sl.interposer or in the specified paths
     m_pluginPath = file::getModulePath();
-    std::vector<std::wstring> pluginList;
+    std::vector<fs::path> pluginList;
     if (m_pathsToPlugins.empty())
     {
         SL_CHECK(findPlugins(m_pluginPath, pluginList));
@@ -864,7 +880,7 @@ Result PluginManager::loadPlugins()
         SL_LOG_INFO("Searching for OTA'd plugins...");
         for (Feature f : m_featuresToLoad)
         {
-            std::wstring pluginPath;
+            fs::path pluginPath;
             if (m_ota->getOTAPluginForFeature(f, m_api, pluginPath))
             {
                 SL_LOG_INFO("Found plugin: %ls", pluginPath.c_str());
@@ -912,7 +928,8 @@ Result PluginManager::loadPlugins()
             auto plugin = *it;
             
             // If we are not supported then we just unload ourselves
-            if (!plugin->context.supportedAdapters)
+            auto& extCfg = m_featureExternalConfigMap[plugin->id];
+            if (!extCfg["feature"]["supported"])
             {
                 SL_LOG_WARN("Ignoring plugin '%s' since it is not supported on this platform", plugin->name.c_str());
                 pluginsToUnload.push_back(plugin);
@@ -936,7 +953,6 @@ Result PluginManager::loadPlugins()
             if(isAboutToBeUnloaded(plugin->name)) continue;
 
             // Provide info to host, default to all OK but this can change in code below
-            auto& extCfg = m_featureExternalConfigMap[plugin->id];
             extCfg["feature"]["dependency"] = "none";
             extCfg["feature"]["incompatible"] = "none";
 
@@ -1025,7 +1041,7 @@ Result PluginManager::loadPlugins()
     return m_plugins.empty() ? Result::eErrorNoPlugins : Result::eOk;
 }
 
-void PluginManager::unloadPlugins()
+Result PluginManager::unloadPlugins()
 {
     SL_LOG_INFO("Unloading all plugins ...");
 
@@ -1051,8 +1067,11 @@ void PluginManager::unloadPlugins()
         hooks.clear();
     }
     m_externalJSONConfigs.clear();
+
     // After shutdown any hook triggers will be ignored
     s_status = PluginManagerStatus::ePluginsUnloaded;
+
+    return sl::Result::eOk;
 }
 
 void PluginManager::processPluginHooks(const Plugin* plugin)
@@ -1389,6 +1408,7 @@ uint32_t PluginManager::getFunctionHookID(const std::string& name)
 {
     return (uint32_t)m_functionHookIDMap.find(name)->second;
 }
+
 
 }
 }

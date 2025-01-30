@@ -30,6 +30,8 @@
 
 #include "vulkannv.h"
 
+#define VK_CHECK_RI(f) {auto _r = f;if(_r < 0){SL_LOG_ERROR("%s failed - error %d",#f,_r); return _r;} else if(_r != 0) {SL_LOG_WARN("%s - warning %d",#f,_r);}}
+
 namespace sl
 {
 

@@ -22,7 +22,7 @@
 
 #pragma once
 #include <string>
-#include "external/nvapi/nvapi.h"
+#include "nvapi.h"
 
 namespace drs
 {

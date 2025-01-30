@@ -105,7 +105,7 @@ namespace drs
         NvDRSProfileHandle hProfile;
         if (useAppProfile)
         {
-            std::wstring wAppName = sl::file::getExecutableNameAndExtension();
+            std::wstring wAppName = sl::file::getFullPathOfExecutable();
             auto status = getProfileHandleImpl(g_hDRSSession, wAppName, hProfile);
             if (status != NVAPI_OK)
             {

@@ -323,6 +323,8 @@ public:
     virtual ComputeStatus createCommandListContext(CommandQueue queue, uint32_t count, ICommandListContext*& ctx, const char friendlyName[]) override final;
     virtual ComputeStatus destroyCommandListContext(ICommandListContext* ctx) override final;
 
+    virtual uint64_t getCompletedValue(Fence fence) override final;
+
     virtual ComputeStatus createCommandQueue(CommandQueueType type, CommandQueue& queue, const char friendlyName[], uint32_t index) override final;
     virtual ComputeStatus destroyCommandQueue(CommandQueue& queue) override final;
 
@@ -369,6 +371,7 @@ public:
 
     virtual ComputeStatus notifyOutOfBandCommandQueue(CommandQueue queue, OutOfBandCommandQueueType type) override final;
     virtual ComputeStatus setAsyncFrameMarker(CommandQueue queue, PCLMarker marker, uint64_t frameId) override final;
+    virtual ComputeStatus setLatencyMarker(CommandQueue queue, PCLMarker marker, uint64_t frameId) override final;
 
     virtual ComputeStatus createSharedHandle(Resource res, Handle& handle)  override final;
     virtual ComputeStatus destroySharedHandle(Handle& handle)  override final;

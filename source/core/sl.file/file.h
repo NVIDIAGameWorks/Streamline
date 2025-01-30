@@ -39,9 +39,11 @@
 #include <random>
 
 #include "source/core/sl.extra/extra.h"
+#include "source/core/sl.log/log.h"
 
 #ifdef SL_WINDOWS
 #include <KnownFolders.h>
+#include <shellapi.h>
 #include <ShlObj.h>
 EXTERN_C IMAGE_DOS_HEADER __ImageBase; // MS linker feature
 #else
@@ -91,7 +93,7 @@ inline FILE* open(const wchar_t* path, const wchar_t* mode)
         }
         else
         {
-            SL_LOG_ERROR( "File '%S' does not exist", path);
+            SL_LOG_WARN( "File '%S' does not exist", path);
         }
     }
     return file;
@@ -341,6 +343,21 @@ inline std::wstring getExecutableNameAndExtension()
     std::wstring searchPathW = pathAbsW;
     searchPathW = searchPathW.substr(searchPathW.rfind('\\') + 1);
     return searchPathW;
+#endif
+}
+
+inline std::wstring getFullPathOfExecutable()
+{
+#ifdef SL_WINDOWS
+    WCHAR pathAbsW[MAX_PATH] = {};
+    GetModuleFileNameW(GetModuleHandleA(NULL), pathAbsW, ARRAYSIZE(pathAbsW));
+    std::wstring searchPathW = pathAbsW;
+    return searchPathW;
+#else
+    char exePath[PATH_MAX] = {};
+    readlink("/proc/self/exe", exePath, sizeof(exePath));
+    static std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> convert;
+    return convert.from_bytes(exePath);
 #endif
 }
 

@@ -44,6 +44,7 @@
 #include "source/plugins/sl.common/commonInterface.h"
 #include "source/plugins/sl.common/commonDRSInterface.h"
 #include "source/plugins/sl.common/drs.h"
+#include "source/plugins/sl.pcl/pclImpl.h"
 #include "_artifacts/gitVersion.h"
 #include "_artifacts/json/common_json.h"
 
@@ -62,6 +63,8 @@
 #include "external/ngx-sdk/include/nvsdk_ngx_defs.h"
 #include "external/json/include/nlohmann/json.hpp"
 using json = nlohmann::json;
+
+PCLSTATS_DEFINE()
 
 namespace sl
 {
@@ -149,6 +152,10 @@ struct CommonEntryContext
     std::map<uint64_t, CommonResource> idToResourceMap;
     // Common constants must be set every frame, we allow up to 3 frames in flight
     common::ViewportIdFrameData<3, true> constants = { "common" };
+
+    // WAR for interposer < 2.3 which don't load PCL plugin.  PCL functionality will instead be handled in sl.common.
+    PCLOptions pclOptions{};
+    bool enablePCLPluginInCommonWAR = false;
 };
 }
 
@@ -608,7 +615,7 @@ bool getNGXFeatureRequirements(NVSDK_NGX_Feature feature, common::PluginInfo& pl
     for (uint32_t i = 0; i < common::kMaxNumSupportedGPUs; i++)
     {
         // Find first NVDA adapter and get the info we need
-        if (ctx.caps->adapters[i].vendor == chi::VendorId::eNVDA)
+        if (isVendorNvidia(ctx.caps->adapters[i].vendor))
         {
             auto adapter = (IDXGIAdapter*)ctx.caps->adapters[i].nativeInterface;
 
@@ -640,11 +647,19 @@ bool getNGXFeatureRequirements(NVSDK_NGX_Feature feature, common::PluginInfo& pl
                 applicationId.v.ProjectDesc.ProjectId = projectId.c_str();
             }
 
+            wchar_t* pluginPath = {};
+            param::getPointerParam(api::getContext()->parameters, param::global::kPluginPath, &pluginPath);
+
+            NVSDK_NGX_FeatureCommonInfo featureInfo{};
+            featureInfo.PathListInfo.Path = &pluginPath;
+            featureInfo.PathListInfo.Length = 1;
+
             NVSDK_NGX_FeatureDiscoveryInfo info{};
             info.FeatureID = feature;
             info.SDKVersion = NVSDK_NGX_Version_API;
             info.ApplicationDataPath = file::getTmpPath();
             info.Identifier = applicationId;
+            info.FeatureInfo = &featureInfo;
             NVSDK_NGX_Result ngxResult{};
             if (deviceType == RenderAPI::eD3D11)
             {
@@ -894,7 +909,12 @@ void releaseNGXResourceCallback(IUnknown* resource)
         }
         else
         {
-            // DX11 resource
+            ID3D11Resource* d3d11Resource{};
+            resource->QueryInterface(&d3d11Resource);
+            if (!d3d11Resource)
+            {
+                res->type = ResourceType::eUnknown;
+            }
             ctx.compute->destroyResource(res);
         }
     }
@@ -1042,6 +1062,18 @@ void updateCommonEmbeddedJSONConfig(void* jsonConfig, const common::PluginInfo& 
         ctx.needDRS |= info.needsDRS;
     }
 }
+
+Result pclSetData(const BaseStructure* inputs, CommandBuffer* cmdBuffer)
+{
+    auto& ctx = (*common::getContext());
+    return sl::pcl::implSetData(inputs, ctx.pclOptions);
+}
+
+Result pclGetData(const BaseStructure*, BaseStructure* outputs, CommandBuffer*)
+{
+    return sl::pcl::implGetData(outputs);
+}
+
 
 //! Main entry point - starting our plugin
 //! 
@@ -1344,6 +1376,18 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
         }
     }
 
+    if (Version(config["version"]["major"],
+                config["version"]["minor"],
+                config["version"]["build"]) < Version(2, 3, 0))
+    {
+        ctx.enablePCLPluginInCommonWAR = true;
+        SL_LOG_INFO("Enabling WAR for PCLPluginInCommon");
+    }
+    if (ctx.enablePCLPluginInCommonWAR)
+    {
+        sl::pcl::implOnPluginStartup(parameters, &pclGetData, &pclSetData);
+    }
+
     return true;
 }
 
@@ -1366,6 +1410,11 @@ void slOnPluginShutdown()
     parameters->set(param::common::kComputeAPI, nullptr);
 
     auto& ctx = (*common::getContext());
+
+    if (ctx.enablePCLPluginInCommonWAR)
+    {
+        sl::pcl::implOnPluginShutdown(parameters);
+    }
 
     ctx.compute->destroyResourcePool(ctx.pool);
     ctx.pool = {};
@@ -1635,12 +1684,6 @@ void updateEmbeddedJSON(json& config)
 //! The only exported function - gateway to all functionality
 SL_EXPORT void* slGetPluginFunction(const char* functionName)
 {
-    //! Forward declarations
-    bool slOnPluginLoad(sl::param::IParameters * params, const char* loaderJSON, const char** pluginJSON);
-
-    //! Redirect to OTA if any
-    SL_EXPORT_OTA;
-
     //! Core API
     SL_EXPORT_FUNCTION(slOnPluginLoad);
     SL_EXPORT_FUNCTION(slOnPluginShutdown);

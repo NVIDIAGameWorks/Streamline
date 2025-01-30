@@ -50,7 +50,7 @@
 #define SL_IGNOREWARNING_PUSH _Pragma("GCC diagnostic push")
 #define SL_IGNOREWARNING_POP _Pragma("GCC diagnostic pop")
 #define SL_INTERNAL_IGNOREWARNING(str) _Pragma(#str)
-#define SL_IGNOREWARNING(w) SL_INTERNAL_IGNOREWARNING(GCC diagnostic ignored w)
+#define SL_IGNOREWARNING(w) SL_INTERNAL_IGNOREWARNING(GCC diagnostic ignored #w)
 #define SL_IGNOREWARNING_WITH_PUSH(w) SL_IGNOREWARNING_PUSH SL_IGNOREWARNING(w)
 #endif
 
@@ -118,6 +118,28 @@ inline std::string threadIdToString(const std::thread::id& id)
 inline constexpr uint32_t align(uint32_t size, uint32_t alignment)
 {
     return (size + (alignment - 1)) & ~(alignment - 1);
+}
+
+inline bool getEnvVar(const char* varName, std::string& value)
+{
+#if SL_WINDOWS
+    auto neededSize = GetEnvironmentVariableA(varName, nullptr, 0);
+    if (!neededSize)
+    {
+        return false;
+    }
+    value.resize(neededSize);
+    neededSize = GetEnvironmentVariableA(varName, value.data(), neededSize);
+    return true;
+#else
+    auto result = std::getenv(varName);
+    if (!result)
+    {
+        return false;
+    }
+    value = result;
+    return true;
+#endif
 }
 
 //! If value is null it will remove the environment variable
@@ -414,9 +436,9 @@ struct TAverageValueMeter
     inline uint64_t getNumSamples() const { return n.load(); }
 
 private:
-    std::atomic<double> val = 0;
-    std::atomic<double> mean = 0;
-    std::atomic<uint64_t> n = 0;
+    std::atomic<double> val{0};
+    std::atomic<double> mean{0};
+    std::atomic<uint64_t> n{0};
 
     double sum{};
     std::array<double, WINDOW_SIZE> window;

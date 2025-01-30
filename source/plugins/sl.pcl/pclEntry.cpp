@@ -23,18 +23,16 @@
 #include "include/sl.h"
 #include "include/sl_consts.h"
 #include "source/core/sl.log/log.h"
-#include "source/core/sl.api/internalDataSharing.h"
 #include "source/core/sl.plugin/plugin.h"
 #include "source/core/sl.param/parameters.h"
 #include "source/platforms/sl.chi/compute.h"
 #include "source/plugins/sl.template/versions.h"
 #include "source/plugins/sl.common/commonInterface.h"
 #include "source/plugins/sl.pcl/pcl.h"
-#include "source/plugins/sl.pcl/pclstats.h"
-#include "source/plugins/sl.reflex/reflex_shared.h"
 #include "_artifacts/gitVersion.h"
 #include "_artifacts/json/pcl_json.h"
 #include "external/json/include/nlohmann/json.hpp"
+#include "pclImpl.h"
 using json = nlohmann::json;
 
 //! GPU agnostic stats definition
@@ -65,6 +63,8 @@ static_assert(to_underlying(PCLMarker::eOutOfBandPresentStart) == PCLSTATS_OUT_O
 static_assert(to_underlying(PCLMarker::eOutOfBandPresentEnd) == PCLSTATS_OUT_OF_BAND_PRESENT_END);
 static_assert(to_underlying(PCLMarker::eControllerInputSample) == PCLSTATS_CONTROLLER_INPUT_SAMPLE);
 static_assert(to_underlying(PCLMarker::eDeltaTCalculation) == PCLSTATS_DELTA_T_CALCULATION);
+static_assert(to_underlying(PCLMarker::eLateWarpPresentStart) == PCLSTATS_LATE_WARP_PRESENT_START);
+static_assert(to_underlying(PCLMarker::eLateWarpPresentEnd) == PCLSTATS_LATE_WARP_PRESENT_END);
 
 //! Our common context
 //! 
@@ -115,49 +115,12 @@ void updateEmbeddedJSON(json& config)
 Result slSetData(const BaseStructure* inputs, CommandBuffer* cmdBuffer)
 {
     auto& ctx = (*pcl::getContext());
-
-    auto marker = findStruct<PCLHelper>(inputs);
-    auto consts = findStruct<PCLOptions>(inputs);
-    auto frame = findStruct<FrameToken>(inputs);
-    
-    if (marker && frame)
-    {
-        auto evd_id = (PCLSTATS_LATENCY_MARKER_TYPE)to_underlying(marker->get());
-        PCLSTATS_MARKER(evd_id, *frame);
-    }
-    else if (consts)
-    {
-        PCLSTATS_SET_ID_THREAD(consts->idThread);
-        PCLSTATS_SET_VIRTUAL_KEY(to_underlying(consts->virtualKey));
-
-        ctx.constants = *consts;
-    }
-    else
-    {
-        return Result::eErrorMissingInputParameter;
-    }
-    
-    return Result::eOk;
+    return sl::pcl::implSetData(inputs, ctx.constants);
 }
 
 Result slGetData(const BaseStructure* inputs, BaseStructure* outputs, CommandBuffer* cmdBuffer)
 {
-    auto& ctx = (*pcl::getContext());
-    
-    auto settings = findStruct<PCLState>(outputs);
-    if (!settings)
-    {
-        return Result::eErrorMissingInputParameter;
-    }
-    // Allow host to check Windows messages for the special low latency message
-    settings->statsWindowMessage = g_PCLStatsWindowMessage;
-    return Result::eOk;
-}
-
-//! Allows other plugins to set GPU agnostic stats
-void setPCLStatsMarker(PCLMarker marker, uint32_t frameId)
-{
-    PCLSTATS_MARKER(to_underlying(marker), frameId);
+    return sl::pcl::implGetData(outputs);
 }
 
 //! Main entry point - starting our plugin
@@ -171,21 +134,9 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
     //!     
     SL_PLUGIN_COMMON_STARTUP();
 
-    auto& ctx = (*pcl::getContext());
-
     auto parameters = api::getContext()->parameters;
 
-    //! Allow other plugins to set PCL stats
-    parameters->set(param::pcl::kPFunSetPCLStatsMarker, setPCLStatsMarker);
-    // DEPRECATED (reflex-pcl):
-    parameters->set(param::latency::kPFunSetLatencyStatsMarker, setPCLStatsMarker);
-
-    // DEPRECATED (reflex-pcl):
-    // Expose functions so Reflex plugin can call PCL
-    parameters->set(param::_deprecated_reflex_pcl::kSlGetData, slGetData);
-    parameters->set(param::_deprecated_reflex_pcl::kSlSetData, slSetData);
-
-    PCLSTATS_INIT(0);
+    sl::pcl::implOnPluginStartup(parameters, &slGetData, &slSetData);
 
     return true;
 }
@@ -197,14 +148,13 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
 //!
 void slOnPluginShutdown()
 {
-    auto& ctx = (*pcl::getContext());
-
-    //! GPU agnostic latency stats shutdown
-    PCLSTATS_SHUTDOWN();
+    auto parameters = api::getContext()->parameters;
+    sl::pcl::implOnPluginShutdown(parameters);
 
     // Common shutdown
     plugin::onShutdown(api::getContext());
 }
+
 
 //! Exports from sl_pcl.h
 //! 
@@ -215,47 +165,8 @@ sl::Result slPCLGetState(sl::PCLState& state)
 
 sl::Result slPCLSetMarker(sl::PCLMarker marker, const sl::FrameToken& frame)
 {
-    // If Reflex is enabled (i.e. the Reflex plugin is loaded) we need to set the marker through the Reflex plugin so it
-    // can notify the NV driver (via ICompute::setReflexMarker > NVAPI).
-    // If Reflex is NOT enabled, we set the marker through PCL plugin.
-    //
-    // Current Reflex plugin behaviour is:
-    // - slIsFeatureSupported(kFeatureReflex) returns true
-    // - ReflexState::lowLatencyAvailable indicates if Reflex is available (but PCL always is)
-    // In this scenario, the Reflex plugin is always loaded (when requested), and here markers will always being set through it
-    // (although LatencyContext::lowLatencyAvailable will limit NVAPI calls to NV GPUs).
-    //
-    // A future breaking change will cause Reflex plugin to only be loaded when NV GPU is detected.
-    // In that scenario, here markers would bypass the Reflex plugin and only be set through PCL plugin.
-
     auto& ctx = (*pcl::getContext());
-    if (!ctx.slReflexSetMarker)
-    {
-        //! Get shared data from Reflex
-        internal::shared::PFun_GetSharedData* featureGetSharedData{};
-        if (!param::getPointerParam(api::getContext()->parameters, internal::shared::getParameterNameForFeature(kFeatureReflex).c_str(), &featureGetSharedData))
-        {
-            SL_LOG_ERROR("Feature kFeatureReflex is not sharing required data");
-            return Result::eErrorInvalidState;
-        }
-        reflex::ReflexInternalSharedData data{};
-        if (SL_FAILED_SHARED(res, featureGetSharedData(&data, nullptr)))
-        {
-            SL_LOG_ERROR("Feature kFeatureReflex is not sharing required data, status %u", res);
-            return Result::eErrorInvalidState;
-        }
-        ctx.slReflexSetMarker = data.slReflexSetMarker;
-    }
-    if (ctx.slReflexSetMarker)
-    {
-        return ctx.slReflexSetMarker(marker, frame);
-    }
-    else
-    {
-        sl::PCLHelper inputs(marker);
-        inputs.next = (BaseStructure*)&frame;
-        return slSetData(&inputs, nullptr);    
-    }
+    return sl::pcl::implSetMarker(&ctx.slReflexSetMarker, ctx.constants, marker, frame);
 }
 
 sl::Result slPCLSetOptions(const sl::PCLOptions& options)
@@ -263,12 +174,10 @@ sl::Result slPCLSetOptions(const sl::PCLOptions& options)
     return slSetData(&options, nullptr);
 }
 
+
 //! The only exported function - gateway to all functionality
 SL_EXPORT void* slGetPluginFunction(const char* functionName)
 {
-    //! Redirect to OTA if any
-    SL_EXPORT_OTA;
-
     //! Core API
     SL_EXPORT_FUNCTION(slOnPluginLoad);
     SL_EXPORT_FUNCTION(slOnPluginShutdown);

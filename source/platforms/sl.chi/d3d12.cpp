@@ -25,12 +25,13 @@
 #include <cmath>
 #include <d3dcompiler.h>
 #include <future>
+#include <wrl/client.h>
 
 #include "source/core/sl.log/log.h"
 #include "source/core/sl.interposer/d3d12/d3d12.h"
 #include "source/platforms/sl.chi/d3d12.h"
 #include "shaders/copy_to_buffer_cs.h"
-#include "external/nvapi/nvapi.h"
+#include "nvapi.h"
 
 #include <d3d11_4.h>
 
@@ -62,11 +63,11 @@ ICompute *getD3D12()
 
 std::wstring D3D12::getDebugName(Resource res)
 {
-    auto unknown = (IUnknown*)(res->native);
-    ID3D12Pageable* pageable;
-    IDXGIObject* dxgi;
-    unknown->QueryInterface(&pageable);
-    unknown->QueryInterface(&dxgi);
+    Microsoft::WRL::ComPtr<IUnknown> unknown = static_cast<IUnknown*>(res->native);
+    Microsoft::WRL::ComPtr<ID3D12Pageable> pageable;
+    Microsoft::WRL::ComPtr<IDXGIObject> dxgi;
+    unknown.As(&pageable);
+    unknown.As(&dxgi);
     wchar_t name[128] = {};
     std::wstring wname = L"Unknown";
     if (pageable)
@@ -86,9 +87,8 @@ std::wstring D3D12::getDebugName(Resource res)
         {
             wname = name;
         }
-        pageable->Release();
     }
-    else if(dxgi)
+    else if (dxgi)
     {
         UINT size = sizeof(name);
         if (FAILED(dxgi->GetPrivateData(WKPDID_D3DDebugObjectNameW, &size, name)))
@@ -105,7 +105,6 @@ std::wstring D3D12::getDebugName(Resource res)
         {
             wname = name;
         }
-        dxgi->Release();
     }
     return wname;
 }
@@ -326,6 +325,17 @@ class CommandListContext : public ICommandListContext
         }
         ID3D12Fence* fence{};
         uint64_t syncValue{};
+        void updateCompletedFenceValue()
+        {
+            uint64_t value = fence->GetCompletedValue();
+            if (value == -1)
+            {
+                SL_LOG_ERROR("We've lost the Device.");
+                return;
+            }
+            m_completedValue = value;
+        }
+        uint64_t m_completedValue = 0;
         DebugInfo m_debugInfo;
     };
     std::vector<WaitingContext> m_waitingQueue;
@@ -588,11 +598,6 @@ public:
         return waitWithoutDeadlock(index, m_fenceValue[index]);
     }
 
-    uint64_t getCompletedValue(Fence fence)
-    {
-        return ((ID3D12Fence*)fence)->GetCompletedValue();
-    }
-
     bool didCommandListFinish(uint32_t index)
     {
         if (index >= m_bufferCount)
@@ -784,6 +789,23 @@ public:
             res = ((IDXGISwapChain*)chain)->Present(sync, flags);
         }
         return res;
+    }
+
+    virtual void monitoringThreadTick() override
+    {
+        updateCompletedFenceValue();
+        std::lock_guard<std::mutex> lock(m_mtxQueueList);
+        for (uint32_t u = (uint32_t)m_waitingQueue.size() - 1; u < m_waitingQueue.size(); --u)
+        {
+            auto& w = m_waitingQueue[u];
+            w.updateCompletedFenceValue();
+            // if the value has already passed - this element can be removed from the list
+            if (w.m_completedValue >= w.syncValue)
+            {
+                w = *m_waitingQueue.rbegin();
+                m_waitingQueue.pop_back();
+            }
+        }
     }
 };
 
@@ -1234,6 +1256,11 @@ ComputeStatus D3D12::destroyCommandListContext(ICommandListContext* ctx)
         delete tmp;
     }
     return ComputeStatus::eOk;
+}
+
+uint64_t D3D12::getCompletedValue(Fence fence)
+{
+    return ((ID3D12Fence*)fence)->GetCompletedValue();
 }
 
 ComputeStatus D3D12::createCommandQueue(CommandQueueType type, CommandQueue& queue, const char friendlyName[], uint32_t index)
@@ -2221,9 +2248,15 @@ ComputeStatus D3D12::transitionResourceImpl(CommandList cmdList, const ResourceT
         {
             auto from = toD3D12States(transitions[i].from);
             auto to = toD3D12States(transitions[i].to);
-            //SL_LOG_HINT("transitioning %S %u->%u", getDebugName(transitions[i].resource).c_str(), from, to);
-            transitions[i].resource->state = to;
-            barriers.push_back({ CD3DX12_RESOURCE_BARRIER::Transition((ID3D12Resource*)(transitions[i].resource->native), from, to, transitions[i].subresource) });
+            
+            // Separate streamline resource states can map to the same D3D12 state which causes an error
+            // eGeneral and ePresent both map to common for D3D12.
+            if (from != to)
+            {
+                //SL_LOG_HINT("transitioning %S %u->%u", getDebugName(transitions[i].resource).c_str(), from, to);
+                transitions[i].resource->state = to;
+                barriers.push_back({ CD3DX12_RESOURCE_BARRIER::Transition((ID3D12Resource*)(transitions[i].resource->native), from, to, transitions[i].subresource) });
+            }
         }
     }
     ((ID3D12GraphicsCommandList*)cmdList)->ResourceBarrier((uint32_t)barriers.size(), barriers.data());
@@ -2620,15 +2653,15 @@ ComputeStatus D3D12::getResourceDescription(Resource resource, ResourceDescripti
     }
 
     // First make sure this is not an DXGI or some other resource
-    auto unknown = (IUnknown*)(resource->native);
-    ID3D12Resource* pageable;
-    unknown->QueryInterface(&pageable);
-    if (!pageable)
+    Microsoft::WRL::ComPtr<IUnknown> unknown = (IUnknown*)(resource->native);
+    Microsoft::WRL::ComPtr<ID3D12Resource> d3d12Resource;
+    unknown.As(&d3d12Resource);
+    if (!d3d12Resource)
     {
         return ComputeStatus::eError;
     }
 
-    D3D12_RESOURCE_DESC desc = pageable->GetDesc();
+    D3D12_RESOURCE_DESC desc = d3d12Resource->GetDesc();
     getFormat(desc.Format, outDesc.format);
     outDesc.width = (UINT)desc.Width;
     outDesc.height = desc.Height;
@@ -2638,7 +2671,7 @@ ComputeStatus D3D12::getResourceDescription(Resource resource, ResourceDescripti
 
     if (desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
     {
-        outDesc.gpuVirtualAddress = pageable->GetGPUVirtualAddress();
+        outDesc.gpuVirtualAddress = d3d12Resource->GetGPUVirtualAddress();
         outDesc.flags |= ResourceFlags::eRawOrStructuredBuffer | ResourceFlags::eConstantBuffer;
     }
     else
@@ -2662,8 +2695,6 @@ ComputeStatus D3D12::getResourceDescription(Resource resource, ResourceDescripti
         outDesc.flags |= ResourceFlags::eColorAttachment;
     }
 
-    pageable->Release();
-
     return ComputeStatus::eOk;
 }
 
@@ -2675,12 +2706,23 @@ ComputeStatus D3D12::notifyOutOfBandCommandQueue(CommandQueue queue, OutOfBandCo
 
 ComputeStatus D3D12::setAsyncFrameMarker(CommandQueue queue, PCLMarker marker, uint64_t frameId)
 {
+    NV_ASYNC_FRAME_MARKER_PARAMS_V1 params = { 0 };
+    params.version = NV_ASYNC_FRAME_MARKER_PARAMS_VER1;
+    params.frameID = frameId;
+    params.markerType = (NV_LATENCY_MARKER_TYPE)marker;
+
+    NVAPI_CHECK(NvAPI_D3D12_SetAsyncFrameMarker((ID3D12CommandQueue*)queue, &params));
+    return ComputeStatus::eOk;
+}
+
+ComputeStatus D3D12::setLatencyMarker(CommandQueue queue, PCLMarker marker, uint64_t frameId)
+{
     NV_LATENCY_MARKER_PARAMS_V1 params = { 0 };
     params.version = NV_LATENCY_MARKER_PARAMS_VER1;
     params.frameID = frameId;
     params.markerType = (NV_LATENCY_MARKER_TYPE)marker;
 
-    NVAPI_CHECK(NvAPI_D3D12_SetAsyncFrameMarker((ID3D12CommandQueue*)queue, &params));
+    NVAPI_CHECK(NvAPI_D3D_SetLatencyMarker((ID3D12CommandQueue*)queue, &params));
     return ComputeStatus::eOk;
 }
 

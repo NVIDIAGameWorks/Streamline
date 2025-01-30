@@ -30,6 +30,11 @@ typedef enum _PCLSTATS_LATENCY_MARKER_TYPE
     PCLSTATS_OUT_OF_BAND_PRESENT_END = 12,
     PCLSTATS_CONTROLLER_INPUT_SAMPLE = 13,
     PCLSTATS_DELTA_T_CALCULATION = 14,
+    PCLSTATS_LATE_WARP_PRESENT_START = 15,
+    PCLSTATS_LATE_WARP_PRESENT_END = 16,
+    PCLSTATS_CAMERA_CONSTRUCTED = 17,
+    PCLSTATS_LATE_WARP_SUBMIT_START = 18,
+    PCLSTATS_LATE_WARP_SUBMIT_END = 19,
 } PCLSTATS_LATENCY_MARKER_TYPE;
 
 typedef enum _PCLSTATS_FLAGS
@@ -51,6 +56,7 @@ TRACELOGGING_DECLARE_PROVIDER(g_hPCLStatsComponentProvider);
     bool   g_PCLStatsEnable = false; \
     UINT   g_PCLStatsFlags = 0; \
     DWORD  g_PCLStatsIdThread = 0; \
+    bool   g_PCLStatsSendInput = false; \
     DWORD PCLStatsPingThreadProc(LPVOID lpThreadParameter) \
     { \
         DWORD minPingInterval = 100 /*ms*/; \
@@ -79,8 +85,21 @@ TRACELOGGING_DECLARE_PROVIDER(g_hPCLStatsComponentProvider);
                         (g_PCLStatsVirtualKey == VK_F15)) \
                     { \
                         TraceLoggingWrite(g_hPCLStatsComponentProvider, "PCLStatsInput", TraceLoggingUInt32(g_PCLStatsVirtualKey, "VirtualKey")); \
-                        PostMessageW(hWnd, WM_KEYDOWN, g_PCLStatsVirtualKey, 0x00000001); \
-                        PostMessageW(hWnd, WM_KEYUP,   g_PCLStatsVirtualKey, 0xC0000001); \
+                        if (g_PCLStatsSendInput) \
+                        { \
+                            INPUT VKeyPress[2] = {}; \
+                            VKeyPress[0].type = INPUT_KEYBOARD; \
+                            VKeyPress[0].ki.wVk = g_PCLStatsVirtualKey; \
+                            VKeyPress[1].type = INPUT_KEYBOARD; \
+                            VKeyPress[1].ki.wVk = g_PCLStatsVirtualKey; \
+                            VKeyPress[1].ki.dwFlags = KEYEVENTF_KEYUP; \
+                            SendInput(2, VKeyPress, sizeof(INPUT)); \
+                        } \
+                        else \
+                        { \
+                            PostMessageW(hWnd, WM_KEYDOWN, g_PCLStatsVirtualKey, 0x00000001); \
+                            PostMessageW(hWnd, WM_KEYUP, g_PCLStatsVirtualKey, 0xC0000001); \
+                        } \
                     } \
                     else if (g_PCLStatsWindowMessage) \
                     { \
@@ -162,6 +181,7 @@ TRACELOGGING_DECLARE_PROVIDER(g_hPCLStatsComponentProvider);
 #define PCLSTATS_IS_PING_MSG_ID(msgId) ((msgId) == g_PCLStatsWindowMessage)
 #define PCLSTATS_SET_ID_THREAD(idThread) (g_PCLStatsIdThread = (idThread))
 #define PCLSTATS_SET_VIRTUAL_KEY(vk) (g_PCLStatsVirtualKey = (vk))
+#define PCLSTATS_SET_SEND_INPUT(sendInput) (g_PCLStatsSendInput = (sendInput))
 
 extern "C" UINT   g_PCLStatsWindowMessage;
 extern "C" WORD   g_PCLStatsVirtualKey;
@@ -170,6 +190,7 @@ extern "C" HANDLE g_PCLStatsPingThread;
 extern "C" bool   g_PCLStatsEnable;
 extern "C" UINT   g_PCLStatsFlags;
 extern "C" DWORD  g_PCLStatsIdThread;
+extern "C" bool   g_PCLStatsSendInput;
 
 DWORD PCLStatsPingThreadProc(LPVOID lpThreadParameter);
 void WINAPI PCLStatsComponentProviderCb(LPCGUID, ULONG ControlCode, UCHAR, ULONGLONG, ULONGLONG, PEVENT_FILTER_DESCRIPTOR, PVOID);

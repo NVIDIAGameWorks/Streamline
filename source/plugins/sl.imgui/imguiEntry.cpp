@@ -34,7 +34,7 @@
 #include "source/platforms/sl.chi/vulkan.h"
 #include "source/plugins/sl.template/versions.h"
 #include "source/plugins/sl.common/commonInterface.h"
-#include "external/nvapi/nvapi.h"
+#include "nvapi.h"
 #include "external/json/include/nlohmann/json.hpp"
 #include "external/imgui/imgui.h"
 #include "external/imgui/imgui_internal.h"
@@ -52,9 +52,7 @@
 
 using json = nlohmann::json;
 
-constexpr uint32_t NUM_BACK_BUFFERS = 3;
-constexpr float DEFAULT_SMALL_FONT_SIZE = 10.0f;
-constexpr float DEFAULT_MEDIUM_FONT_SIZE = 16.0f;
+constexpr uint32_t NUM_BACK_BUFFERS = 4;
 
 namespace sl
 {
@@ -100,13 +98,12 @@ struct IMGUIContext
     std::vector<RenderCallback>* anywhereCallbacks{};
 
     sl::imgui::ImGUI ui{};
-    imgui::Font* uiSmallFont{};
-    imgui::Font* uiMediumFont{};
-
+    sl::imgui::ImGUI::Fonts fonts{};
+    
     float uiSmallFontSize = DEFAULT_SMALL_FONT_SIZE;
     float uiMediumFontSize = DEFAULT_MEDIUM_FONT_SIZE;
 
-    void* backBuffers[NUM_BACK_BUFFERS] = {};
+    std::array<void*, NUM_BACK_BUFFERS> backBuffers = {};
     BOOL  dxgiFullscreenState{};
 
     ID3D12Device* device{};
@@ -241,12 +238,15 @@ Context* createContext(const ContextDesc& desc)
     //ImGui::StyleColorsDark();
     //ImGui::StyleColorsClassic();
 
+    // Guess DPI scale from window size
+    float contentScale = ImGui_ImplWin32_GetDpiScaleForHwnd(desc.hWnd);
+    
     // We don't want imgui to take ownership of the underlying host memory for "DroidSans_Mono_ttf",
     // so we flag the atlas accordingly. This is what allows us to destroy & recreate the imgui context without crashing
     FontConfig font_cfg;
     font_cfg.fontDataOwnedByAtlas = false;
-    ctx.uiSmallFont = ctx.ui.addFontFromMemoryTTF(DroidSans_Mono_ttf, DroidSans_Mono_ttf_len, ctx.uiSmallFontSize, &font_cfg, nullptr);
-    ctx.uiMediumFont = ctx.ui.addFontFromMemoryTTF(DroidSans_Mono_ttf, DroidSans_Mono_ttf_len, ctx.uiMediumFontSize, &font_cfg, nullptr);
+    ctx.fonts.uiSmallFont = ctx.ui.addFontFromMemoryTTF(DroidSans_Mono_ttf, DroidSans_Mono_ttf_len, ctx.uiSmallFontSize * contentScale, &font_cfg, nullptr);
+    ctx.fonts.uiMediumFont = ctx.ui.addFontFromMemoryTTF(DroidSans_Mono_ttf, DroidSans_Mono_ttf_len, ctx.uiMediumFontSize * contentScale, &font_cfg, nullptr);
 
     // When viewports are enabled we tweak WindowRounding/WindowBg so platform windows can look identical to regular ones.
     ImGuiStyle& style = ImGui::GetStyle();
@@ -255,6 +255,8 @@ Context* createContext(const ContextDesc& desc)
         style.WindowRounding = 0.0f;
         style.Colors[ImGuiCol_WindowBg].w = 1.0f;
     }
+    style.ScaleAllSizes(contentScale);
+
 
     //io.DisplaySize.x = (float)desc.width;
     //io.DisplaySize.y = (float)desc.height;
@@ -625,6 +627,11 @@ bool getRenderInternal()
 Context* getCurrentContext()
 {
     return g_ctx;
+}
+
+ImGUI::Fonts getFonts()
+{
+    return imgui::getContext()->fonts;
 }
 
 void triggerRenderWindowCallbacks(bool finalFrame)
@@ -3881,7 +3888,8 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
         getCurrentContext, 
         ImPlot_PlotLineG_NSightPerf,
         ImPlot_PlotShadedG_NSightPerf,
-        destroyContextOnResize
+        destroyContextOnResize,
+        getFonts,
     };
 
     parameters->set(param::imgui::kInterface, &ctx.ui);
@@ -3930,8 +3938,8 @@ void updateEmbeddedJSON(json& config)
 
     json& extraConfig = *(json*)api::getContext()->extConfig;
 
-    extraConfig.contains("smallFontSize") ? extraConfig.at("smallFontSize").get_to(ctx.uiSmallFontSize) : DEFAULT_SMALL_FONT_SIZE;
-    extraConfig.contains("mediumFontSize") ? extraConfig.at("mediumFontSize").get_to(ctx.uiMediumFontSize) : DEFAULT_MEDIUM_FONT_SIZE;
+    extraConfig.contains("smallFontSize") ? extraConfig.at("smallFontSize").get_to(ctx.uiSmallFontSize) : imgui::DEFAULT_SMALL_FONT_SIZE;
+    extraConfig.contains("mediumFontSize") ? extraConfig.at("mediumFontSize").get_to(ctx.uiMediumFontSize) : imgui::DEFAULT_MEDIUM_FONT_SIZE;
 }
 
 void renderInternal()
@@ -3939,9 +3947,8 @@ void renderInternal()
     auto& ctx = (*sl::imgui::getContext());   
     sl::imgui::setDisplaySize(Float2{ (float)ctx.backBufferWidth, (float)ctx.backBufferHeight });
     sl::imgui::newFrame((float)ctx.frameMeter.getMean());
-    auto font = ctx.backBufferHeight < 1440 ? ctx.uiSmallFont : ctx.uiMediumFont;
-
-    sl::imgui::pushFont(font);
+    
+    sl::imgui::pushFont(ctx.fonts.uiSmallFont);
 
     // Auto adjust the side bar based on latest size
     static Float2 s_lastSize{};
@@ -4291,12 +4298,6 @@ VkResult slHookVkPresent(VkQueue Queue, const VkPresentInfoKHR* PresentInfo, boo
 //! The only exported function - gateway to all functionality
 SL_EXPORT void* slGetPluginFunction(const char* functionName)
 {
-    //! Forward declarations
-    bool slOnPluginLoad(sl::param::IParameters * params, const char* loaderJSON, const char** pluginJSON);
-
-    //! Redirect to OTA if any
-    SL_EXPORT_OTA;
-
     //! Core API
     SL_EXPORT_FUNCTION(slOnPluginLoad);
     SL_EXPORT_FUNCTION(slOnPluginShutdown);

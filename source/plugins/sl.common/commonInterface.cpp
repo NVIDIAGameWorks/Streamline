@@ -50,7 +50,7 @@
 #include "source/plugins/sl.imgui/imgui.h"
 
 #include "_artifacts/gitVersion.h"
-#include "external/nvapi/nvapi.h"
+#include "nvapi.h"
 #include "external/json/include/nlohmann/json.hpp"
 using json = nlohmann::json;
 
@@ -201,10 +201,13 @@ bool getSystemCaps(common::SystemCaps*& info)
                 
 #ifndef SL_PRODUCTION
                 //! Test - force non-NVDA
-                if (forceNonNVDA && vendor == chi::VendorId::eNVDA) vendor = chi::VendorId::eAMD;
+                if (forceNonNVDA && isVendorNvidia(vendor))
+                {
+                    vendor = chi::VendorId::eAMD;
+                }
 #endif
 
-                if (vendor == chi::VendorId::eNVDA || vendor == chi::VendorId::eIntel || vendor == chi::VendorId::eAMD)
+                if (isVendorNvidia(vendor) || vendor == chi::VendorId::eIntel || vendor == chi::VendorId::eAMD)
                 {
                     info->adapters[info->gpuCount].nativeInterface = adapter;
                     info->adapters[info->gpuCount].vendor = vendor;
@@ -215,7 +218,7 @@ bool getSystemCaps(common::SystemCaps*& info)
                     
                     if (info->gpuCount == kMaxNumSupportedGPUs) break;
 
-                    if (vendor == chi::VendorId::eNVDA)
+                    if (isVendorNvidia(vendor))
                     {
                         ctx.nvGPUCount++;
                     }
@@ -575,10 +578,11 @@ void presentCommon(UINT Flags)
                 DXGI_QUERY_VIDEO_MEMORY_INFO videoMemoryInfo{};
                 ctx.adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &videoMemoryInfo);
                 ctx.compute->setVRAMBudget(videoMemoryInfo.CurrentUsage, videoMemoryInfo.Budget);
+                // to reduce the LOG spam - print only when the new maximum is reached
                 if (videoMemoryInfo.CurrentUsage > ctx.m_maxMemoryUsage)
                 {
                     ctx.m_maxMemoryUsage = videoMemoryInfo.CurrentUsage;
-                    SL_LOG_VERBOSE("max recorded mem usage: %.2lf GB", ctx.m_maxMemoryUsage / (double)(1024 * 1024 * 1024));
+                    SL_LOG_VERBOSE("Total VRAM used: %.2lf GB", ctx.m_maxMemoryUsage / (double)(1024 * 1024 * 1024));
                 }
             }
         }
@@ -594,7 +598,7 @@ void presentCommon(UINT Flags)
             uint32_t hwArch = 0;
             for (uint32_t i = 0; i < kMaxNumSupportedGPUs; i++)
             {
-                if (ctx.sysCaps.adapters[i].vendor == chi::VendorId::eNVDA && ctx.sysCaps.adapters[i].architecture > hwArch)
+                if (isVendorNvidia(ctx.sysCaps.adapters[i].vendor) && ctx.sysCaps.adapters[i].architecture > hwArch)
                 {
                     hwArch = ctx.sysCaps.adapters[i].architecture;
                     ctx.adapter = reinterpret_cast<IDXGIAdapter3*>(ctx.sysCaps.adapters[i].nativeInterface);

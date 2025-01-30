@@ -7,6 +7,19 @@ nvcfg = {}
 
 nvcfg.SL_BUILD_DLSS_DN = true
 
+-- Whether or not DLSS-D should be available publicly at an SDK level.
+--
+-- When this flag is false, DLSS-D related content will not be included into the
+-- public Streamline SDK archives. Content may include the following:
+-- - Documentation
+-- - Headers
+-- - Libraries
+-- - Symbols
+--
+-- Note: DLSS-D will still be supported by these builds at an sl.interposer
+-- level so that developers can make and test changes unrelated to DLSS-D whilst
+-- maintaining DLSS-D support.
+nvcfg.SL_DLSS_DN_PUBLIC_SDK = true
 
 
 
@@ -15,12 +28,16 @@ nvcfg.SL_BUILD_DEEPDVC = true
 
 nvcfg.SL_DEEPDVC_PUBLIC_SDK = true
 
+nvcfg.SL_BUILD_LATEWARP = true
+
+
+
+
 
 
 nvcfg.SL_DIRECTSR_PUBLIC_SDK = true
 -- SL DirectSR plugin build config option. Enabling this will enable the DirectSR plugin build
 nvcfg.SL_BUILD_DIRECTSR = true
-
 
 
 newoption {
@@ -38,12 +55,6 @@ newoption {
 	description = "Specify premake toolset"
 }
 
-function os.winSdkVersion()
-    local reg_arch = iif( os.is64bit(), "\\Wow6432Node\\", "\\" )
-    local sdk_version = os.getWindowsRegistry( "HKLM:SOFTWARE" .. reg_arch .."Microsoft\\Microsoft SDKs\\Windows\\v10.0\\ProductVersion" )
-    if sdk_version ~= nil then return sdk_version end
-end
-
 workspace "streamline"
 
 	-- _ACTION is the argument you passed into premake5 when you ran it.
@@ -54,7 +65,9 @@ workspace "streamline"
 	location( ROOT .. "_project/" .. project_action)
 
 	configurations { "Debug", "Develop", "Production" }
-	platforms { "x64" }
+	platforms {
+		"x64",
+	}
 	architecture "x64"
 	language "c++"
 	preferredtoolarchitecture "x86_64"
@@ -77,15 +90,17 @@ workspace "streamline"
 	}
    	 
 	if os.host() == "windows" then
-		local winSDK = os.winSdkVersion() .. ".0"
-		print("WinSDK", winSDK)
-		systemversion(winSDK)
+		systemversion "latest"
 		defines { "SL_SDK", "SL_WINDOWS", "WIN32" , "WIN64" , "_CONSOLE", "NOMINMAX"}
 	else
 		defines { "SL_SDK", "SL_LINUX" }
 		-- stop on first error and also downgrade checks for casting due to ReShade 
 		buildoptions {"-std=c++17", "-Wfatal-errors", "-fpermissive"}
 	end
+
+	filter "platforms:x64"
+		architecture "x64"
+	filter{}
 
 	-- when building any visual studio project
 	filter {"system:windows", "action:vs*"}
@@ -146,6 +161,8 @@ workspace "streamline"
 	
 	vpaths { ["shaders"] = {"**.hlsl" } }
 
+group ""
+
 
 group "core"
 
@@ -162,12 +179,42 @@ project "sl.interposer"
 		prebuildcommands { 'pushd '..path.translate("../../_artifacts"), path.translate("../tools/").."gitVersion.sh", 'popd' }
 	end
 
+	
+	filter "platforms:x64"
+		includedirs { "./external/nvapi" }
+	filter{}
 
-	files { 
-		"./include/**.h",
-		"./source/core/sl.interposer/**.h", 
-		"./source/core/sl.interposer/**.cpp", 				
+	defines {"SL_INTERPOSER"}
+
+	files {
+		"./source/core/sl.interposer/**.h",
+		"./source/core/sl.interposer/**.cpp",
 		"./source/core/sl.interposer/**.rc",
+	}
+
+	if os.host() == "windows" then
+		vpaths { ["proxies/d3d12"] = {"./source/core/sl.interposer/d3d12/**.h", "./source/core/sl.interposer/d3d12/**.cpp" }}
+		vpaths { ["proxies/d3d11"] = {"./source/core/sl.interposer/d3d11/**.h", "./source/core/sl.interposer/d3d11/**.cpp" }}
+		vpaths { ["proxies/dxgi"] = {"./source/core/sl.interposer/dxgi/**.h", "./source/core/sl.interposer/dxgi/**.cpp" }}
+
+		linkoptions { "/DEF:../../source/core/sl.interposer/exports.def" }
+	else
+		-- remove on Linux all DX related stuff
+		removefiles
+		{
+			"./source/core/sl.interposer/d3d**",
+			"./source/core/sl.interposer/dxgi**",
+			"./source/core/sl.interposer/resource.h",
+			"./source/core/sl.interposer/**.rc"
+		}
+	end
+
+	vpaths { ["proxies/vulkan"] = {"./source/core/sl.interposer/vulkan/**.h", "./source/core/sl.interposer/vulkan/**.cpp" }}
+	vpaths { ["hook"] = {"./source/core/sl.interposer/hook**"}}
+
+
+	files {
+		"./include/**.h",
 		"./source/core/sl.api/**.h",
 		"./source/core/sl.api/**.cpp",
 		"./source/core/sl.param/**.h",
@@ -185,28 +232,14 @@ project "sl.interposer"
 
 	if os.host() == "windows" then
 		defines {"VK_USE_PLATFORM_WIN32_KHR", "SL_ENABLE_EXCEPTION_HANDLING"}
-		vpaths { ["proxies/d3d12"] = {"./source/core/sl.interposer/d3d12/**.h", "./source/core/sl.interposer/d3d12/**.cpp" }}	
-		vpaths { ["proxies/d3d11"] = {"./source/core/sl.interposer/d3d11/**.h", "./source/core/sl.interposer/d3d11/**.cpp" }}	
-		vpaths { ["proxies/dxgi"] = {"./source/core/sl.interposer/dxgi/**.h", "./source/core/sl.interposer/dxgi/**.cpp" }}	
 		vpaths { ["security"] = {"./source/security/**.h","./source/security/**.cpp"}}
 
 		links {"dbghelp.lib"}
-		links {"external/nvapi/amd64/nvapi64.lib"}
-
-		linkoptions { "/DEF:../../source/core/sl.interposer/exports.def" }
-	else
-		-- remove on Linux all DX related stuff
-		removefiles 
-		{ 	
-			"./source/core/sl.interposer/d3d**", 
-			"./source/core/sl.interposer/dxgi**", 
-			"./source/core/sl.interposer/resource.h",
-			"./source/core/sl.interposer/**.rc"
-		}
+		filter "platforms:x64"
+			links {"external/nvapi/amd64/nvapi64.lib"}
+		filter{}
 	end
 	
-	vpaths { ["hook"] = {"./source/core/sl.interposer/hook**"}}		
-	vpaths { ["proxies/vulkan"] = {"./source/core/sl.interposer/vulkan/**.h", "./source/core/sl.interposer/vulkan/**.cpp" }}		
 	vpaths { ["manager"] = {"./source/core/sl.plugin-manager/**.h", "./source/core/sl.plugin-manager/**.cpp" }}
 	vpaths { ["api"] = {"./source/core/sl.api/**.h","./source/core/sl.api/**.cpp"}}
 	vpaths { ["include"] = {"./include/**.h"}}
@@ -236,6 +269,10 @@ project "sl.compute"
 	staticruntime "off"
 	dependson { "sl.interposer"}
 
+
+	filter "platforms:x64"
+		includedirs { "./external/nvapi" }
+	filter{}
 
 	if os.host() == "windows" then
 		if (os.isfile("./external/slang/bin/windows-x64/release/slangc.exe")) then
@@ -283,6 +320,11 @@ group ""
 group "plugins"
 
 function pluginBasicSetup(name)
+
+	filter "platforms:x64"
+		includedirs { "./external/nvapi" }
+	filter{}
+
 	files { 
 		"./source/core/sl.api/**.h",
 		"./source/core/sl.log/**.h",		
@@ -335,11 +377,13 @@ project "sl.common"
 	vpaths { ["impl"] = {"./source/plugins/sl.common/**.h", "./source/plugins/sl.common/**.cpp" }}
 	--vpaths { ["ngx"] = {"./source/core/ngx/**.h", "./source/core/ngx/**.cpp"}}
 	
-	libdirs {externaldir .."nvapi/amd64",externaldir .."ngx-sdk/Lib/Windows_x86_64", externaldir .."pix/bin", externaldir .."reflex-sdk-vk/lib"}
-	
+	filter "platforms:x64"
+		libdirs {externaldir .."nvapi/amd64",externaldir .."ngx-sdk/Lib/Windows_x86_64", externaldir .."pix/bin", externaldir .."reflex-sdk-vk/lib"}
+		links { "nvapi64.lib" }
+	filter{}
     links
     {     
-		"delayimp.lib", "d3d12.lib", "nvapi64.lib", "dxgi.lib", "dxguid.lib", (ROOT .. "_artifacts/sl.compute/%{cfg.buildcfg}_%{cfg.platform}/sl.compute.lib"),
+		"delayimp.lib", "d3d12.lib", "dxgi.lib", "dxguid.lib", (ROOT .. "_artifacts/sl.compute/%{cfg.buildcfg}_%{cfg.platform}/sl.compute.lib"),
 		"Version.lib"
 	}
 
@@ -370,7 +414,7 @@ if (os.isdir("./source/plugins/sl.dlss_g")) then
 			"./source/plugins/sl.dlss_g/**.cpp",
 		}
 
-		links {"external/nvapi/amd64/nvapi64.lib"}
+		links {"external/nvapi/amd64/nvapi64.lib", "Winmm.lib", "Version.lib" }
 
 		vpaths {["impl"] = { "./source/plugins/sl.dlss_g/**.h", "./source/plugins/sl.dlss_g/**.cpp" }}
 		
@@ -398,26 +442,6 @@ project "sl.dlss"
 		
 	removefiles {"./source/core/sl.extra/extra.cpp"}
   	
-project "sl.nrd"
-	kind "SharedLib"	
-	targetdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}")
-	objdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}") 
-	characterset ("MBCS")
-	dependson { "sl.compute"}
-	dependson { "sl.common"}
-	pluginBasicSetup("nrd")
-	
-	files { 
-		"./source/plugins/sl.nrd/**.json",
-		"./source/plugins/sl.nrd/**.h",
-		"./source/plugins/sl.nrd/**.cpp"
-	}
-
-	vpaths { ["impl"] = {"./source/plugins/sl.nrd/**.h", "./source/plugins/sl.nrd/**.cpp" }}
-			
-	removefiles {"./source/core/sl.extra/extra.cpp"}
-   	
-
 
 project "sl.reflex"
 	kind "SharedLib"	
@@ -520,7 +544,7 @@ project "sl.imgui"
 	objdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}")
 	characterset ("MBCS")
 	dependson { "sl.compute"}	
-	pluginBasicSetup("nis")
+	pluginBasicSetup("imgui")
 
 	files {
 		"./source/plugins/sl.imgui/**.json",
@@ -548,6 +572,28 @@ project "sl.imgui"
 
 	links { "d3d12.lib", "vulkan-1.lib"}
 	
+if nvcfg.SL_BUILD_DLSS_DN then
+    project "sl.dlss_d"
+	    kind "SharedLib"
+	    targetdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}")
+	    objdir (ROOT .. "_artifacts/%{prj.name}/%{cfg.buildcfg}_%{cfg.platform}") 
+	    characterset ("MBCS")
+	    dependson { "sl.common"}
+	    pluginBasicSetup("dlss_d")
+
+	    files { 
+			"./source/core/ngx/**.h",
+			"./source/core/ngx/**.cpp",
+			"./source/plugins/sl.dlss_d/**.json",
+			"./source/plugins/sl.dlss_d/**.h",
+			"./source/plugins/sl.dlss_d/**.cpp"
+	    }
+
+	    vpaths { ["impl"] = {"./source/plugins/sl.dlss_d/**.h", "./source/plugins/sl.dlss_d/**.cpp" }}
+	    vpaths { ["ngx"] = {"./source/core/ngx/**.h", "./source/core/ngx/**.cpp"}}
+
+	    removefiles {"./source/core/sl.extra/extra.cpp"}
+end
 
 if nvcfg.SL_BUILD_DIRECTSR then
     project "sl.directsr"

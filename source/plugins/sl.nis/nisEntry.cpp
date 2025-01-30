@@ -561,12 +561,6 @@ sl::Result slNISGetState(const sl::ViewportHandle& viewport, sl::NISState& state
 
 SL_EXPORT void *slGetPluginFunction(const char *functionName)
 {
-    // Forward declarations
-    bool slOnPluginLoad(sl::param::IParameters * params, const char* loaderJSON, const char** pluginJSON);
-
-    //! Redirect to OTA if any
-    SL_EXPORT_OTA;
-
     // Core API
     SL_EXPORT_FUNCTION(slOnPluginLoad);
     SL_EXPORT_FUNCTION(slOnPluginShutdown);

@@ -32,10 +32,11 @@
 #include "source/platforms/sl.chi/compute.h"
 #include "source/plugins/sl.template/versions.h"
 #include "source/plugins/sl.common/commonInterface.h"
-#include "external/nvapi/nvapi.h"
+#include "nvapi.h"
 #include "external/json/include/nlohmann/json.hpp"
 #include "_artifacts/json/template_json.h"
 #include "_artifacts/gitVersion.h"
+
 
 using json = nlohmann::json;
 
@@ -419,12 +420,6 @@ void updateEmbeddedJSON(json& config)
 //! The only exported function - gateway to all functionality
 SL_EXPORT void* slGetPluginFunction(const char* functionName)
 {
-    //! Forward declarations
-    bool slOnPluginLoad(sl::param::IParameters * params, const char* loaderJSON, const char** pluginJSON);
-
-    //! Redirect to OTA if any
-    SL_EXPORT_OTA;
-
     //! Core API
     SL_EXPORT_FUNCTION(slOnPluginLoad);
     SL_EXPORT_FUNCTION(slOnPluginShutdown);
@@ -443,3 +438,4 @@ SL_EXPORT void* slGetPluginFunction(const char* functionName)
 }
 
 }
+

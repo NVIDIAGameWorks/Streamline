@@ -26,7 +26,7 @@
 
 #include "include/sl.h"
 #include "include/sl_helpers.h"
-#include "external/nvapi/nvapi.h"
+#include "nvapi.h"
 
 namespace sl
 {

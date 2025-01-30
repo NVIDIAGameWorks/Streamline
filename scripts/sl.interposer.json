@@ -1,18 +1,18 @@
 {
   "enableInterposer": true,
   "useDXGIProxy": false,
-  "loadAllFeatures": true,
-  "_loadSpecificFeatures": [0,1],
+  "loadAllFeatures": false,
+  // "loadSpecificFeatures": [0,1],
   "showConsole": true,
-  "comment_logLevel": "Log levels are off, on, verbose",
+  // Log levels are off, on, verbose
   "logLevel": 2,
   "logMessageDelayMs": 5000,
   "waitForDebugger" : false,
   "vkValidation": false,
   "forceProxies": false,
   "forceNonNVDA": false,
-  "trackEngineAllocations" : false,
-  "comment_paths": "To use set your paths and rename variables by removing leading underscore",
-  "_logPath": "N:/My/Log/Path",
-  "_pathToPlugins": "N:/My/Plugin/Path"
+  "trackEngineAllocations" : false
+  // To use, uncomment the following and set the appropriate paths
+  // "logPath": "N:/My/Log/Path",
+  // "pathToPlugins": "N:/My/Plugin/Path"
 }

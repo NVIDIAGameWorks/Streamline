@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include "source/plugins/sl.imgui/types.h"
 #include "source/plugins/sl.imgui/input.h"
 #include "source/plugins/sl.imgui/imguiTypes.h"
@@ -17,9 +18,11 @@ using namespace type;
 
 typedef double(*DoubleGetter)(int);
 
+const float DEFAULT_SMALL_FONT_SIZE = 10.0f;
+const float DEFAULT_MEDIUM_FONT_SIZE = 16.0f;
+
 struct ImGUI
-{
- 
+{ 
     Context* (*createContext)(const ContextDesc& desc);
     void (*destroyContext)(Context* ctx);
     void (*setCurrentContext)(Context* ctx);
@@ -2625,6 +2628,13 @@ struct ImGUI
                                          DoubleGetter valGetterData2,
                                          int dataOffset);
     void(*destroyContextOnResize)(unsigned int width, unsigned int height);
+
+    struct Fonts
+    {
+        imgui::Font* uiSmallFont{};
+        imgui::Font* uiMediumFont{};
+    };
+    Fonts(*getFonts)();
 };
 
 }

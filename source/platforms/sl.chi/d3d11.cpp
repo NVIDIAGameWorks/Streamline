@@ -21,10 +21,11 @@
 */
 
 #include <d3d11_4.h>
+#include <wrl/client.h>
 
 #include "source/core/sl.log/log.h"
 #include "source/platforms/sl.chi/d3d11.h"
-#include "external/nvapi/nvapi.h"
+#include "nvapi.h"
 #include "_artifacts/shaders/copy_cs.h"
 
 namespace sl
@@ -160,6 +161,7 @@ struct D3D11CommandListContext : public ICommandListContext
 
     WaitStatus flushAll()
     {
+        m_cmdCtxImmediate->Flush();
         return WaitStatus::eNoTimeout;
     }
 
@@ -240,9 +242,27 @@ struct D3D11CommandListContext : public ICommandListContext
 
     int present(SwapChain chain, uint32_t sync, uint32_t flags, void* params)
     {
-        assert(false);
-        SL_LOG_ERROR( "Not implemented");
-        return 0;
+        BOOL fullscreen = FALSE;
+        ((IDXGISwapChain*)chain)->GetFullscreenState(&fullscreen, nullptr);
+        if (fullscreen || sync)
+        {
+            flags &= ~DXGI_PRESENT_ALLOW_TEARING;
+        }
+        else if (sync == 0)
+        {
+            flags |= DXGI_PRESENT_ALLOW_TEARING;
+        }
+        
+        HRESULT res{};
+        if (params)
+        {
+            res = ((IDXGISwapChain1*)chain)->Present1(sync, flags, (DXGI_PRESENT_PARAMETERS*)params);
+        }
+        else
+        {
+            res = ((IDXGISwapChain*)chain)->Present(sync, flags);
+        }
+        return res;
     }
 
     void getFrameStats(SwapChain chain, void* frameStats)
@@ -269,21 +289,21 @@ struct D3D11CommandListContext : public ICommandListContext
 
 std::wstring D3D11::getDebugName(Resource res)
 {
-    auto unknown = (IUnknown*)(res->native);
-    ID3D11Resource* pageable;
-    IDXGIObject* dxgi;
-    unknown->QueryInterface(&pageable);
-    unknown->QueryInterface(&dxgi);
+    Microsoft::WRL::ComPtr<IUnknown> unknown = static_cast<IUnknown*>(res->native);
+    Microsoft::WRL::ComPtr<ID3D11Resource> d3d11Resource;
+    Microsoft::WRL::ComPtr<IDXGIObject> dxgi;
+    unknown.As(&d3d11Resource);
+    unknown.As(&dxgi);
     wchar_t name[128] = {};
     std::wstring wname = L"Unknown";
-    if (pageable)
+    if (d3d11Resource)
     {
         UINT size = sizeof(name);
-        if (FAILED(pageable->GetPrivateData(WKPDID_D3DDebugObjectNameW, &size, name)))
+        if (FAILED(d3d11Resource->GetPrivateData(WKPDID_D3DDebugObjectNameW, &size, name)))
         {
             char sname[128] = {};
             size = sizeof(sname);
-            if (SUCCEEDED(pageable->GetPrivateData(WKPDID_D3DDebugObjectName, &size, sname)))
+            if (SUCCEEDED(d3d11Resource->GetPrivateData(WKPDID_D3DDebugObjectName, &size, sname)))
             {
                 std::string tmp(sname);
                 wname = std::wstring(tmp.begin(), tmp.end());
@@ -293,9 +313,8 @@ std::wstring D3D11::getDebugName(Resource res)
         {
             wname = name;
         }
-        pageable->Release();
     }
-    else if(dxgi)
+    else if (dxgi)
     {
         UINT size = sizeof(name);
         if (FAILED(dxgi->GetPrivateData(WKPDID_D3DDebugObjectNameW, &size, name)))
@@ -312,7 +331,6 @@ std::wstring D3D11::getDebugName(Resource res)
         {
             wname = name;
         }
-        dxgi->Release();
     }
     return wname;
 }
@@ -1403,6 +1421,15 @@ ComputeStatus D3D11::cloneResource(Resource resource, Resource &clone, const cha
 
     clone = new sl::Resource(type, res);
 
+    // D3D12/Vulkan sets native flags which doesn't map to D3D11 which has multiple flag fields. 
+    // d3d11 ignores this field
+    clone->flags = 0; 
+    clone->mipLevels = desc.mips;
+    clone->arrayLayers = desc.depth;
+    clone->nativeFormat = desc.nativeFormat;
+    clone->width = desc.width;
+    clone->height = desc.height;
+
     manageVRAM(clone, VRAMOperation::eAlloc);
 
     return ComputeStatus::eOk;
@@ -1464,16 +1491,17 @@ ComputeStatus D3D11::getResourceDescription(Resource resource, ResourceDescripti
     }
 
     // First make sure this is not an DXGI or some other resource
-    auto unknown = (IUnknown*)(resource->native);
-    ID3D11Resource* pageable;
-    unknown->QueryInterface(&pageable);
-    if (!pageable)
+    Microsoft::WRL::ComPtr<IUnknown> unknown = (IUnknown*)(resource->native);
+    Microsoft::WRL::ComPtr<ID3D11Resource> d3d11Resource;
+
+    unknown.As(&d3d11Resource);
+    if (!d3d11Resource)
     {
         return ComputeStatus::eError;
     }
 
     D3D11_RESOURCE_DIMENSION dim;
-    pageable->GetType(&dim);
+    d3d11Resource->GetType(&dim);
 
     outDesc = {};
     outDesc.format = eFormatINVALID;
@@ -1531,8 +1559,6 @@ ComputeStatus D3D11::getResourceDescription(Resource resource, ResourceDescripti
     }
 
     getFormat(outDesc.nativeFormat, outDesc.format);
-
-    int rc = pageable->Release();
 
     return ComputeStatus::eOk;
 }
@@ -1715,6 +1741,13 @@ ComputeStatus D3D11::notifyOutOfBandCommandQueue(CommandQueue queue, OutOfBandCo
 
 ComputeStatus D3D11::setAsyncFrameMarker(CommandQueue queue, PCLMarker marker, uint64_t frameId)
 {
+    SL_LOG_WARN_ONCE("D3D11 setAsyncFrameMarker is not implemented!");
+    return ComputeStatus::eOk;
+}
+
+ComputeStatus D3D11::setLatencyMarker(CommandQueue queue, PCLMarker marker, uint64_t frameId)
+{
+    SL_LOG_WARN_ONCE("D3D11 setLatencyMarker is not implemented!");
     return ComputeStatus::eOk;
 }
 

@@ -38,7 +38,7 @@
 #include "source/plugins/sl.imgui/imgui.h"
 #include "source/plugins/sl.common/commonInterface.h"
 #include "external/json/include/nlohmann/json.hpp"
-#include "external/nvapi/nvapi.h"
+#include "nvapi.h"
 
 #include "_artifacts/gitVersion.h"
 #include "_artifacts/json/deepdvc_json.h"
@@ -540,12 +540,6 @@ HRESULT slHookPresent(IDXGISwapChain* swapChain, UINT SyncInterval, UINT Flags, 
 
 SL_EXPORT void *slGetPluginFunction(const char *functionName)
 {
-    // Forward declarations
-    bool slOnPluginLoad(sl::param::IParameters * params, const char* loaderJSON, const char** pluginJSON);
-
-    //! Redirect to OTA if any
-    SL_EXPORT_OTA;
-
     // Core API
     SL_EXPORT_FUNCTION(slOnPluginLoad);
     SL_EXPORT_FUNCTION(slOnPluginShutdown);

@@ -33,7 +33,6 @@
 #define VK_CHECK_RV(f) {auto _r = f;if(_r < 0){SL_LOG_ERROR("%s failed - error %d",#f,_r); return;} else if(_r != 0) {SL_LOG_WARN("%s - warning %d",#f,_r);}}
 #define VK_CHECK_RF(f) {auto _r = f;if(_r < 0){SL_LOG_ERROR("%s failed - error %d",#f,_r); return false;} else if(_r != 0) {SL_LOG_WARN("%s - warning %d",#f,_r);}}
 #define VK_CHECK_RN(f) {auto _r = f;if(_r < 0){SL_LOG_ERROR("%s failed - error %d",#f,_r); return nullptr;} else if(_r != 0) {SL_LOG_WARN("%s - warning %d",#f,_r);}}
-#define VK_CHECK_RI(f) {auto _r = f;if(_r < 0){SL_LOG_ERROR("%s failed - error %d",#f,_r); return _r;} else if(_r != 0) {SL_LOG_WARN("%s - warning %d",#f,_r);}}
 #define VK_CHECK_RE(res, f) res = f;if(res < 0){SL_LOG_ERROR("%s failed - error %d",#f,res); return res;} else if(res != 0) {SL_LOG_WARN("%s - warning %d",#f,res);}
 #define VK_CHECK_RWS(f) {auto _r = f;if(_r < 0){SL_LOG_ERROR("%s failed - error %d",#f,_r); return WaitStatus::eError;} else if(_r == VK_TIMEOUT) {SL_LOG_WARN("%s - timed out", #f); return WaitStatus::eTimeout;}}
 
@@ -98,6 +97,7 @@ class CommandListContextVK : public ICommandListContext
     std::wstring m_name;
     VkDevice m_device = {};
     std::mutex m_mtxQueueList;
+    std::mutex m_mtxSyncGPU;
 
     // Keep validation layer happy
     const VkPipelineStageFlags waitDstStageMask[4] = { VK_PIPELINE_STAGE_ALL_COMMANDS_BIT , VK_PIPELINE_STAGE_ALL_COMMANDS_BIT , VK_PIPELINE_STAGE_ALL_COMMANDS_BIT , VK_PIPELINE_STAGE_ALL_COMMANDS_BIT };
@@ -435,14 +435,6 @@ public:
         return WaitStatus::eNoTimeout;
     }
 
-    uint64_t getCompletedValue(Fence fence)
-    {
-        auto semaphore = (VkSemaphore)fence;
-        uint64_t completedValue = 0;
-        VK_CHECK_RF(m_ddt.GetSemaphoreCounterValue(m_device, semaphore, &completedValue));
-        return completedValue;
-    }
-
     bool didCommandListFinish(uint32_t index)
     {
         uint64_t completedValue;
@@ -627,7 +619,7 @@ public:
         const VkPresentInfoKHR info = 
         {
             VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-            nullptr,
+            params,
             // Cannot wait here on present semaphore (however acquires next image has to wait before doing a copy to back buffer)
             1,
             &m_presentSemaphore, 
@@ -637,7 +629,18 @@ public:
         };
         // With VK it is important to always return the "error" code
         int res{};
-        VK_CHECK_RE(res, m_ddt.QueuePresentKHR(m_cmdQueue, &info));
+        res = m_ddt.QueuePresentKHR(m_cmdQueue, &info);
+
+        // Error check, accounting for the special case of VK_ERROR_OUT_OF_DATE_KHR when swapchain resizes
+        if (res == VK_ERROR_OUT_OF_DATE_KHR)
+        {
+            SL_LOG_WARN("%s - warning %d", "m_ddt.QueuePresentKHR(m_cmdQueue, &info)", res);            
+        }
+        else if (res < 0)
+        {
+            SL_LOG_ERROR("%s failed - error %d", "m_ddt.QueuePresentKHR(m_cmdQueue, &info)", res);
+        }
+
         return res;
     }
 
@@ -1348,6 +1351,14 @@ ComputeStatus Vulkan::destroyCommandListContext(ICommandListContext* ctx)
         delete tmp;
     }
     return ComputeStatus::eOk;
+}
+
+uint64_t Vulkan::getCompletedValue(Fence fence)
+{
+    auto semaphore = (VkSemaphore)fence;
+    uint64_t completedValue = 0;
+    VK_CHECK_RF(m_ddt.GetSemaphoreCounterValue(m_device, semaphore, &completedValue));
+    return completedValue;
 }
 
 ComputeStatus Vulkan::createCommandQueue(CommandQueueType type, CommandQueue& queue, const char friendlyName[], uint32_t index)
@@ -3347,7 +3358,50 @@ ComputeStatus Vulkan::getNativeFormat(Format format, NativeFormat& native)
  ComputeStatus Vulkan::setAsyncFrameMarker(CommandQueue queue, PCLMarker marker, uint64_t frameId)
  {
      CHECK_REFLEX();
+     SL_LOG_WARN_ONCE("Vulkan setAsyncFrameMarker is not implemented!");
      return m_reflex->setAsyncFrameMarker(queue, marker, frameId);
+ }
+ ComputeStatus Vulkan::setLatencyMarker(CommandQueue queue, PCLMarker marker, uint64_t frameId)
+ {
+     CHECK_REFLEX();
+     SL_LOG_WARN_ONCE("Vulkan setLatencyMarker is not implemented!");
+     return ComputeStatus::eOk;
+ }
+
+ ComputeStatus Vulkan::fillSupportedDeviceExtensions()
+ {
+     uint32_t deviceExtensionCount{};
+     VK_CHECK(m_idt.EnumerateDeviceExtensionProperties(m_physicalDevice, NULL, &deviceExtensionCount, NULL));
+
+     std::vector<VkExtensionProperties> availableDeviceExtensions(deviceExtensionCount);
+     VK_CHECK(m_idt.EnumerateDeviceExtensionProperties(m_physicalDevice, NULL, &deviceExtensionCount, availableDeviceExtensions.data()));
+
+     for (const auto& ext : availableDeviceExtensions)
+     {
+         m_supportedDeviceExtensions.insert({ ext.extensionName, ext.specVersion });
+     }
+
+     return !m_supportedDeviceExtensions.empty() ? ComputeStatus::eOk : ComputeStatus::eError;
+ }
+
+ ComputeStatus Vulkan::isDeviceExtensionSupported(const char* extension, uint32_t version)
+ {
+     if (m_supportedDeviceExtensions.empty())
+     {
+         VK_CHECK(fillSupportedDeviceExtensions());
+     }
+
+     assert(!m_supportedDeviceExtensions.empty());
+     
+     auto iter = m_supportedDeviceExtensions.find(extension);
+     if (iter != m_supportedDeviceExtensions.end())
+     {
+         if (iter->second >= version)
+         {
+             return ComputeStatus::eOk;
+         }
+     }
+     return ComputeStatus::eNotSupported;
  }
 }
 }

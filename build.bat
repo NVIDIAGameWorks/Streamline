@@ -39,6 +39,13 @@ if exist .\_project\vs2022\streamline.sln (
             GOTO :found_vs
         )
     )
+    rem Try looking for VS Build Tools 2017
+    for /f "usebackq tokens=1* delims=: " %%i in (`.\tools\vswhere.exe -products * -version [15^,16^) -requires Microsoft.VisualStudio.Workload.VCTools -requires Microsoft.VisualStudio.Workload.MSBuildTools`) do (
+        if /i "%%i"=="installationPath" (
+            set VS_PATH=%%j
+            GOTO :found_vs
+        )
+    )
 )
 :found_vs
 
@@ -92,9 +99,9 @@ exit /b 1
 :SetVSEnvFinished
 
 if exist .\_project\vs2022\streamline.sln (
-    msbuild .\_project\vs2022\streamline.sln /m /t:%bld% /property:Configuration=%cfg%
+    msbuild .\_project\vs2022\streamline.sln /m /t:%bld% /property:Configuration=%cfg% /property:Platform=x64
 ) else if exist .\_project\vs2019\streamline.sln (
-    msbuild .\_project\vs2019\streamline.sln /m /t:%bld% /property:Configuration=%cfg%
+    msbuild .\_project\vs2019\streamline.sln /m /t:%bld% /property:Configuration=%cfg% /property:Platform=x64
 ) else (
-    msbuild .\_project\vs2017\streamline.sln /m /t:%bld% /property:Configuration=%cfg%
+    msbuild .\_project\vs2017\streamline.sln /m /t:%bld% /property:Configuration=%cfg% /property:Platform=x64
 )

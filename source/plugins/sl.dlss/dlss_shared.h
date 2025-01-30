@@ -33,7 +33,7 @@ namespace dlss
 //! Internal shared data for DLSS
 //! 
 //! {9A6136D9-4E4D-4EA6-A52B-47F13F7BB766}
-SL_STRUCT(DLSSInternalSharedData, StructType({ 0x9a6136d9, 0x4e4d, 0x4ea6, { 0xa5, 0x2b, 0x47, 0xf1, 0x3f, 0x7b, 0xb7, 0x66 } }), kStructVersion1)
+SL_STRUCT_BEGIN(DLSSInternalSharedData, StructType({ 0x9a6136d9, 0x4e4d, 0x4ea6, { 0xa5, 0x2b, 0x47, 0xf1, 0x3f, 0x7b, 0xb7, 0x66 } }), kStructVersion1)
 
     //! BACKWARDS COMPATIBILITY MUST BE PRESERVED ALWAYS - NEVER CHANGE OR MOVE OLDER MEMBERS IN THIS STRUCTURE
     //! 
@@ -41,7 +41,7 @@ SL_STRUCT(DLSSInternalSharedData, StructType({ 0x9a6136d9, 0x4e4d, 0x4ea6, { 0xa
     chi::Resource cachedUpscaledOutput;
 
     //! NEW MEMBERS GO HERE, REMEMBER TO BUMP THE VERSION!
-};
+SL_STRUCT_END()
 
 //! Enforcing offsets at the compile time to ensure members are not moved around
 //! 

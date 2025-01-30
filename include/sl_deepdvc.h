@@ -36,22 +36,22 @@ enum class DeepDVCMode : uint32_t
 };
 
 // {23288AAD-7E7E-BE2A-916F-27DA30A3046B}
-SL_STRUCT(DeepDVCOptions, StructType({ 0x23288aad, 0x7e7e, 0xbe2a, { 0x91, 0x67, 0x27, 0xda, 0x30, 0xa3, 0x04, 0x6b } }), kStructVersion1)
+SL_STRUCT_BEGIN(DeepDVCOptions, StructType({ 0x23288aad, 0x7e7e, 0xbe2a, { 0x91, 0x67, 0x27, 0xda, 0x30, 0xa3, 0x04, 0x6b } }), kStructVersion1)
     //! Specifies which mode should be used
     DeepDVCMode mode = DeepDVCMode::eOff;
     //! Specifies intensity level in range [0,1]. Default 0.5
     float intensity = 0.5f;
     //! Specifies saturation boost in range [0,1]. Default 0.25
     float saturationBoost = 0.25f;
-};
+SL_STRUCT_END()
 
 //! Returned by the DeepDVC plugin
 //!
 // {934FD3D3-B34C-70A7-A139-F19FE04D91D3}
-SL_STRUCT(DeepDVCState, StructType({ 0x934fd3d3, 0xb34c, 0x70a7, { 0xa1, 0x39, 0xf1, 0x9f, 0xe0, 0x4d, 0x91, 0xd3 } }), kStructVersion1)
+SL_STRUCT_BEGIN(DeepDVCState, StructType({ 0x934fd3d3, 0xb34c, 0x70a7, { 0xa1, 0x39, 0xf1, 0x9f, 0xe0, 0x4d, 0x91, 0xd3 } }), kStructVersion1)
     //! Specified the amount of memory expected to be used
     uint64_t estimatedVRAMUsageInBytes {};
-};
+SL_STRUCT_END()
 
 }
 
@@ -90,7 +90,6 @@ inline sl::Result slDeepDVCGetState(const sl::ViewportHandle& viewport, sl::Deep
     SL_FEATURE_FUN_IMPORT_STATIC(sl::kFeatureDeepDVC, slDeepDVCGetState);
     return s_slDeepDVCGetState(viewport, state);
 }
-
 //#define SL_CASE_STR(a) case a : return #a;
 
 inline const char* getDeepDVCModeAsStr(sl::DeepDVCMode v)

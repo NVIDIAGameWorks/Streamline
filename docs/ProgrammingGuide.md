@@ -2,7 +2,7 @@
 Streamline - SL
 =======================
 
-Version 2.4.15
+Version 2.7.2
 =======
 
 1 SETTING UP
@@ -186,7 +186,7 @@ enum class EngineType : uint32_t
 //! Application preferences
 //!
 //! {1CA10965-BF8E-432B-8DA1-6716D879FB14}
-SL_STRUCT(Preferences, StructType({ 0x1ca10965, 0xbf8e, 0x432b, { 0x8d, 0xa1, 0x67, 0x16, 0xd8, 0x79, 0xfb, 0x14 } }), kStructVersion1)
+SL_STRUCT_BEGIN(Preferences, StructType({ 0x1ca10965, 0xbf8e, 0x432b, { 0x8d, 0xa1, 0x67, 0x16, 0xd8, 0x79, 0xfb, 0x14 } }), kStructVersion1)
     //! Optional - In non-production builds it is useful to enable debugging console window
     bool showConsole = false;
     //! Optional - Various logging levels
@@ -223,7 +223,7 @@ SL_STRUCT(Preferences, StructType({ 0x1ca10965, 0xbf8e, 0x432b, { 0x8d, 0xa1, 0x
     //! 
     //! NOTE: To ensure correct `slGetFeatureRequirements` behavior please specify if planning to use Vulkan.
     RenderAPI renderAPI = RenderAPI::eD3D12;
-};
+SL_STRUCT_END()
 ```
 
 ##### 2.2.2.1 MANAGING FEATURES
@@ -292,7 +292,7 @@ side will be **fully responsible for the resource allocation and destruction**.
 ```cpp
 //! Resource allocate information
 //!
-SL_STRUCT(ResourceAllocationDesc, StructType({ 0xbb57e5, 0x49a2, 0x4c23, { 0xa5, 0x19, 0xab, 0x92, 0x86, 0xe7, 0x40, 0x14 } }))
+SL_STRUCT_BEGIN(ResourceAllocationDesc, StructType({ 0xbb57e5, 0x49a2, 0x4c23, { 0xa5, 0x19, 0xab, 0x92, 0x86, 0xe7, 0x40, 0x14 } }))
     ResourceAllocationDesc(ResourceType _type, void* _desc, uint32_t _state, void* _heap) : BaseStructure(ResourceAllocationDesc::s_structType), type(_type),desc(_desc),state(_state),heap(_heap){};
     //! Indicates the type of resource
     ResourceType type = ResourceType::eTex2d;
@@ -302,12 +302,12 @@ SL_STRUCT(ResourceAllocationDesc, StructType({ 0xbb57e5, 0x49a2, 0x4c23, { 0xa5,
     uint32_t state = 0;
     //! CD3DX12_HEAP_PROPERTIES or nullptr
     void* heap{};
-};
+SL_STRUCT_END()
 
 //! Native resource
 //! 
 //! {3A9D70CF-2418-4B72-8391-13F8721C7261}
-SL_STRUCT(Resource, StructType({ 0x3a9d70cf, 0x2418, 0x4b72, { 0x83, 0x91, 0x13, 0xf8, 0x72, 0x1c, 0x72, 0x61 } }))
+SL_STRUCT_BEGIN(Resource, StructType({ 0x3a9d70cf, 0x2418, 0x4b72, { 0x83, 0x91, 0x13, 0xf8, 0x72, 0x1c, 0x72, 0x61 } }))
     //! Constructors
     //! 
     //! Resource type, native pointer are MANDATORY always
@@ -354,7 +354,7 @@ SL_STRUCT(Resource, StructType({ 0x3a9d70cf, 0x2418, 0x4b72, { 0x83, 0x91, 0x13,
     uint32_t usage{};
     //! Reserved for internal use
     uint32_t reserved{};
-};
+SL_STRUCT_END()
 
 //! Resource allocation/deallocation callbacks
 //!
@@ -609,12 +609,12 @@ To obtain SL and NGX (if any) version for a given feature use the following meth
 //! Specifies feature's version
 //! 
 //! {6D5B51F0-076B-486D-9995-5A561043F5C1}
-SL_STRUCT(FeatureVersion, StructType({ 0x6d5b51f0, 0x76b, 0x486d, { 0x99, 0x95, 0x5a, 0x56, 0x10, 0x43, 0xf5, 0xc1 } }))
+SL_STRUCT_BEGIN(FeatureVersion, StructType({ 0x6d5b51f0, 0x76b, 0x486d, { 0x99, 0x95, 0x5a, 0x56, 0x10, 0x43, 0xf5, 0xc1 } }))
     //! SL version
     Version versionSL{};
     //! NGX version (if feature is using NGX, null otherwise)
     Version versionNGX{};
-};
+SL_STRUCT_END()
 
 //! Returns feature's version
 //!
@@ -629,7 +629,19 @@ SL_STRUCT(FeatureVersion, StructType({ 0x6d5b51f0, 0x76b, 0x486d, { 0x99, 0x95, 
 SL_API sl::Result slGetFeatureVersion(sl::Feature feature, sl::FeatureVersion& version);
 ```
 
-### 2.7 EXPLICIT RESOURCE ALLOCATION AND DE-ALLOCATION
+### 2.7 ViewportHandle
+
+Many streamline functions use sl::ViewportHandle data structure to let the caller identify the viewport with which they are working.
+
+sl::ViewportHandle is essentially an unique integer number which application has to choose. We don't provide any function to create ViewportHandle.
+
+An example of how application can do that is:
+
+```cpp
+sl::ViewportHandle m_viewport = {123};
+```
+
+### 2.8 EXPLICIT RESOURCE ALLOCATION AND DE-ALLOCATION
 
 By default SL performs the so called `lazy` initialization and destruction of all resources - in other words resources are created only when used and destroyed when plugins are unloaded. If required, an explicit allocation or de-allocation of internal SL resources is also possible using the following methods:
 
@@ -722,7 +734,7 @@ For example, let's assume we have two viewports using `sl::kFeatureDLSS` and we 
 
 ```
 
-### 2.8 TAGGING RESOURCES
+### 2.9 TAGGING RESOURCES
 
 The appropriate D3D11/D3D12/VK resources should be tagged globally using the `slSetTag` or locally with the `slEvaluateFeature` API and the corresponding `BufferType` unique id.  Note that the list below may not accurately represent the full set of optional and even required items in a given version's header.  The Programming Guide for each individual plugin/feature will discuss which of these tags are required and/or used by that feature.
 
@@ -1018,7 +1030,7 @@ ResourceTag tag{};
 tag.next = &bufferPrecisionInfo;
 ```
 
-### 2.9 FRAME TRACKING
+### 2.10 FRAME TRACKING
 
 SL requires correct frame tracking since host application could be working on multiple frames at the same time and various SL inputs must be matched with the frame that is actually being presented. When the simulation phase for the new frame is starting in the host application the frame tracking handle for that specific frame should be obtained from the SL (this would be the exact same place where normally the `sl::ReflexMarker::eSimulationStart` would be placed, see [Reflex guide](./ProgrammingGuideReflex.md) for more details)).
 
@@ -1078,9 +1090,9 @@ uint32_t nextIndex = *currentFrame + 1;
 slGetNewFrameToken(next, &nextIndex); // NOTE: providing optional frame index
 ```
 
-### 2.10 PROVIDING ADDITIONAL INFORMATION
+### 2.11 PROVIDING ADDITIONAL INFORMATION
 
-#### 2.10.1 COMMON CONSTANTS
+#### 2.11.1 COMMON CONSTANTS
 
 Some additional information should be provided so that SL features can operate correctly. Please use `slSetConstants` to provide the required data ***as early in the frame as possible*** and make sure to set values for all fields in the following structure:
 
@@ -1088,7 +1100,7 @@ Some additional information should be provided so that SL features can operate c
 //! Common constants, all parameters must be provided unless they are marked as optional
 //! 
 //! {DCD35AD7-4E4A-4BAD-A90C-E0C49EB23AFE}
-SL_STRUCT(Constants, StructType({ 0xdcd35ad7, 0x4e4a, 0x4bad, { 0xa9, 0xc, 0xe0, 0xc4, 0x9e, 0xb2, 0x3a, 0xfe } }))
+SL_STRUCT_BEGIN(Constants, StructType({ 0xdcd35ad7, 0x4e4a, 0x4bad, { 0xa9, 0xc, 0xe0, 0xc4, 0x9e, 0xb2, 0x3a, 0xfe } }))
     //! IMPORTANT: All matrices are row major (see float4x4 definition) and
     //! must NOT contain temporal AA jitter offset (if any). Any jitter offset
     //! should be provided as the additional parameter Constants::jitterOffset (see below)
@@ -1150,7 +1162,7 @@ SL_STRUCT(Constants, StructType({ 0xdcd35ad7, 0x4e4a, 0x4bad, { 0xa9, 0xc, 0xe0,
     Boolean motionVectorsDilated = Boolean::eFalse;
     //! Specifies if motion vectors are jittered or not.
     Boolean motionVectorsJittered = Boolean::eFalse;
-};
+SL_STRUCT_END()
 
 //! Sets common constants.
 //!
@@ -1168,9 +1180,9 @@ SL_API sl::Result slSetConstants(const sl::Constants& values, const sl::FrameTok
 > **NOTE:**
 > Provided projection related matrices `should not` contain any clip space jitter offset. Jitter offset (if any) should be specified as a separate `float2` constant.
 
-#### 2.10.2 FEATURE SPECIFIC OPTIONS
+#### 2.11.2 FEATURE SPECIFIC OPTIONS
 
-Each feature requires specific data which, together with the accompanying API, is defined in a corresponding  `sl_<feature_name>.h` header file (e.g. `sl_dlss.h`, `sl_nrd.h`, etc.). Here is an example on how to set DLSS options:
+Each feature requires specific data which, together with the accompanying API, is defined in a corresponding  `sl_<feature_name>.h` header file (e.g. `sl_dlss.h`, etc.). Here is an example on how to set DLSS options:
 
 ```cpp
 #include <sl_dlss.h>
@@ -1192,7 +1204,7 @@ if(SL_FAILED(result, slDLSSSetOptions(viewport, dlssOptions)))
 > **NOTE:**
 > To switch off any given feature, simply set its mode to the `off` state. This will also unload any resources used by this feature (if it was ever invoked before). For example, to disable DLSS one would set `DLSSConstants::mode = eDLSSModeOff`.
 
-### 2.11 FEATURE SETTINGS AND STATES
+### 2.12 FEATURE SETTINGS AND STATES
 
 Some features provide feedback to the host application specifying, for example, which rendering settings are optimal or preferred or their current state (memory consumption etc). Feature specific APIs to obtain settings and states are defined in a corresponding  `sl_<feature_name>.h` header file
 
@@ -1220,7 +1232,7 @@ myViewport->setSize(dlssSettings.renderWidth, dlssSettings.renderHeight);
 > **NOTE:**
 > Not all features provide specific/optimal settings. Please refer to the appropriate, feature specific header for more details.
 
-### 2.12 MARKING EVENTS IN THE PIPELINE
+### 2.13 MARKING EVENTS IN THE PIPELINE
 
 By design, SL SDK enables `host assisted replacement or injection of specific rendering features`. In order for SL features to work, specific sections in the rendering pipeline need to be marked with the following method:
 
@@ -1246,7 +1258,7 @@ By design, SL SDK enables `host assisted replacement or injection of specific re
 SL_API sl::Result slEvaluateFeature(sl::Feature feature, const sl::FrameToken& frame, const sl::BaseStructure** inputs, uint32_t numInputs, sl::CommandBuffer* cmdBuffer);
 ```
 
-Plase note that **host is responsible for restoring the command buffer(list) state** after calling `slEvaluate`. For more details on which states are affected please see [restore pipeline section](./ProgrammingGuideManualHooking.md#70-restoring-command-listbuffer-state)
+Please note that **host is responsible for restoring the command buffer(list) state** after calling `slEvaluate`. For more details on which states are affected please see [restore pipeline section](./ProgrammingGuideManualHooking.md#70-restoring-command-listbuffer-state)
 
 > **NOTE:**
 > DLSS-G is a unique case since it already has the marker provided by the existing API (SwapChain::Present) hence there is no need to call `slEvaluateFeature` to enable DLSS-G
@@ -1279,7 +1291,7 @@ else
 }
 ```
 
-### 2.13 HOW TO LOAD OR UNLOAD A FEATURE (ADVANCED)
+### 2.14 HOW TO LOAD OR UNLOAD A FEATURE (ADVANCED)
 
 All requested features are loaded by default. To explicitly unload a specific feature use the following method:
 
@@ -1328,7 +1340,7 @@ SL_API sl::Result slIsFeatureLoaded(sl::Feature feature, bool& loaded);
 > **IMPORTANT** 
 > Switching a feature on or off should not be confused with loading or unloading it. `slSetFeatureLoaded` is needed **ONLY in advanced scenarios** when, for example, multiple swap-chains are used and DLSS-G should be enabled just on one of them.
 
-### 2.14 SHUTDOWN
+### 2.15 SHUTDOWN
 
 To release the SDK instance and all resources allocated with it, use the following method:
 
@@ -1347,7 +1359,7 @@ SL_API sl::Result slShutdown();
 > If shutdown is called too early, any SL features which are enabled and running will stop functioning and the host application will fallback to the
 default implementation. For example, if DLSS is enabled and running and shutdown is called, the `sl.dlss` plugin will be unloaded, hence any `evaluate` or `slIsFeatureSupported` calls will return an error and the host application should fallback to the default implementation (for example TAAU)
 
-### 2.15 MULTIPLE SWAP CHAINS
+### 2.16 MULTIPLE SWAP CHAINS
 
 The current tagging API in Streamline is designed with a single swap chain in mind.  When a resource is tagged with a life-cycle of `eValidUntilPresent` there is no way to specify on which swap chain the Present() is.
 
@@ -1374,10 +1386,10 @@ SL SDK comes with several binaries which need to be distributed with your applic
 * sl.interposer.dll
 * sl.common.dll
 
-The remaining modules are optional depending on which features are enabled in your application. For example if DLSS/NRD are used, you need to include:
+The remaining modules are optional depending on which features are enabled in your application. For example if DLSS/NIS are used, you need to include:
 
 * sl.dlss.dll, nvngx_dlss.dll
-* sl.nrd.dll, nrd.dll
+* sl.nis.dll
 
 > **NOTE:**
 > If SL binaries are not installed next to the host executable, please make sure to specify the absolute paths to look for them using the `Preferences`
@@ -1430,10 +1442,10 @@ agsDriverExtensionsDX12_DestroyDevice(agsContext, m_Device12, nullptr);
 
 ### 5.2 SL AND THIRD PARTY OVERLAYS
 
-The following rules should be follwed in oder for 3rd party overlays to work correctly with SL:
+The following rules should be followed in order for 3rd party overlays to work correctly with SL:
 
-* Overlays in general **must not make assumptions about swap-chain and command queues, when DLSS-G is active there could be multiple command queues and multiple asynchonous presents.**
-* Overlays should intercept `IDXGIFactory::CreateSwapChainXXX` to obtain correct swap-chian and command queue used to present frames.
+* Overlays in general **must not make assumptions about swap-chain and command queues, when DLSS-G is active there could be multiple command queues and multiple asynchronous presents.**
+* Overlays should intercept `IDXGIFactory::CreateSwapChainXXX` to obtain correct swapchain and command queue used to present frames.
 * If integrated in engine, overlays should initialize before `slInit` is called
 * There is an optional flag `sl::PreferenceFlags::eUseDXGIFactoryProxy` which can be used to avoid injecting SL hooks in DXGI factory v-table, this might help resolve some issues with overlays.
 
@@ -1465,7 +1477,7 @@ else
 
 ### 5.4 CMAKE SUPPORT
 
-A `CMakeLists.txt` file is included for integrations using [CMake](https://cmake.org).  Uncompress the Streamline package (e.g. to `streamline`) and in one of your `CMakeLists.txt` add:
+A `CMakeLists.txt` file is included for integrations using [CMake](https://cmake.org). Uncompress the Streamline package (e.g. to `streamline`) and in one of your `CMakeLists.txt` add:
 ```
 add_directory(streamline)
 ```
@@ -1474,7 +1486,6 @@ It contains the following CMake Options:
 | Option Name | Description | Default |
 |--|--|--|
 | STREAMLINE_FEATURE_DLSS_SR | Include DLSS-SR dll | OFF
-| STREAMLINE_FEATURE_NRD | Include NRD dll | OFF
 | STREAMLINE_FEATURE_IMGUI | Include Imgui dll | OFF
 | STREAMLINE_FEATURE_REFLEX | Include Reflex dll | OFF
 | STREAMLINE_FEATURE_NIS | Include NIS dll | OFF
@@ -1484,7 +1495,7 @@ It contains the following CMake Options:
 6 EXCEPTION HANDLING
 ------------------------------------------------
 
-If an exception is thrown while executing SL code mini-dump will be writted in `ProgramData/NVIDIA/Streamline/$exe_name/$unique_id`. Exception which occur outside of SL code will continue to be captured by the host.
+If an exception is thrown while executing SL code mini-dump will be written to `ProgramData/NVIDIA/Streamline/$exe_name/$unique_id`. Exception which occur outside of SL code will continue to be captured by the host.
 
 7 SUPPORT
 ------------------------------------------------

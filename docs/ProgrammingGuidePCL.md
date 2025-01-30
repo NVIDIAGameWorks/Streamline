@@ -4,7 +4,7 @@ Streamline - PCL Stats
 
 >The focus of this guide is on using Streamline to integrate PCL (PC Latency) Stats into an application.
 
-Version 2.4.15
+Version 2.7.2
 =======
 
 The application should not explicitly check for GPU HW, vendor, and driver version.
@@ -109,7 +109,7 @@ if (SUCCEEDED(CreateDXGIFactory(__uuidof(IDXGIFactory), (void**)&factory)))
 ```
 
 > **IMPORTANT:**
-> **PCL Stats is supported on all GPU hardwares, vendors, and driver versions**. As long as `sl::kFeaturePCL` is supported, the application should always make the same `slPCLSetMarker` calls without any explicit GPU hardware, vendor, and driver version checks.
+> **PCL Stats is supported on all GPU hardwares, vendors, and driver versions**. As long as `sl::kFeaturePCL` is supported, the application should always make the same `slPCLSetMarker` calls without any explicit checks for user enablement, or GPU hardware/vendor/driver version.
 
 
 ### 3.0 ADD SL PCL STATS TO THE RENDERING PIPELINE
@@ -130,7 +130,7 @@ if (!isPCLSupported)
 // Here for example we will make the simulation code.
 //
 
-// Starting new frane, grab handle from SL
+// Starting new frame, grab handle from SL
 sl::FrameToken* currentFrame{};
 if(SL_FAILED(res, slGetNewFrameToken(&currentFrame))
 {

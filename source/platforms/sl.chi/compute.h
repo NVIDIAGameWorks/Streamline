@@ -26,6 +26,10 @@
 #include "include/sl_reflex.h"
 #include "source/core/sl.extra/extra.h"
 
+#if defined(SL_WINDOWS)
+#include <unknwn.h>
+#endif
+
 #if defined(SL_DEBUG)
 #define ASSERT_ONLY_CODE 1
 #endif
@@ -409,7 +413,6 @@ struct ICommandListContext
     virtual bool signalGPUFence(Fence fence, uint64_t syncValue) = 0;
     virtual bool signalGPUFenceAt(uint32_t index) = 0;
     virtual WaitStatus waitForCommandList(FlushType ft = FlushType::eDefault) = 0;
-    virtual uint64_t getCompletedValue(Fence fence) = 0;
     virtual bool didCommandListFinish(uint32_t index) = 0;
     virtual WaitStatus waitForCommandListToFinish(uint32_t index) = 0;
     virtual CommandList getCmdList() = 0;
@@ -421,6 +424,7 @@ struct ICommandListContext
     virtual void getFrameStats(SwapChain chain, void* frameStats) = 0;
     virtual void getLastPresentID(SwapChain chain, uint32_t& id) = 0;
     virtual void waitForVblank(SwapChain chain) = 0;
+    virtual void monitoringThreadTick() { assert(false); }
 };
 
 // HashedResource uses std::shared_ptr<> to keep track of references to the underlying
@@ -434,10 +438,10 @@ struct HashedResourceData
     uint64_t hash{};
     ResourceState state{};
     Resource resource{};
+    ICompute* m_pCompute{};
 private:
     HashedResourceData(const HashedResourceData&) = delete;
     void operator=(const HashedResourceData&) = delete;
-    ICompute* m_pCompute{};
     bool m_bOwnResource = false; // if true, we will call destroyResource() in destructor
     IUnknown* m_pNative = nullptr;
 };
@@ -463,6 +467,7 @@ struct HashedResource
     ResourceState getState() const { return m_p ? m_p->state : ResourceState::eUnknown; }
     uint64_t& accessHash() { return m_p ? m_p->hash : s_invalidHash; }
     void* getNative() const { return m_p ? m_p->resource->native : nullptr; }
+    ICompute* getCompute() const { return m_p ? m_p->m_pCompute : nullptr; }
 #if ASSERT_ONLY_CODE
     bool dbgIsCorrupted() const
     {
@@ -513,6 +518,12 @@ enum class VendorId : uint32_t
     eAMD = 0x1002,
     eIntel = 0x8086,
 };
+
+inline bool isVendorNvidia(VendorId id)
+{
+    return id == VendorId::eNVDA;
+}
+
 
 enum FenceFlags : uint32_t
 {
@@ -591,6 +602,8 @@ public:
     //! To trigger immediate release of ALL resources call collectGarbage(UINT_MAX) 
     virtual ComputeStatus destroyResource(Resource resource, uint32_t frameDelay = 3) = 0;
     virtual ComputeStatus destroy(std::function<void(void)> task, uint32_t frameDelay = 3) = 0;
+
+    virtual uint64_t getCompletedValue(Fence fence) = 0;
 
     virtual ComputeStatus createCommandQueue(CommandQueueType type, CommandQueue& queue, const char friendlyName[] = "", uint32_t index = 0) = 0;
     virtual ComputeStatus destroyCommandQueue(CommandQueue& queue) = 0;
@@ -681,6 +694,7 @@ public:
     virtual ComputeStatus setReflexMarker(PCLMarker marker, uint64_t frameId) = 0;
     virtual ComputeStatus notifyOutOfBandCommandQueue(CommandQueue queue, OutOfBandCommandQueueType type) = 0;
     virtual ComputeStatus setAsyncFrameMarker(CommandQueue queue, PCLMarker marker, uint64_t frameId) = 0;
+    virtual ComputeStatus setLatencyMarker(CommandQueue queue, PCLMarker marker, uint64_t frameId) = 0;
     
     // Sharing API
     virtual ComputeStatus fetchTranslatedResourceFromCache(ICompute* otherAPI, ResourceType type, Resource res, TranslatedResource& shared, const char friendlyName[] = "") = 0;
@@ -690,8 +704,11 @@ public:
     virtual ComputeStatus createResourcePool(IResourcePool** pool, const char* vramSegment) = 0;
     virtual ComputeStatus destroyResourcePool(IResourcePool* pool) = 0;
 
-    // OFA
+    // OFA, vulkan only
     virtual ComputeStatus isNativeOpticalFlowSupported() = 0;
+
+    // check if an extension is available, vulkan only
+    virtual ComputeStatus isDeviceExtensionSupported(const char* extension, uint32_t version) = 0;
 };
 
 ICompute* getD3D11();

@@ -63,11 +63,7 @@ if (config.contains(#a))                                                        
                 auto jsonText = file::read(interposerJSONFile.c_str());
                 if (!jsonText.empty())
                 {
-                    // safety null in case the JSON string is not null-terminated (found by AppVerif)
-                    jsonText.push_back(0);
-                    std::istringstream stream((const char*)jsonText.data());
-                    json config;
-                    stream >> config;
+                    json config = json::parse(jsonText.begin(), jsonText.end(), nullptr, /* allow exceptions: */ true, /* ignore comments: */ true);
                     
                     SL_EXTRACT_CONFIG_FLAG(enableInterposer);
                     SL_EXTRACT_CONFIG_FLAG(useDXGIProxy);

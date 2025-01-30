@@ -27,8 +27,10 @@
 
 #include "include/sl_hooks.h"
 #include "source/core/sl.api/internal.h"
+
 #include "external/json/include/nlohmann/json.hpp"
 using json = nlohmann::json;
+
 
 struct ID3D12Device;
 struct ID3D11Device;
@@ -79,20 +81,29 @@ struct FeatureContext
 
 struct IPluginManager
 {
+
+
     virtual Result loadPlugins() = 0;
-    virtual void unloadPlugins() = 0;
+    virtual Result unloadPlugins() = 0;
+
+    virtual Result setHostSDKVersion(uint64_t sdkVersion) = 0;
+
+    virtual void setApplicationId(int appId) = 0;
+
+    virtual bool isInitialized() const = 0;
+    virtual bool arePluginsLoaded() const = 0;
+
+    virtual const Version& getHostSDKVersion() = 0;
+
     virtual Result initializePlugins() = 0;
 
     virtual const HookList& getBeforeHooks(FunctionHookID functionHookID) = 0;
     virtual const HookList& getAfterHooks(FunctionHookID functionHookID) = 0;
     virtual const HookList& getBeforeHooksWithoutLazyInit(FunctionHookID functionHookID) = 0;
     virtual const HookList& getAfterHooksWithoutLazyInit(FunctionHookID functionHookID) = 0;
-
-    virtual Result setHostSDKVersion(uint64_t sdkVersion) = 0;
     virtual Result setFeatureEnabled(Feature feature, bool value) = 0;
     virtual void setPreferences(const Preferences& pref) = 0;
     virtual const Preferences& getPreferences() const = 0;
-    virtual void setApplicationId(int appId) = 0;
     virtual void setD3D12Device(ID3D12Device* device) = 0;
     virtual void setD3D11Device(ID3D11Device* device) = 0;
     virtual void setVulkanDevice(VkPhysicalDevice physicalDevice, VkDevice device, VkInstance instance) = 0;
@@ -100,14 +111,8 @@ struct IPluginManager
     virtual ID3D12Device* getD3D12Device() const = 0;
     virtual ID3D11Device* getD3D11Device() const = 0;
     virtual VkDevice getVulkanDevice() const = 0;
-
     virtual bool isFeatureEnabled(Feature feature) const = 0;
     virtual bool isProxyNeeded(const char* className) = 0;
-    virtual bool isInitialized() const = 0;
-    virtual bool arePluginsLoaded() const = 0;
-
-    virtual const Version& getHostSDKVersion() = 0;
-
     virtual const FeatureContext* getFeatureContext(Feature feature) = 0;
 
     virtual bool getExternalFeatureConfig(Feature feature, std::string& configAsText) = 0;

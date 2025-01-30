@@ -37,7 +37,7 @@
 #include "source/core/sl.extra/extra.h"
 #include "source/core/sl.param/parameters.h"
 #include "external/json/include/nlohmann/json.hpp"
-#include "external/nvapi/nvapi.h"
+#include "nvapi.h"
 
 #include "source/platforms/sl.chi/vulkan.h"
 #include "source/plugins/sl.common/commonInterface.h"
@@ -348,12 +348,17 @@ Result dlssBeginEvent(chi::CommandList pCmdList, const common::EventData& data, 
     }
 
     // Must check here, before we overwrite viewport.consts
-    bool modeOrSizeChanged = consts->mode != viewport.consts.mode || consts->outputWidth != viewport.consts.outputWidth || consts->outputHeight != viewport.consts.outputHeight;
+    bool modeOrSizeOrPresetChanged = consts->mode != viewport.consts.mode || consts->outputWidth != viewport.consts.outputWidth || consts->outputHeight != viewport.consts.outputHeight
+        || consts->dlaaPreset != viewport.consts.dlaaPreset
+        || consts->qualityPreset  != viewport.consts.qualityPreset 
+        || consts->balancedPreset  != viewport.consts.balancedPreset 
+        || consts->performancePreset  != viewport.consts.performancePreset 
+        || consts->ultraPerformancePreset  != viewport.consts.ultraPerformancePreset;
 
     ctx.viewport = &viewport;
     viewport.consts = *consts;  // mandatory
 
-    if(!viewport.handle || modeOrSizeChanged)
+    if(!viewport.handle || modeOrSizeOrPresetChanged)
     {
         ctx.commonConsts->reset = Boolean::eTrue;
         ctx.cachedStates.clear();
@@ -1116,12 +1121,6 @@ internal::shared::Status getSharedData(BaseStructure* requestedData, const BaseS
 
 SL_EXPORT void *slGetPluginFunction(const char *functionName)
 {
-    // Forward declarations
-    bool slOnPluginLoad(sl::param::IParameters* params, const char* loaderJSON, const char** pluginJSON);
-
-    //! Redirect to OTA if any
-    SL_EXPORT_OTA;
-
     // Core API
     SL_EXPORT_FUNCTION(slOnPluginLoad);
     SL_EXPORT_FUNCTION(slOnPluginShutdown);

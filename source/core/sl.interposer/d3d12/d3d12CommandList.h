@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <map>
 #include "source/core/sl.interposer/d3d12/d3d12.h"
 

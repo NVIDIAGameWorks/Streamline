@@ -1,3 +1,64 @@
+======== Release 2.7.2 Entries ========
+
+    * Added support for DLSS Ray Reconstruction Transformer Model
+      Available as `sl::DLSSDPreset::ePresetD`.
+
+    * Deprecated support for the following `sl::DLSSDPreset` values:
+      - `sl::DLSSDPreset::ePresetA`
+      - `sl::DLSSDPreset::ePresetB`
+      - `sl::DLSSDPreset::ePresetC`
+
+    * Added support for DLSS Multi-Frame Generation.
+      See section 6.1 "ENABLING MULTI-FRAME GENERATION" in
+      `ProgrammingGuideDLSS_G.md` for more information.
+
+    * Added support for DLSS Super Resolution Transformer Model (BETA)
+      Available as `sl::DLSSPreset::ePresetJ`.
+
+    * Removed the `sl.nrd` plugin, which was deprecated in v2.4.10.
+
+    * Migrated the Reflex SDK for Vulkan applications from an externally hosted
+      Packman package, into Streamline SDK directly under the
+      `external/reflex-sdk-vk` directory.
+
+    * Added Reflex Verification Tools under the `utils/reflex` directory.
+
+    * Added a new enumeration `sl::DLSSGQueueParallelismMode` for controlling
+      GPU work overlap. See section 18.0 "DLSS-G INTEGRATION CHECKLIST DETAILS"
+      in `ProgrammingGuideDLSS_G.md` for more information.
+
+    * Added two new `sl::DLSSGState` fields:
+      - `inputsProcessingCompletionFence`
+      - `inputsProcessingCompletionFenceValue`
+      For guarding tagged resource use by `sl.dlssg`. See section 15.1 "HOW TO
+      SYNCHRONIZE THE HOST APP DLSS-G INPUTS AND STERAMLINE IF REQUIRED" in
+      `ProgrammingGuideDLSS_G.md` for more information.
+
+    * Added a new `sl::DLSSGOptions` field `queueParallelismMode`, see the above
+      changelog entry on `sl::DLSSGQueueParallelismMode for more information.
+
+    * Added support for overriding Streamline's logging behavior via environment
+      variables and Windows registry keys. See the "Logging" section in
+      `README.md` for more information.
+
+    * Added a new helper function `getDLSSGModeAsStr()`.
+
+    * Fixed a bug where `sl.dlss` would not propagate changes to the
+      `sl::DLSSPreset` fields in `sl::DLSSOptions` structure.
+
+    * Fixed a bug where `sl.interposer` could attempt to add both
+      `VkPhysicalDeviceVulkan12Features` and `VkPhysicalDeviceVulkan13Features`
+      to the same pNext chain.
+
+    * Fixed a bug where `sl.interposer` would attempt to enable
+      `VK_EXT_buffer_device_address` simultaneously with
+      `VK_KHR_buffer_device_address`.
+
+    * Updated documentation `sl::kBufferTypeBidirectionalDistortionField` to
+      include a HLSL example of an iterative Newton-Raphson method for inverse
+      distortion. See section 5.0 "TAG ALL REQUIRED RESOURCES" in
+      `ProgrammingGuideDLSS_G.md` for more information.
+
 ======== Release 2.4.15 Entries ========
 
     * Added support for DirectSR with a new plugin: `sl.directsr`.

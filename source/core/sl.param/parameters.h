@@ -93,15 +93,6 @@ constexpr const char* kCurrentFrame = "sl.param.dlss.frame";
 
 }
 
-namespace nrd
-{
-
-constexpr const char* kCurrentFrame = "sl.param.nrd.frame";
-constexpr const char* kMVecBuffer = "sl.param.nrd.mvec";
-constexpr const char* kViewZBuffer = "sl.param.nrd.viewZ";
-
-}
-
 namespace nis
 {
 

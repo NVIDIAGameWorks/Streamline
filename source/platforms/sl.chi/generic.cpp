@@ -41,7 +41,7 @@ struct IDXGISwapChain;
 #include "source/core/sl.extra/extra.h"
 #include "source/core/sl.param/parameters.h"
 #include "source/platforms/sl.chi/generic.h"
-#include "external/nvapi/nvapi.h"
+#include "nvapi.h"
 
 // {B5504F36-CB88-4B2D-AE64-9CAE29E23CA9}
 static const GUID sResourceTrackGUID = { 0xb5504f36, 0xcb88, 0x4b2d, { 0xae, 0x64, 0x9c, 0xae, 0x29, 0xe2, 0x3c, 0xa9 } };
@@ -895,19 +895,21 @@ ComputeStatus Generic::getResourceFootprint(Resource resource, ResourceFootprint
     getFormat(resource->nativeFormat, format);
     getBytesPerPixel(format, pixelSizeInBytes);
 
+    ResourceDescription desc;
+    getResourceDescription(resource, desc);
+
     // D3D12 has special function for this, here we just provide an estimate which should be close enough for regular resolutions
-
     // Note that resource that we use have a single mip level
-    assert(resource->mipLevels == 1);
+    assert(desc.mips == 1);
 
-    footprint.depth = resource->arrayLayers;
-    footprint.width = resource->width;
-    footprint.height = resource->height;
+    footprint.depth = desc.depth;
+    footprint.width = desc.width;
+    footprint.height = desc.height;
     footprint.offset = 0;
-    footprint.rowPitch = resource->width * (uint32_t)pixelSizeInBytes;
-    footprint.numRows = resource->height;
-    footprint.rowSizeInBytes = resource->height * pixelSizeInBytes;
-    footprint.totalBytes = resource->arrayLayers * resource->width * resource->height * pixelSizeInBytes;
+    footprint.rowPitch = desc.width * (uint32_t)pixelSizeInBytes;
+    footprint.numRows = desc.height;
+    footprint.rowSizeInBytes = desc.height * pixelSizeInBytes;
+    footprint.totalBytes = desc.depth * desc.width * desc.height * pixelSizeInBytes;
     footprint.format = format;
 
     return ComputeStatus::eOk;

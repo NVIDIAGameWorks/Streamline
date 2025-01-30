@@ -37,7 +37,7 @@ enum class PCLHotKey: int16_t
 };
 
 // {cfa32f9b-023c-420e-9056-6832b74f89b4}
-SL_STRUCT(PCLOptions, StructType({ 0xcfa32f9b, 0x023c, 0x420e, { 0x90, 0x56, 0x68, 0x32, 0xb7, 0x4f, 0x89, 0xb4 } }), kStructVersion1)
+SL_STRUCT_BEGIN(PCLOptions, StructType({ 0xcfa32f9b, 0x023c, 0x420e, { 0x90, 0x56, 0x68, 0x32, 0xb7, 0x4f, 0x89, 0xb4 } }), kStructVersion1)
     //! Specifies the hot-key which should be used instead of custom message for PC latency marker
     //! Possible values: VK_F13, VK_F14, VK_F15
     PCLHotKey virtualKey = PCLHotKey::eUsePingMessage;
@@ -45,15 +45,15 @@ SL_STRUCT(PCLOptions, StructType({ 0xcfa32f9b, 0x023c, 0x420e, { 0x90, 0x56, 0x6
     uint32_t idThread = 0;
 
     //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
-};
+SL_STRUCT_END()
 
 // {cfa32f9b-023c-420e-9056-6832b74f89b5}
-SL_STRUCT(PCLState, StructType({ 0xcfa32f9b, 0x023c, 0x420e, { 0x90, 0x56, 0x68, 0x32, 0xb7, 0x4f, 0x89, 0xb5 } }), kStructVersion1)
+SL_STRUCT_BEGIN(PCLState, StructType({ 0xcfa32f9b, 0x023c, 0x420e, { 0x90, 0x56, 0x68, 0x32, 0xb7, 0x4f, 0x89, 0xb5 } }), kStructVersion1)
     //! Specifies PCL Windows message id (if PCLOptions::virtualKey is 0)
     uint32_t statsWindowMessage;
 
     //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
-};
+SL_STRUCT_END()
 
 enum class PCLMarker: uint32_t
 {
@@ -72,6 +72,11 @@ enum class PCLMarker: uint32_t
     eOutOfBandPresentEnd = 12,
     eControllerInputSample = 13,
     eDeltaTCalculation = 14,
+    eLateWarpPresentStart = 15,
+    eLateWarpPresentEnd = 16,
+    eCameraConstructed = 17,
+    eLateWarpRenderSubmitStart = 18,
+    eLateWarpRenderSubmitEnd = 19,
 
     eMaximum
 };
@@ -91,12 +96,12 @@ constexpr auto to_underlying(T value)
 #endif
 
 // {cfa32f9b-023c-420e-9056-6832b74f89b6}
-SL_STRUCT(PCLHelper, StructType({ 0xcfa32f9b, 0x023c, 0x420e, { 0x90, 0x56, 0x68, 0x32, 0xb7, 0x4f, 0x89, 0xb6 } }), kStructVersion1)
+SL_STRUCT_BEGIN(PCLHelper, StructType({ 0xcfa32f9b, 0x023c, 0x420e, { 0x90, 0x56, 0x68, 0x32, 0xb7, 0x4f, 0x89, 0xb6 } }), kStructVersion1)
     PCLHelper(PCLMarker m) : BaseStructure(PCLHelper::s_structType, kStructVersion1), marker(m) {};
     PCLMarker get() const { return marker; };
 private:
     PCLMarker marker;
-};
+SL_STRUCT_END()
 
 
 }

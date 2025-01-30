@@ -100,7 +100,10 @@ To modify NGX logging, place `sl.common.json` file (located in `./scripts/`) in 
 Log levels are `off` (0), `on` (1) and `verbose` (2). Default values come from the `sl::Preferences` structure set by the app.
 
 > **NOTE:**
+>
 > NGX logging gets redirected to SL so NGX log files will NOT be generated.
+>
+> Logging overrides set via this JSON configuration will override any Streamline registry or environment variable logging overrides that are currently set.
 
 ## How to override feature allow list
 

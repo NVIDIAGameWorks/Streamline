@@ -40,6 +40,7 @@
 #include "include/sl_hooks.h"
 #include "internal.h"
 #include "source/core/sl.exception/exception.h"
+#include "source/core/sl.extra/extra.h"
 #include "source/core/sl.log/log.h"
 #include "source/core/sl.file/file.h"
 #include "source/core/sl.param/parameters.h"
@@ -49,6 +50,120 @@
 #include "include/sl_helpers_vk.h"
 
 using namespace sl;
+
+namespace {
+
+LogLevel ToLogLevel(int logLevel) {
+    return static_cast<LogLevel>(std::clamp(logLevel, 0, static_cast<int>(LogLevel::eCount) - 1));
+}
+
+void ConfigureLogOverridesFromInterposerConfig(log::ILog* log)
+{
+#ifndef SL_PRODUCTION
+    if (sl::interposer::getInterface()->isEnabled() &&
+       !sl::interposer::getInterface()->getConfigPath().empty())
+    {
+        auto config = sl::interposer::getInterface()->getConfig();
+        log->enableConsole(config.showConsole);
+        if (!config.logPath.empty())
+        {
+            log->setLogPath(extra::toWStr(config.logPath).c_str());
+        }
+        log->setLogLevel(ToLogLevel(config.logLevel));
+        log->setLogMessageDelay(config.logMessageDelayMs);
+        SL_LOG_HINT("Overriding interposer settings with values from %S\\sl.interposer.json",
+                    sl::interposer::getInterface()->getConfigPath().c_str());
+    }
+#endif
+}
+
+void ConfigureLogOverridesFromRegistry(log::ILog* log)
+{
+#ifdef SL_WINDOWS
+    constexpr const wchar_t* kRegSubKey = L"SOFTWARE\\NVIDIA Corporation\\Global\\Streamline";
+    constexpr const wchar_t* kEnableConsoleValue = L"EnableConsoleLogging";
+    constexpr const wchar_t* kLogLevelValue = L"LogLevel";
+    constexpr const wchar_t* kLogPathValue = L"LogPath";
+    constexpr const wchar_t* kLogNameValue = L"LogName";
+
+    bool settingsOverridden = false;
+
+    DWORD registryValue;
+    if (extra::getRegistryDword(kRegSubKey, kEnableConsoleValue, &registryValue))
+    {
+        log->enableConsole(registryValue != 0);
+        settingsOverridden = true;
+    }
+    if (extra::getRegistryDword(kRegSubKey, kLogLevelValue, &registryValue))
+    {
+        log->setLogLevel(ToLogLevel(registryValue));
+        settingsOverridden = true;
+    }
+
+    WCHAR registryString[MAX_PATH];
+    if (extra::getRegistryString(kRegSubKey, kLogPathValue, registryString, MAX_PATH))
+    {
+        log->setLogPath(registryString);
+        settingsOverridden = true;
+    }
+    if (extra::getRegistryString(kRegSubKey, kLogNameValue, registryString, MAX_PATH))
+    {
+        log->setLogName(registryString);
+        settingsOverridden = true;
+    }
+
+    if (settingsOverridden)
+    {
+        SL_LOG_HINT("Overriding logging settings from registry keys");
+    }
+#endif
+}
+
+void ConfigureLogOverridesFromEnvironment(log::ILog* log)
+{
+    constexpr const char* kEnableConsoleKey = "SL_ENABLE_CONSOLE_LOGGING";
+    constexpr const char* kLogLevelKey = "SL_LOG_LEVEL";
+    constexpr const char* kLogPathKey = "SL_LOG_PATH";
+    constexpr const char* kLogNameKey = "SL_LOG_NAME";
+    std::string value;
+    bool settingsOverridden = false;
+
+    if (extra::getEnvVar(kEnableConsoleKey, value)) {
+        log->enableConsole(std::atoi(value.c_str()) != 0);
+        settingsOverridden = true;
+    }
+    if (extra::getEnvVar(kLogLevelKey, value)) {
+        log->setLogLevel(ToLogLevel(std::atoi(value.c_str())));
+        settingsOverridden = true;
+    }
+    if (extra::getEnvVar(kLogPathKey, value)) {
+        log->setLogPath(extra::toWStr(value).c_str());
+        settingsOverridden = true;
+    }
+    if (extra::getEnvVar(kLogNameKey, value)) {
+        log->setLogName(extra::toWStr(value).c_str());
+        settingsOverridden = true;
+    }
+
+    if (settingsOverridden)
+    {
+        SL_LOG_HINT("Overriding logging settings from environment variables");
+    }
+}
+
+void ConfigureLogOverrides(log::ILog* log)
+{
+    // The order of precedence for log overrides is:
+    // 1) JSON interposer configuration
+    // 2) Environment variables
+    // 3) Windows registry
+
+    ConfigureLogOverridesFromRegistry(log);
+    ConfigureLogOverridesFromEnvironment(log);
+    ConfigureLogOverridesFromInterposerConfig(log);
+}
+
+} // namespace
 
 //! API
 
@@ -66,12 +181,17 @@ inline sl::Result slValidateState()
 inline sl::Result slValidateFeatureContext(sl::Feature f, const sl::plugin_manager::FeatureContext*& ctx)
 {
     ctx = plugin_manager::getInterface()->getFeatureContext(f);
-    if (!ctx)
+    std::string jsonConfig{};
+    if (!ctx || !plugin_manager::getInterface()->getExternalFeatureConfig(f, jsonConfig))
     {
         SL_LOG_ERROR("'%s' is missing.", getFeatureAsStr(f));
         return Result::eErrorFeatureMissing;
     }
-    if (!ctx->supportedAdapters)
+    // Any JSON parser can be used here
+    std::istringstream stream(jsonConfig);
+    nlohmann::json extCfg;
+    stream >> extCfg;
+    if (extCfg.contains("/feature/supported"_json_pointer) && !extCfg["feature"]["supported"])
     {
         SL_LOG_ERROR("'%s' is not supported.", getFeatureAsStr(f));
         return Result::eErrorFeatureNotSupported;
@@ -88,16 +208,12 @@ struct FrameHandleImplementation : public FrameToken
     std::atomic<uint32_t> counter{};
 };
 
-//! Normally host would work with no more than 2 frames at the same time but sl.reflex sometimes 
-//! needs to send markers for previous and next frame so the total number of inflight frames can be higher
-constexpr uint32_t kMaxNumFrameHandles = 6;
-
 struct APIContext
 {
     std::mutex mtxFrameHandle{};
     uint32_t frameCounter = 0;
     uint32_t frameHandleIndex = 0;
-    FrameHandleImplementation frameHandles[kMaxNumFrameHandles];
+    FrameHandleImplementation frameHandles[MAX_FRAMES_IN_FLIGHT];
 
     std::map<Feature, std::pair<size_t, BufferType*>> requiredTags;
     std::map<Feature, std::pair<size_t, char**>> vkInstanceExtensions;
@@ -108,7 +224,6 @@ struct APIContext
 };
 
 APIContext s_ctx;
-
 sl::Result slInit(const Preferences &pref, uint64_t sdkVersion)
 {
     //! IMPORTANT:
@@ -126,8 +241,10 @@ sl::Result slInit(const Preferences &pref, uint64_t sdkVersion)
         log->enableConsole(pref.showConsole);
         log->setLogLevel(pref.logLevel);
         log->setLogPath(pref.pathToLogsAndData);
-        log->setLogName(L"sl.log");
         log->setLogCallback((void*)pref.logMessageCallback);
+        log->setLogName(L"sl.log");
+
+        ConfigureLogOverrides(log);
 
         if (sl::interposer::hasInterface())
         {
@@ -146,15 +263,6 @@ sl::Result slInit(const Preferences &pref, uint64_t sdkVersion)
             if (!sl::interposer::getInterface()->getConfigPath().empty())
             {
                 auto config = sl::interposer::getInterface()->getConfig();
-                log->enableConsole(config.showConsole);
-                if (!config.logPath.empty())
-                {
-                    log->setLogPath(extra::toWStr(config.logPath).c_str());
-                }
-                auto level = std::clamp(config.logLevel, 0U, 2U);
-                log->setLogLevel((LogLevel)level);
-                log->setLogMessageDelay(config.logMessageDelayMs);
-                SL_LOG_HINT("Overriding interposer settings with values from %S\\sl.interposer.json", sl::interposer::getInterface()->getConfigPath().c_str());
                 if (config.waitForDebugger)
                 {
                     SL_LOG_INFO("Waiting for debugger to attach ...");
@@ -190,7 +298,7 @@ sl::Result slInit(const Preferences &pref, uint64_t sdkVersion)
                 SL_LOG_ERROR( "slInit must be called before any DXGI/D3D12/D3D11/Vulkan APIs are invoked");
                 return Result::eErrorInitNotCalled;
             }
-            
+
             if (SL_FAILED(result, manager->setHostSDKVersion(sdkVersion)))
             {
                 return result;
@@ -346,12 +454,12 @@ Result slEvaluateFeature(sl::Feature feature, const sl::FrameToken& frame, const
 {
     SL_EXCEPTION_HANDLE_START;
     SL_CHECK(slValidateState());
-    const sl::plugin_manager::FeatureContext* ctx;
     //! First check if plugin provides an override 
     //!
     //! This allows flexibility and separation from sl.common if needed.
     //!
     //! NOTE: This affects only new plugins which actually export slEval
+    const sl::plugin_manager::FeatureContext* ctx;
     SL_CHECK(slValidateFeatureContext(feature, ctx));
     if (ctx->evaluate == nullptr)
     {
@@ -645,19 +753,23 @@ Result slIsFeatureSupported(sl::Feature feature, const sl::AdapterInfo& adapterI
         //! 
         SL_CHECK(slValidateState());
 
+        auto ctx = plugin_manager::getInterface()->getFeatureContext(feature);
         std::string jsonConfig{};
-        if (!plugin_manager::getInterface()->getExternalFeatureConfig(feature, jsonConfig))
+        if (!ctx || !plugin_manager::getInterface()->getExternalFeatureConfig(feature, jsonConfig))
         {
             return Result::eErrorFeatureMissing;
+        }
+
+        // Check if the feature is supported on any available adapters
+        if (!ctx->supportedAdapters)
+        {
+            return Result::eErrorNoSupportedAdapterFound;
         }
 
         // Any JSON parser can be used here
         std::istringstream stream(jsonConfig);
         nlohmann::json cfg;
         stream >> cfg;
-
-        bool osSupported = cfg["os"]["supported"];
-        bool driverSupported = cfg["driver"]["supported"];
 
         if (cfg.contains("hws"))
         {
@@ -670,6 +782,8 @@ Result slIsFeatureSupported(sl::Feature feature, const sl::AdapterInfo& adapterI
             }
         }
 
+        bool osSupported = cfg["os"]["supported"];
+        bool driverSupported = cfg["driver"]["supported"];
         // Handle errors at the end so we can fill the structure with all the information needed
         if (!osSupported)
         {
@@ -711,19 +825,6 @@ Result slIsFeatureSupported(sl::Feature feature, const sl::AdapterInfo& adapterI
             default:
                 SL_LOG_ERROR("Unexpected renderAPI value passed to slInit!");
                 return Result::eErrorInvalidParameter;
-        }
-
-        // Check if the feature is supported on any available adapters
-        bool featureSupported = cfg["feature"]["supported"];
-        if (!featureSupported)
-        {
-            return Result::eErrorNoSupportedAdapterFound;
-        }
-
-        auto ctx = plugin_manager::getInterface()->getFeatureContext(feature);
-        if (!ctx)
-        {
-            return Result::eErrorFeatureMissing;
         }
 
         // Not having 'isSupported' function indicates that plugin is supported on all adapters by design.
@@ -1012,7 +1113,7 @@ Result slGetNewFrameToken(FrameToken*& handle, const uint32_t* frameIndex)
         //! Host can request multiple frame tokens with an identical frame index within the same frame, this is totally valid.
         if (!frameIndex || (*frameIndex != s_ctx.frameHandles[s_ctx.frameHandleIndex].counter.load()))
         {
-            s_ctx.frameHandleIndex = (s_ctx.frameHandleIndex + 1) % kMaxNumFrameHandles;
+            s_ctx.frameHandleIndex = (s_ctx.frameHandleIndex + 1) % MAX_FRAMES_IN_FLIGHT;
             s_ctx.frameHandles[s_ctx.frameHandleIndex].counter.store(frameIndex ? *frameIndex : ++s_ctx.frameCounter);
         }
 
@@ -1023,3 +1124,4 @@ Result slGetNewFrameToken(FrameToken*& handle, const uint32_t* frameIndex)
     return getFrame(handle, frameIndex);
     SL_EXCEPTION_HANDLE_END_RETURN(Result::eErrorExceptionHandler)
 }
+

@@ -31,6 +31,8 @@ SL_EXPORT BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID);
 namespace sl
 {
 
+bool slOnPluginLoad(sl::param::IParameters *params, const char* loaderJSON, const char **pluginJSON);
+
 namespace api
 {
 
@@ -39,23 +41,25 @@ namespace api
 //! NOTE: Instance of this context is valid for the entire life-cycle of a plugin since it cannot
 //! be destroyed anywhere else other than in DLLMain when plugin is detached from the process.
 //! 
-#define SL_PLUGIN_CONTEXT_CREATE_DESTROY(NAME)                                  \
-protected:                                                                      \
-    NAME() {onCreateContext();};                                                \
-    /* Called on exit from DLL */                                               \
-    ~NAME() {onDestroyContext();};                                              \
-    friend BOOL APIENTRY ::DllMain(HMODULE hModule, DWORD fdwReason, LPVOID);   \
-public:                                                                         \
+#define SL_PLUGIN_CONTEXT_CREATE_DESTROY(NAME)                                                                         \
+protected:                                                                                                             \
+    NAME() {onCreateContext();};                                                                                       \
+    /* Called on exit from DLL */                                                                                      \
+    ~NAME() {onDestroyContext();};                                                                                     \
+    friend BOOL APIENTRY ::DllMain(HMODULE hModule, DWORD fdwReason, LPVOID);                                          \
+    friend bool sl::slOnPluginLoad(sl::param::IParameters *params, const char *loaderJSON, const char **pluginJSON);   \
+public:                                                                                                                \
     NAME(const NAME& rhs) = delete;
 
 //! Plugin specific context, same as above except constructor is not auto-defined
 //! 
-#define SL_PLUGIN_CONTEXT_DESTROY_ONLY(NAME)                                    \
-protected:                                                                      \
-    /* Called on exit from DLL */                                               \
-    ~NAME() {onDestroyContext();};                                              \
-    friend BOOL APIENTRY ::DllMain(HMODULE hModule, DWORD fdwReason, LPVOID);   \
-public:                                                                         \
+#define SL_PLUGIN_CONTEXT_DESTROY_ONLY(NAME)                                                                           \
+protected:                                                                                                             \
+    /* Called on exit from DLL */                                                                                      \
+    ~NAME() {onDestroyContext();};                                                                                     \
+    friend BOOL APIENTRY ::DllMain(HMODULE hModule, DWORD fdwReason, LPVOID);                                          \
+    friend bool sl::slOnPluginLoad(sl::param::IParameters *params, const char *loaderJSON, const char **pluginJSON);   \
+public:                                                                                                                \
     NAME(const NAME& rhs) = delete;
 
 //! Generic context, same across all plugins
@@ -70,7 +74,6 @@ class Context
         Version _apiVersion,
         void* _device,
         sl::param::IParameters* _parameters,
-        PFuncGetPluginFunction* _getPluginFunction,
         void* _pluginConfig,
         void* _loaderConfig,
         void* _extConfig)
@@ -80,7 +83,6 @@ class Context
         apiVersion = _apiVersion;
         device = _device;
         parameters = _parameters;
-        getPluginFunction = _getPluginFunction;
         pluginConfig = _pluginConfig;
         loaderConfig = _loaderConfig;
         extConfig = _extConfig;
@@ -106,7 +108,6 @@ class Context
     Version apiVersion{};
     void *device{};
     sl::param::IParameters *parameters{};
-    PFuncGetPluginFunction *getPluginFunction{};
     void* pluginConfig{};
     void* loaderConfig{};
     void* extConfig{};
@@ -133,6 +134,7 @@ namespace PLUGIN_NAMESPACE                                                      
     /* Created on DLL attached and destroyed on DLL detach from process */                   \
     static PLUGIN_CTX* s_ctx{};                                                              \
     PLUGIN_CTX* getContext() { return s_ctx; }                                               \
+    static bool s_init = false;                                                              \
 }
 
 //! Core definitions, each plugin must use this define and specify versions
@@ -151,12 +153,17 @@ SL_PLUGIN_CONTEXT_DEFINE(PLUGIN_NAMESPACE, PLUGIN_CTX)                          
                                                                                                            \
 bool slOnPluginLoad(sl::param::IParameters *params, const char* loaderJSON, const char **pluginJSON)       \
 {                                                                                                          \
-    static bool s_init = false;                                                                            \
-    if(!s_init)                                                                                            \
+    if(!sl::PLUGIN_NAMESPACE::s_init)                                                                      \
     {                                                                                                      \
+        sl::api::s_ctx = new sl::api::Context(N, sl::V1, sl::V2, nullptr, nullptr,                         \
+                                    new json, new json, new json);                                         \
+        sl::PLUGIN_NAMESPACE::s_ctx = new sl::PLUGIN_NAMESPACE::PLUGIN_CTX();                              \
         api::s_ctx->parameters = params;                                                                   \
-        s_init = true;                                                                                     \
-        plugin::onLoad(api::getContext(), loaderJSON, JSON);                                               \
+        if (!plugin::onLoad(api::getContext(), loaderJSON, JSON))                                          \
+        {                                                                                                  \
+            return false;                                                                                  \
+        }                                                                                                  \
+        sl::PLUGIN_NAMESPACE::s_init = true;                                                               \
         json& config = *(json*)api::getContext()->pluginConfig;                                            \
         UPDATE_JSON_CONFIG(config);                                                                        \
         api::s_ctx->pluginConfigStr = config.dump();                                                       \
@@ -167,22 +174,21 @@ bool slOnPluginLoad(sl::param::IParameters *params, const char* loaderJSON, cons
 }                                                                                                          \
                                                                                                            \
 }  /* namespace sl */                                                                                      \
-                                                                                                           \
 /* Always in global namespace */                                                                           \
 SL_EXPORT BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)                                  \
 {                                                                                                          \
     switch (fdwReason)                                                                                     \
     {                                                                                                      \
         case DLL_PROCESS_ATTACH:                                                                           \
-            sl::api::s_ctx = new sl::api::Context(N, sl::V1, sl::V2, nullptr, nullptr, nullptr,            \
-                                        new json, new json, new json);                                     \
-            sl::PLUGIN_NAMESPACE::s_ctx = new sl::PLUGIN_NAMESPACE::PLUGIN_CTX();                          \
             break;                                                                                         \
         case DLL_THREAD_ATTACH:                                                                            \
             break;                                                                                         \
         case DLL_THREAD_DETACH:                                                                            \
             break;                                                                                         \
         case DLL_PROCESS_DETACH:                                                                           \
+            if (!sl::PLUGIN_NAMESPACE::s_init) {                                                           \
+                break; /* if slOnPluginLoad() was never called, no cleanup */                              \
+            }                                                                                              \
             delete sl::api::s_ctx;                                                                         \
             delete sl::PLUGIN_NAMESPACE::s_ctx;                                                            \
             sl::api::s_ctx = {};                                                                           \
@@ -216,12 +222,6 @@ if (!strcmp(functionName, #fun))\
     return fun;\
 }
 
- #define SL_EXPORT_OTA                                         \
-if (api::getContext()->getPluginFunction)                      \
-{                                                              \
-    return api::getContext()->getPluginFunction(functionName); \
-}
-
 enum StartupResult
 {
     eStartupResultOK,
@@ -230,7 +230,7 @@ enum StartupResult
 };
 
 //! Common plugin startup/shutdown code
-void onLoad(api::Context *ctx, const char* loaderJSON, const char* embeddedJSON);
+bool onLoad(api::Context *ctx, const char* loaderJSON, const char* embeddedJSON);
 StartupResult onStartup(api::Context *ctx, const char* jsonConfig);
 void onShutdown(api::Context *ctx);
 

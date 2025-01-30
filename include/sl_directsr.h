@@ -52,7 +52,7 @@ enum class DirectSRVariantFlags : uint32_t
 };
 
 // {1AD87504-774E-4BF3-9633-A44D1F7F9CB8}
-SL_STRUCT(DirectSROptions, StructType({ 0x1ad87504, 0x774e, 0x4bf3, { 0x96, 0x33, 0xa4, 0x4d, 0x1f, 0x7f, 0x9c, 0xb8 } }), kStructVersion1)
+SL_STRUCT_BEGIN(DirectSROptions, StructType({ 0x1ad87504, 0x774e, 0x4bf3, { 0x96, 0x33, 0xa4, 0x4d, 0x1f, 0x7f, 0x9c, 0xb8 } }), kStructVersion1)
     // DirectSR variant index as enumerated
     uint32_t variantIndex;
 
@@ -81,12 +81,12 @@ SL_STRUCT(DirectSROptions, StructType({ 0x1ad87504, 0x774e, 0x4bf3, { 0x96, 0x33
     Boolean colorBuffersHDR = Boolean::eTrue;
 
     //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
-};
+SL_STRUCT_END()
 
 //! Returned by DirectSR plugin
 //! 
 //! {1BD0C637-A28F-41F2-BC91-B421FAEE8E1E}
-SL_STRUCT(DirectSROptimalSettings, StructType({ 0x1bd0c637, 0xa28f, 0x41f2, { 0xbc, 0x91, 0xb4, 0x21, 0xfa, 0xee, 0x8e, 0x1e } }), kStructVersion1)
+SL_STRUCT_BEGIN(DirectSROptimalSettings, StructType({ 0x1bd0c637, 0xa28f, 0x41f2, { 0xbc, 0x91, 0xb4, 0x21, 0xfa, 0xee, 0x8e, 0x1e } }), kStructVersion1)
 //! Specifies render area width
     uint32_t optimalRenderWidth{};
     //! Specifies render area height
@@ -107,18 +107,18 @@ SL_STRUCT(DirectSROptimalSettings, StructType({ 0x1bd0c637, 0xa28f, 0x41f2, { 0x
     DXGI_FORMAT optimalDepthFormat;
 
     //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
-};
+SL_STRUCT_END()
 
 //! Returned by DirectSR plugin
 //! 
 //! {38216184-79ba-48cb-93f5-7a8a59382fdf}
-SL_STRUCT(DirectSRVariantInfo, StructType({ 0x38216184, 0x79ba, 0x48cb, { 0x93, 0xf5, 0x7a, 0x8a, 0x59, 0x38, 0x2f, 0xdf } }), kStructVersion1)
+SL_STRUCT_BEGIN(DirectSRVariantInfo, StructType({ 0x38216184, 0x79ba, 0x48cb, { 0x93, 0xf5, 0x7a, 0x8a, 0x59, 0x38, 0x2f, 0xdf } }), kStructVersion1)
     char name[128];
     sl::DirectSRVariantFlags flags;
     sl::DirectSROptimizationType optimizationRankings[7];
     DXGI_FORMAT optimalTargetFormat;
     //! IMPORTANT: New members go here or if optional can be chained in a new struct, see sl_struct.h for details
-};
+SL_STRUCT_END()
 
 }
 

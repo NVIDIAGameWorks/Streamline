@@ -38,6 +38,6 @@ void main(uint3 DTid : SV_DispatchThreadID)
     {
         velocity *= mvecScale; // to -1,1 range
     }
-    if (showMvec) velocity *= textureSize.xy * 10.0f;
+    if (showMvec != 0) velocity *= textureSize.xy * 10.0f;
     rwtexMVec[pixelId] = float2(-velocity) * textureSize.xy; // to pixel space
 }

@@ -79,10 +79,17 @@ struct CommonResource
         if (clone) return clone;
         return (chi::Resource)&res;
     }
-    inline operator void*()
-    {
+    inline void* getNative() const {
         if (clone) return clone.getNative();
         return res.native;
+    }
+    inline operator void*() const
+    {
+        return getNative();
+    }
+    inline operator void*()
+    {
+        return getNative();
     }
     inline CommonResource& operator=(chi::Resource rhs)
     {

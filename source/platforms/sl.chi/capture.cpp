@@ -263,8 +263,9 @@ namespace sl
                         Resource res = rrq->readback[rrq->index];
                         void* data;
                         compute->mapResource(cmdList, res, data, 0, 0, bytes);
-                        if (!data) SL_LOG_WARN("Capture: Failed to map readback resource.");
-                        else {
+                        if (!data) {
+                            SL_LOG_WARN("Capture: Failed to map readback resource.");
+                        } else {
                             char* pixels = new char[predictedbytes];
                             for (uint64_t y = 0; y < srcDesc.height; y++)
                             {

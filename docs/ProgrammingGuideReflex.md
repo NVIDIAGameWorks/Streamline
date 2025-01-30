@@ -2,19 +2,18 @@
 Streamline - Reflex
 =======================
 
->The focus of this guide is on using Streamline to integrate Reflex into an application.  For more information about Reflex itself, please visit the [NVIDIA Developer Reflex Page](https://developer.nvidia.com/performance-rendering-tools/reflex)
+>The focus of this guide is on using Streamline to integrate Reflex into an application.  For more information about Reflex itself, please visit the [NVIDIA Developer Reflex Page][2].
 >For information on user interface considerations when using this plugin, please see the ["RTX UI Developer Guidelines.pdf"][1] document included with this SDK.
 
-Version 2.4.15
+Version 2.7.2
 =======
 
 Here is an overview list of sub-features in the Reflex plugin:
 
 | Feature | GPU Vendor | GPU HW | Driver Version | Support Check | Key Setting/Marker |
 | ------ | ------ | ------ | ------ | ------ | ------ |
-| **Reflex Low Latency** | NVDA only | GeForce 900 Series and newer | 456.38+ | `sl::ReflexSettings::lowLatencyAvailable` | `sl::ReflexConstants::mode` |
-| **Auto-Configure Reflex Analyzer** | NVDA only | GeForce 900 Series and newer | 521.60+ | `sl::ReflexSettings::flashIndicatorDriverControlled` | `sl::PCLMarker::eTriggerFlash` |
-| **Frame Rate Limiter** | NVDA only | All | All | Always | `sl::ReflexConstants::frameLimitUs` |
+| **Reflex Low Latency** | NVDA only | GeForce 900 Series and newer | 456.38+ | `sl::ReflexState::lowLatencyAvailable` | `sl::ReflexOptions::mode` |
+| **Frame Rate Limiter** | NVDA only | All | All | Always | `sl::ReflexOptions::frameLimitUs` |
 
 Additionally, [PCL Stats](ProgrammingGuidePCL.md):
 | Feature | GPU Vendor | GPU HW | Driver Version | Support Check | Key Setting/Marker |
@@ -22,7 +21,7 @@ Additionally, [PCL Stats](ProgrammingGuidePCL.md):
 | **PC Latency Stats** | All | All | All | Always | `sl::PclMarker::ePCLatencyPing` |
 
 > **NOTE:**
-> The sub-features are distinct to each other without any cross-dependencies. Everything is abstracted within the plugin and is transparent to the application. The application should not explicitly check for GPU HW, vendor, and driver version. The application should do everything the same regardless of sub-feature support and enablement. The only 2 exceptions are Reflex UI and Reflex Flash Indicator (RFI). The application must disable Reflex UI based on `sl::ReflexSettings::lowLatencyAvailable`. And the application must not send `sl::PCLMarker::eTriggerFlash` when `sl::ReflexSettings::flashIndicatorDriverControlled` is false.
+> The sub-features are distinct to each other without any cross-dependencies. Everything is abstracted within the plugin and is transparent to the application. The application should not explicitly check for GPU HW, vendor, and driver version. The application should do everything the same regardless of sub-feature support and enablement. The only exception is Reflex UI; the application must disable Reflex UI based on `sl::ReflexState::lowLatencyAvailable`.
 
 ### 1.0 INITIALIZE AND SHUTDOWN
 
@@ -110,7 +109,7 @@ if (SUCCEEDED(CreateDXGIFactory(__uuidof(IDXGIFactory), (void**)&factory)))
 ```
 
 > **IMPORTANT:**
-> The Reflex plugin includes two distinct functionalities: Reflex Low Latency and PC Latency (PCL) Stats. While the support for Reflex Low Latency is dependent on the GPU hardware, vendor, and driver version, **PCL Stats is supported on all GPU hardwares, vendors, and driver versions**. The plugin handles all such abstractions; As long as `sl::kFeatureReflex` is supported, the application should always make the same `slPCLSetMarker` and `slReflexSleep` calls without any explicit GPU hardware, vendor, and driver version checks.
+> Reflex involves two distinct plugins: Reflex Low Latency and PC Latency (PCL) Stats. While the support for Reflex Low Latency is dependent on GPU hardware, vendor, and driver version, **PCL Stats is supported on all GPU hardwares, vendors, and driver versions**. Both plugins handle all such abstractions; as long as `sl::kFeatureReflex` and `sl::kFeaturePCL` are supported, the application should always call `slReflexSleep` and `slPCLSetMarker`, respectively (without any explicit checks for user enablement, or GPU hardware/vendor/driver version).
 
 ### 3.0 CHECK REFLEX STATE AND CAPABILITIES
 
@@ -154,8 +153,8 @@ To configure Reflex please do the following:
 // Using helpers from sl_reflex.h
 
 sl::ReflexOptions reflexOptions = {};
-reflexOptions.mode = eLowLatency; // enable Reflex low-latency mode, or eOff to disable, eLowLatencyWithBoost for "On + Boost"
-reflexOptions.frameLimitUs = myFrameLimit; // See docs for ReflexConstants
+reflexOptions.mode = eLowLatency; // enable Reflex Low Latency mode, or eOff to disable, eLowLatencyWithBoost for "On + Boost"
+reflexOptions.frameLimitUs = myFrameLimit; // See docs for ReflexOptions
 if(SL_FAILED(res, slReflexSetOptions(reflexOptions)))
 {
     // Handle error here, check the logs
@@ -163,7 +162,7 @@ if(SL_FAILED(res, slReflexSetOptions(reflexOptions)))
 ```
 
 > **NOTE:**
-> To turn off Reflex set `sl::ReflexOptions.mode` to `sl::ReflexMode::eOff`. `slPCLSetMarker` must always be called even when Reflex low-latency mode is Off. These markers are also used by PCL Stats to measure latency.
+> To turn off Reflex set `sl::ReflexOptions.mode` to `sl::ReflexMode::eOff`. `slReflexSleep` and `slPCLSetMarker` must always be called even when Reflex Low Latency mode is Off. PCL markers are also used by PCL Stats to measure latency.
 
 > **NOTE:**
 > For Reflex "On + Boost" set `sl::ReflexOptions.mode` to `sl::ReflexMode::eLowLatencyWithBoost`.
@@ -178,21 +177,31 @@ Call `slReflexSleep` at the appropriate location where your application should s
 Here is some pseudo code:
 
 ```cpp
+bool isReflexSupported = slIsFeatureSupported(sl::kFeatureReflex, adapterInfo);
+if (!isReflexSupported)
+{
+    return;
+}
+
+// Starting new frame, grab handle from SL
+sl::FrameToken* currentFrame{};
+if(SL_FAILED(res, slGetNewFrameToken(&currentFrame))
+{
+    // Handle error
+}
 
 // Using helpers from sl_reflex.h
 
 // When your application should sleep to achieve optimal low-latency mode
 //
-if(useReflex) 
+if(SL_FAILED(res, slReflexSleep(*currentFrame)))
 {
-    // Sleep
-    if(SL_FAILED(res, slReflexSleep(*currentFrame)))
-    {
-        // Handle error
-    }
+    // Handle error
 }
-
 ```
+
+> **NOTE:**
+> See [Reflex SDK Integration Guide][2] for details on `slReflexSleep` placement
 
 ### 6.0 PCL STATS
 
@@ -229,6 +238,7 @@ Reflex Test Utility Report passed without warning with Reflex On |
 Reflex does not significantly impact FPS (more than 4%) when Reflex is On <br> (On + Boost is expect to have some FPS hit for lowest latency) |
 Reflex Test Utility Report passed without warning with Reflex On + Boost |
 PCL Markers are always sent regardless of Reflex Low Latency mode state |
+`slReflexSleep` is called regardless of Reflex Low Latency mode state |
 Reflex Flash Indicator appears when left mouse button is pressed |
 Reflex UI settings are following the [RTX UI Guidelines][1] |
 Keybinding menus work properly (no F13) |
@@ -237,8 +247,7 @@ Reflex UI settings are disabled or not available on other IHV Hardware |
 
 **Steps**
 
-1. Download/uncompress Reflex Verification tools
-    * <https://developer.download.nvidia.com/assets/gamedev/files/ReflexVerification.zip>
+1. Locate Reflex Verification tools in `utils/reflex/`
 2. Install FrameView SDK
     * Double click the FrameView SDK Installer (`FVSDKSetup.exe`)
     * Restart the system
@@ -268,10 +277,18 @@ Reflex UI settings are disabled or not available on other IHV Hardware |
         2. Analyze results after the test is done (3 beeps)
             * Test should take approximately 5 minutes
             * Check for warnings in the ReflexTest.exe output
-    7. Press `Ctrl + c` in the command prompt to exit ReflexTest.exe
-6. Test that markers are always sent even when Reflex is Off
-    1. Turn Reflex to Off
-    2. Look at the Verification HUD to ensure that the markers are still updating
+    * Press `Ctrl + c` in the command prompt to exit ReflexTest.exe
+6. Test that Reflex/PCL calls are made even when Reflex is Off
+    1. Turn Reflex to **On**
+    2. Look at the Verification HUD to ensure:
+        * `App_Called_Sleep = 1`
+    3. Turn Reflex to **On + Boost**
+    4. Look at the Verification HUD to ensure:
+        * `App_Called_Sleep = 1`
+    5. Turn Reflex to **Off**
+    6. Look at the Verification HUD to ensure:
+        * `App_Called_Sleep = 1` (it should remain `1`)
+        * Markers/timestamps are still updating
 7. Test the Reflex Flash Indicator
     1. Verify the Reflex Flash Indicator is showing
         * Notice the gray square that flashes when the left mouse button is pressed
@@ -348,7 +365,7 @@ Fields are as follows:
 Field | Value | Details
 ------|-------|--------|
 Reflex Mode | Off, enabled,<br/> enabled + boost |
-App Called Sleep | 0/1 | Is the game calling NvAPI_D3D_Sleep / NvAPI_VK_Sleep <br/> function?
+App Called Sleep | 0/1 | Is the game calling `slReflexSleep()`? <br/> **If `slIsFeatureSupported(kFeatureReflex) == true`, this should be 1 (even when Reflex is Off)**
 Flash Indicator | Counter | Number of flash trigger marks seen
 Total Render Time | Duration | Time spent by GPU rendering
 Simulation Interval | Duration | Simulation start time of frame X - simulation start time of <br/> frame X-1 <br/> All other timestamps are relative to simulation start time
@@ -363,4 +380,4 @@ GPU Start/End Time | Timestamp | Start = GPU rendering starts; End = GPU renderi
 > All durations and timestamps should be non-zero. Start timestamps must be less than end values (I.e., start must come before end).
 
 [1]: <RTX UI Developer Guidelines.pdf>
-
+[2]: https://developer.nvidia.com/performance-rendering-tools/reflex

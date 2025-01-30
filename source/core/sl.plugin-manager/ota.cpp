@@ -39,7 +39,7 @@
 #include "source/plugins/sl.common/commonInterface.h"
 #include "external/json/include/nlohmann/json.hpp"
 
-#include "external/nvapi/nvapi.h"
+#include "nvapi.h"
 
 using json = nlohmann::json;
 
@@ -252,7 +252,7 @@ struct OTA : IOTA
         auto manifest = file::open((ngxPath + L"nvngx_config.txt").c_str(), L"rt");
         if (!manifest)
         {
-            SL_LOG_ERROR("Failed to open manifest file at: %lsnvngx_config.txt", ngxPath.c_str());
+            SL_LOG_WARN("Failed to open manifest file at: %lsnvngx_config.txt", ngxPath.c_str());
             return false;
         }
 
@@ -396,7 +396,7 @@ struct OTA : IOTA
         return true;
     }
 
-    bool getOTAPluginForFeature(Feature featureID, const Version &apiVersion, std::wstring &filePath) override
+    bool getOTAPluginForFeature(Feature featureID, const Version &apiVersion, std::filesystem::path &filePath) override
     {
         // First get GPU Architecture, needed to download appropriate OTA
         // snippet

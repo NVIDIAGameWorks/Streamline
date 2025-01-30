@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <filesystem>
+
 #include "include/sl_version.h"
 
 namespace sl
@@ -51,7 +53,7 @@ struct IOTA
     //! Return values:
     //!   TRUE - a suitable plugin was found
     //!   FALSE - otherwise
-    virtual bool getOTAPluginForFeature(Feature featureID, const Version &apiVersion, std::wstring &filePath) = 0;
+    virtual bool getOTAPluginForFeature(Feature featureID, const Version &apiVersion, std::filesystem::path &filePath) = 0;
 };
 
 IOTA* getInterface();

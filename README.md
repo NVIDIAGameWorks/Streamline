@@ -1,13 +1,10 @@
-# Streamline (SL) - Version 2.4.15
+# Streamline (SL) - Version 2.7.2
 
 Streamline is an open-sourced cross-IHV solution that simplifies integration of the latest NVIDIA and other independent hardware vendors’ super resolution technologies into applications and games. This framework allows developers to easily implement one single integration and enable multiple super-resolution technologies and other graphics effects supported by the hardware vendor.
 
 This repo contains the SDK for integrating Streamline into your application.
 
 For a high level overview, see the [NVIDIA Developer Streamline page](https://developer.nvidia.com/rtx/streamline)
-
-> **IMPORTANT:**
-> For important changes and bug fixes included in the current release, please see the [Release Notes](release.txt)
 
 As of SL 2.0.0, it is now possible to recompile all of SL from source, with the exception of the DLSS-G plugin.  The DLSS-G plugin is provided as prebuilt DLLs only.  We also provide prebuilt DLLs (signed) for all other plugins that have source.  Most application developers will never need to rebuild SL themselves, especially for shipping; all of the pieces needed to develop, debug and ship an application that integrates SL and its features are provided in the pre-existing directories `bin/`, `include/`, and `lib/`.  Compiling from source is purely optional and likely of interest to a subset of SL application developers. For developers wishing to build SL from source, see the following sections.
 
@@ -84,9 +81,30 @@ The packaged SDK can be found in the generated `_sdk` folder.
 ## Debugging
 
 Streamline offers several ways to debug and troubleshoot issues. Please see the following pages for more information.
-* Using SL ImGui: [Debugging - SL ImGUI (Realtime Data Inspection).md](docs/Debugging - SL ImGUI %28Realtime Data Inspection%29.md)
-* Using JSON configuration files: [Debugging - JSON Configs (Plugin Configs).md](docs/Debugging - JSON Configs %28Plugin Configs%29.md)
-* Using NRD's validation layer: [Debugging - NRD.md](docs/Debugging - NRD.md)
+* Using SL ImGui: [Debugging - SL ImGUI (Realtime Data Inspection).md](<docs/Debugging - SL ImGUI (Realtime Data Inspection).md>)
+* Using JSON configuration files: [Debugging - JSON Configs (Plugin Configs).md](<docs/Debugging - JSON Configs (Plugin Configs).md>)
+
+### Logging
+
+Starting with Streamline 2.7.x, it is possible to forcibly override logging settings such as log level, log file output path/name and whether to log to a separate console window.
+
+There are two ways to override the log settings: via the Windows registry, or using environment variables. Environment variables take precedence over the Windows registry (i.e. if you have both a registry override and an environment variable override in effect, the environment variable's override value will be used).
+
+The log path setting refers to a writeable directory on the filesystem where Streamline can place its log file (called `sl.log` by default). Change the log name setting to change the name of this log file.
+
+The logging override keys live in the `HKEY_LOCAL_MACHINE\SOFTWARE\NVIDIA Corporation\Global\Streamline` subkey.
+
+| Description                                       | Registry Value         | Registry Value Type | Environment Variable        |  Valid Data |
+| ------------------------------------------------- | ---------------------- | ------------------- | --------------------------- |  ---------- |
+| Enable console logging to separate console window | `EnableConsoleLogging` | DWORD               | `SL_ENABLE_CONSOLE_LOGGING` |  [0-1]      |
+| Log level                                         | `LogLevel`             | DWORD               | `SL_LOG_LEVEL`              |  [0-2]      |
+| Output directory for log file                     | `LogPath`              | String              | `SL_LOG_PATH`               |  Any string |
+| Filename to log to                                | `LogName`              | String              | `SL_LOG_NAME`               |  Any string |
+
+For convenience, there are also two registry files in the Streamline repo that can quickly enable or disable logging, called `streamline_logging_disable.reg` and `streamline_logging_enable.reg`.
+
+> **NOTE:**
+> The Streamline interposer configuration (JSON) takes precedence over these logging overrides.
 
 ## General Programming Guide
 
@@ -100,7 +118,6 @@ Please read [ProgrammingGuideManualHooking.md](docs/ProgrammingGuideManualHookin
 
 - [DLSS Super Resolution](docs/ProgrammingGuideDLSS.md)
 - [DLSS Frame Generation](docs/ProgrammingGuideDLSS_G.md)
-- [NRD](docs/ProgrammingGuideNRD.md)
 - [Reflex](docs/ProgrammingGuideReflex.md)
 - [NIS](docs/ProgrammingGuideNIS.md)
 

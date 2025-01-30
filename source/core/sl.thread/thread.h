@@ -29,6 +29,9 @@
 #include <atomic>
 #include <map>
 
+#include <condition_variable>
+#include <thread>
+
 #include "source/core/sl.exception/exception.h"
 #include "source/core/sl.log/log.h"
 

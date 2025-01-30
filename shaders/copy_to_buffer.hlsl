@@ -19,7 +19,7 @@ void main( uint3 DTid : SV_DispatchThreadID)
   }
 
   // RGB32F buffer
-  uint byteOffset = (pixelId.x + pixelId.y * sizeAndInvSize.x) * 12;
+  uint byteOffset = uint(pixelId.x + pixelId.y * sizeAndInvSize.x) * 12;
   float4 c = gSrc[pixelId];
 
   outDst.Store(byteOffset, asuint(c.x));

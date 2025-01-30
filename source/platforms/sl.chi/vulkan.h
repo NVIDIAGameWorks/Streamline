@@ -268,6 +268,8 @@ class Vulkan : public Generic
     ComputeStatus setDebugNameVk(VkDescriptorPool vkStruct, const char* name);
     ComputeStatus setDebugNameVk(VkImageView vkStruct, const char* name);
 
+    ComputeStatus fillSupportedDeviceExtensions();
+    std::unordered_map<std::string, uint32_t> m_supportedDeviceExtensions = {};
 public:
 
     virtual ComputeStatus init(Device InDevice, param::IParameters* params);
@@ -296,6 +298,8 @@ public:
 
     virtual ComputeStatus createFence(FenceFlags flags, uint64_t initialValue, Fence& outFence, const char friendlyName[])  override final;
     virtual ComputeStatus destroyFence(Fence& fence) override final;
+
+    uint64_t getCompletedValue(Fence fence) override final;
 
     virtual ComputeStatus createCommandQueue(CommandQueueType type, CommandQueue& queue, const char friendlyName[], uint32_t index) override final;
     virtual ComputeStatus destroyCommandQueue(CommandQueue& queue) override final;
@@ -344,6 +348,7 @@ public:
     virtual ComputeStatus setReflexMarker(PCLMarker marker, uint64_t frameId) override final;
     virtual ComputeStatus notifyOutOfBandCommandQueue(CommandQueue queue, OutOfBandCommandQueueType type) override final;
     virtual ComputeStatus setAsyncFrameMarker(CommandQueue queue, PCLMarker marker, uint64_t frameId) override final;
+    virtual ComputeStatus setLatencyMarker(CommandQueue queue, PCLMarker marker, uint64_t frameId) override final;
 
     // Helper methods for NGX feature requirements and slIsFeatureSupported
     static ComputeStatus createInstanceAndFindPhysicalDevice(uint32_t id, chi::Instance& instance, chi::PhysicalDevice& device);
@@ -351,6 +356,9 @@ public:
     static ComputeStatus getLUIDFromDevice(chi::PhysicalDevice device, uint32_t& deviceId, LUID* OutId);
     static ComputeStatus getOpticalFlowQueueInfo(chi::PhysicalDevice physicalDevice, uint32_t& queueFamilyIndex, uint32_t& queueIndex);
     virtual ComputeStatus isNativeOpticalFlowSupported() override final;
+
+    // check if an extension is available
+    virtual ComputeStatus isDeviceExtensionSupported(const char* extension, uint32_t version) override final;
 };
 
 }

@@ -35,9 +35,14 @@
 #include "source/plugins/sl.imgui/imgui.h"
 #include "_artifacts/json/reflex_json.h"
 #include "_artifacts/gitVersion.h"
-#include "external/nvapi/nvapi.h"
+#include "nvapi.h"
 #include "external/json/include/nlohmann/json.hpp"
+#include <optional>
+#include "include/sl_matrix_helpers.h"
+
 using json = nlohmann::json;
+using namespace std::chrono_literals;
+
 
 // DEPRECATED (reflex-pcl):
 #include "source/core/sl.plugin-manager/pluginManager.h"
@@ -56,6 +61,78 @@ struct UIStats
     std::string fpsCap;
     std::string presentFrame;
     std::string sleeping;
+};
+
+template <typename T>
+class ReflexCameraDataManager
+{
+    std::vector<std::pair<uint32_t, T>> cameraData;
+    std::mutex framesMutex;
+    uint32_t lastFrame = 0;
+    std::condition_variable getFrameCV;
+
+public:
+    ReflexCameraDataManager()
+    {
+        cameraData.resize(MAX_FRAMES_IN_FLIGHT);
+    }
+
+    void insertCameraData(const uint32_t frameID, const T& inCameraData)
+    {
+        std::lock_guard<std::mutex> _(framesMutex);
+        if (frameID <= 0)
+        {
+            return; // first frame data not used
+        }
+        auto& availableCameraData = cameraData.at(frameID % MAX_FRAMES_IN_FLIGHT);
+        if (frameID == availableCameraData.first)
+        {
+            SL_LOG_WARN("Camera data for frame %d already set!", frameID);
+            return;
+        }
+        if (lastFrame + 1 != frameID)
+        {
+            SL_LOG_WARN("Out of order camera data detected! last: %d, pushing: %d", lastFrame, frameID);
+        }
+        availableCameraData = std::make_pair(frameID, inCameraData);
+        lastFrame = frameID;
+        getFrameCV.notify_one();
+    }
+
+    std::optional<T> getCameraData(uint32_t frameID)
+    {
+        while (true)
+        {
+            // Look for frame ID.
+            {
+                std::lock_guard<std::mutex> _(framesMutex);
+
+                auto& availableCameraData = cameraData.at(frameID % MAX_FRAMES_IN_FLIGHT);
+                if (frameID == availableCameraData.first)
+                {
+                    return availableCameraData.second;
+                }
+            }
+
+            // Wait for next frame.
+            SL_LOG_WARN("Camera data for frame %d was not readily available, this should not happen often!", frameID);
+            {
+                std::unique_lock<std::mutex> lock(framesMutex);
+
+                // UE often doesn't send first few frames, make sure we don't block
+                // Depend on the engine, this also loosely define minimum support framerate, as 1/timeout
+                auto timeout = frameID < 5 ? 0ms : 100ms;
+                if (!getFrameCV.wait_for(lock, timeout, [&] { return frameID == cameraData.at(frameID % MAX_FRAMES_IN_FLIGHT).first; }))
+                {
+                    if (timeout > 0us)
+                    {
+                        SL_LOG_WARN("Time out trying to get data for frame %d (wait %dms)", frameID, std::chrono::duration_cast<std::chrono::milliseconds>(timeout).count());
+                    }
+                    return std::nullopt;
+                }
+            }
+        }
+    }
 };
 
 //! Our common context
@@ -86,6 +163,16 @@ struct LatencyContext
     //! Latest constants
     ReflexOptions constants{};
 
+    //! Camera data
+    ReflexCameraDataManager<ReflexCameraData> simCameraData;
+    //! Predicted camera data
+    ReflexCameraDataManager<ReflexPredictedCameraData> predCameraData;
+
+    //! Matrices from the last frame
+    float4x4 prevWorldToViewMatrix{};
+    float4x4 prevViewToClipMatrix{};
+    bool predictCamera = false;
+
     //! Can be overridden via sl.reflex.json config
     uint32_t frameLimitUs = UINT_MAX;
     bool useMarkersToOptimizeOverride = false;
@@ -103,6 +190,12 @@ struct LatencyContext
     //! Stats initialized or not
     std::atomic<bool> initialized = false;
     std::atomic<bool> enabled = false;
+
+    PFunSetPCLStatsMarker* setStatsMarkerFunc = nullptr;
+
+    sl::chi::Fence gameWaitFence{};
+    uint32_t gameWaitSyncValue{};
+    chi::ICommandListContext* gameWaitCmdList{};
 };
 }
 
@@ -110,7 +203,10 @@ struct LatencyContext
 static std::string JSON = std::string(reflex_json, &reflex_json[reflex_json_len]);
 
 void updateEmbeddedJSON(json& config);
+
 sl::Result slReflexSetMarker(sl::PCLMarker marker, const sl::FrameToken& frame);
+sl::Result slReflexGetCameraDataInternal(const sl::ViewportHandle& viewport, const uint32_t frame, sl::ReflexCameraData& outCameraData);
+sl::Result slReflexSetCameraDataFenceInternal(const sl::ViewportHandle& viewport, sl::chi::Fence fence, const uint32_t syncValue, chi::ICommandListContext* cmdList);
 
 //! Define our plugin, make sure to update version numbers in versions.h
 SL_PLUGIN_DEFINE("sl.reflex", Version(VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH), Version(0, 0, 1), JSON.c_str(), updateEmbeddedJSON, reflex, LatencyContext)
@@ -144,7 +240,7 @@ void updateEmbeddedJSON(json& config)
 
     // Figure out if we should use NVAPI or not
     // 
-    // NVDA driver has to be 455+ otherwise Reflex low-latency won't work
+    // NVDA driver has to be 455+ otherwise Reflex Low Latency won't work
     sl::Version minDriver(455, 0, 0);
     if (caps && caps->driverVersionMajor > 455)
     {
@@ -172,7 +268,7 @@ void updateStats(uint32_t presentFrameIndex)
 {
 #ifndef SL_PRODUCTION
     auto& ctx = (*reflex::getContext());
-    std::string mode[] = { "Off", "On", "On with boost" };
+    const std::string mode[ReflexMode_eCount] = { "Off", "On", "On + boost" };
 
     std::scoped_lock lock(ctx.uiStats.mtx);
     ctx.uiStats.mode = "Mode: " + mode[ctx.constants.mode];
@@ -375,13 +471,121 @@ internal::shared::Status getSharedData(BaseStructure* requestedData, const BaseS
     // v1
     remote->slReflexSetMarker = slReflexSetMarker;
 
+    // v2
+    remote->slReflexGetCameraData = slReflexGetCameraDataInternal;
+
+    // v3
+    remote->slReflexSetCameraDataFence = slReflexSetCameraDataFenceInternal;
+
     // Let newer requester know that we are older
-    if (remote->structVersion > kStructVersion1)
+    if (remote->structVersion > kStructVersion3)
     {
-        remote->structVersion = kStructVersion1;
+        remote->structVersion = kStructVersion3;
     }
 
     return internal::shared::Status::eOk;
+}
+
+sl::Result predictCameraData(const ReflexCameraData& cameraData, float4x4& prevWorldToView, float4x4& prevViewToClip, ReflexPredictedCameraData& predictedCameraData)
+{
+    // TODO: Should check view matrices are orthonormal for prediction
+    const float4x4& WorldToView = cameraData.worldToViewMatrix;
+
+    // 1st order prediction (simple constant velocity for now): 
+    const float4& currentTranslation = cameraData.worldToViewMatrix.row[3];
+    float4 prevTranslation = prevWorldToView.getRow(3);
+    float4 predictedTranslation = float4(currentTranslation.x, currentTranslation.y, currentTranslation.z, 1);
+    predictedTranslation.x += currentTranslation.x - prevTranslation.x;
+    predictedTranslation.y += currentTranslation.y - prevTranslation.y;
+    predictedTranslation.z += currentTranslation.z - prevTranslation.z;
+
+    float4x4 currentRotation;
+    currentRotation[0].x = WorldToView[0].x; currentRotation[0].y = WorldToView[0].y; currentRotation[0].z = WorldToView[0].z; currentRotation[0].w = 0.f;
+    currentRotation[1].x = WorldToView[1].x; currentRotation[1].y = WorldToView[1].y; currentRotation[1].z = WorldToView[1].z; currentRotation[1].w = 0.f;
+    currentRotation[2].x = WorldToView[2].x; currentRotation[2].y = WorldToView[2].y; currentRotation[2].z = WorldToView[2].z; currentRotation[2].w = 0.f;
+    currentRotation[3].x = 0.f;              currentRotation[3].y = 0.f;              currentRotation[3].x = 0.f;              currentRotation[3].x = 1.f;
+
+    float4x4 inversePrevRotation;
+    inversePrevRotation[0].x = prevWorldToView[0].x; inversePrevRotation[0].y = prevWorldToView[1].x; inversePrevRotation[0].z = prevWorldToView[2].x; inversePrevRotation[0].w = 0.f;
+    inversePrevRotation[1].x = prevWorldToView[0].y; inversePrevRotation[1].y = prevWorldToView[1].y; inversePrevRotation[1].z = prevWorldToView[2].y; inversePrevRotation[1].w = 0.f;
+    inversePrevRotation[2].x = prevWorldToView[0].z; inversePrevRotation[2].y = prevWorldToView[1].z; inversePrevRotation[2].z = prevWorldToView[2].z; inversePrevRotation[2].w = 0.f;
+    inversePrevRotation[3].x = 0.f;                  inversePrevRotation[3].y = 0.f;                  inversePrevRotation[3].x = 0.f;                  inversePrevRotation[3].x = 1.f;
+
+    float4x4 deltaRotation;
+    matrixMul(deltaRotation, currentRotation, inversePrevRotation);
+
+    matrixMul(predictedCameraData.predictedWorldToViewMatrix, deltaRotation, currentRotation);
+    predictedCameraData.predictedWorldToViewMatrix[3].x = predictedTranslation.x;
+    predictedCameraData.predictedWorldToViewMatrix[3].y = predictedTranslation.y;
+    predictedCameraData.predictedWorldToViewMatrix[3].z = predictedTranslation.z;
+    predictedCameraData.predictedWorldToViewMatrix[3].w = 1.f;
+
+    // TODO: Predict viewtoclip
+    predictedCameraData.predictedViewToClipMatrix = cameraData.viewToClipMatrix;
+
+    return sl::Result::eOk;
+}
+
+sl::Result slReflexSetCameraData(const sl::ViewportHandle& viewport, const sl::FrameToken& frame, const sl::ReflexCameraData& inCameraData)
+{
+    auto& ctx = (*reflex::getContext());
+
+    ctx.compute->setReflexMarker(PCLMarker::eCameraConstructed, frame);
+    ctx.setStatsMarkerFunc(PCLMarker::eCameraConstructed, frame);
+
+    if (ctx.predictCamera && frame > 0)
+    {
+        ReflexPredictedCameraData predictedCameraData{};
+        predictCameraData(inCameraData, ctx.prevWorldToViewMatrix, ctx.prevViewToClipMatrix, predictedCameraData);
+        ctx.predCameraData.insertCameraData(frame, predictedCameraData);
+    }
+
+    ctx.simCameraData.insertCameraData(frame, inCameraData);
+
+    ctx.prevWorldToViewMatrix = inCameraData.worldToViewMatrix;
+    ctx.prevViewToClipMatrix = inCameraData.viewToClipMatrix;
+
+    return sl::Result::eOk;
+}
+
+sl::Result slReflexGetCameraDataInternal(const sl::ViewportHandle& viewport, const uint32_t frame, sl::ReflexCameraData& outCameraData)
+{
+    auto& ctx = (*reflex::getContext());
+
+    std::optional<ReflexCameraData> cameraData = ctx.simCameraData.getCameraData(frame);
+    if (!cameraData.has_value())
+    {
+        SL_LOG_WARN("Could not get camera data for frame %d", frame);
+        return Result::eErrorInvalidState;
+    }
+
+    outCameraData = cameraData.value();
+    return sl::Result::eOk;
+}
+
+sl::Result slReflexSetCameraDataFenceInternal(const sl::ViewportHandle& viewport, sl::chi::Fence fence, const uint32_t syncValue, chi::ICommandListContext* cmdList)
+{
+    auto& ctx = (*reflex::getContext());
+    ctx.gameWaitCmdList = cmdList;
+    ctx.gameWaitFence = fence;
+    ctx.gameWaitSyncValue = syncValue;
+    return sl::Result::eOk;
+}
+
+sl::Result slReflexGetPredictedCameraData(const sl::ViewportHandle& viewport, const sl::FrameToken& frame, sl::ReflexPredictedCameraData& outCameraData)
+{
+    auto& ctx = (*reflex::getContext());
+    ctx.predictCamera = true;
+
+    std::optional<ReflexPredictedCameraData> cameraData = ctx.predCameraData.getCameraData(frame);
+    if (!cameraData.has_value())
+    {
+        SL_LOG_WARN("Could not get predicted camera data for frame %d", frame);
+        return Result::eErrorInvalidState;
+    }
+
+    outCameraData = cameraData.value();
+    return sl::Result::eOk;
 }
 
 //! Main entry point - starting our plugin
@@ -482,6 +686,8 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
     }
 #endif
 
+    param::getPointerParam(parameters, param::pcl::kPFunSetPCLStatsMarker, &ctx.setStatsMarkerFunc);
+
     return true;
 }
 
@@ -510,8 +716,15 @@ sl::Result slReflexGetState(sl::ReflexState& state)
 
 sl::Result slReflexSetMarker(sl::PCLMarker marker, const sl::FrameToken& frame)
 {
+    auto& ctx = (*reflex::getContext());
     sl::ReflexHelper inputs(marker);
     inputs.next = (BaseStructure*)&frame;
+
+    if (marker == sl::PCLMarker::eRenderSubmitStart && ctx.gameWaitCmdList && ctx.gameWaitFence && ctx.gameWaitSyncValue && ctx.compute->getCompletedValue(ctx.gameWaitFence) - 1 < ctx.gameWaitSyncValue)
+    {
+        ctx.gameWaitCmdList->waitGPUFence(ctx.gameWaitFence, ctx.gameWaitSyncValue - 1, chi::DebugInfo(__FILE__, __LINE__));
+    }
+
     return slSetData(&inputs, nullptr);
 }
 
@@ -530,12 +743,6 @@ sl::Result slReflexSetOptions(const sl::ReflexOptions& options)
 //! The only exported function - gateway to all functionality
 SL_EXPORT void* slGetPluginFunction(const char* functionName)
 {
-    //! Forward declarations
-    bool slOnPluginLoad(sl::param::IParameters * params, const char* loaderJSON, const char** pluginJSON);
-
-    //! Redirect to OTA if any
-    SL_EXPORT_OTA;
-
     //! Core API
     SL_EXPORT_FUNCTION(slOnPluginLoad);
     SL_EXPORT_FUNCTION(slOnPluginShutdown);
@@ -547,6 +754,9 @@ SL_EXPORT void* slGetPluginFunction(const char* functionName)
     SL_EXPORT_FUNCTION(slReflexSetMarker);
     SL_EXPORT_FUNCTION(slReflexSleep);
     SL_EXPORT_FUNCTION(slReflexSetOptions);
+
+    SL_EXPORT_FUNCTION(slReflexSetCameraData);
+    SL_EXPORT_FUNCTION(slReflexGetPredictedCameraData);
 
     return nullptr;
 }

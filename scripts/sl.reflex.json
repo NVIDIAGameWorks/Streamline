@@ -1,4 +1,4 @@
 {
-	"comment": "rename below as needed",
-	"_frameLimitUs": 0
+	// Uncomment below as needed
+	// "frameLimitUs": 0
 }

@@ -80,7 +80,7 @@ set copy_dest=%~2
 set sym_dest=%~3
 
 IF EXIST %src%/features (
-    set features_src=%src%\features
+    set features_src=%src%\features\
 ) ELSE (
     set features_src=%src%\bin\x64
 )
@@ -122,6 +122,15 @@ IF "%copy_cfg%"=="Production" (
     copy %features_src%\development\nvngx_dlssg.dll %copy_dest% /Y
 )
 
+:: DLSS Ray Reconstruction
+copy %src%\_artifacts\sl.dlss_d\%copy_cfg%_x64\sl.dlss_d.dll %copy_dest% /Y
+copy %src%\_artifacts\sl.dlss_d\%copy_cfg%_x64\sl.dlss_d.pdb %sym_dest% /Y
+
+IF "%copy_cfg%"=="Production" (
+    copy %features_src%\nvngx_dlssd.dll %copy_dest% /Y
+) ELSE (
+    copy %features_src%\development\nvngx_dlssd.dll %copy_dest% /Y
+)
 
 :: DeepDVC
 copy %src%\_artifacts\sl.deepdvc\%copy_cfg%_x64\sl.deepdvc.dll %copy_dest% /Y
@@ -134,24 +143,12 @@ IF "%copy_cfg%"=="Production" (
 )
 
 
+
 :: NIS
 copy %src%\_artifacts\sl.nis\%copy_cfg%_x64\sl.nis.dll %copy_dest% /Y
 copy %src%\_artifacts\sl.nis\%copy_cfg%_x64\sl.nis.pdb %sym_dest% /Y
 
 copy %features_src%\nis.license.txt %copy_dest% /Y
-
-:: NRD
-copy %src%\_artifacts\sl.nrd\%copy_cfg%_x64\sl.nrd.dll %copy_dest% /Y
-copy %src%\_artifacts\sl.nrd\%copy_cfg%_x64\sl.nrd.pdb %sym_dest% /Y
-
-copy %features_src%\NRD.license.txt %copy_dest% /Y
-
-IF "%copy_cfg%"=="Debug" (
-    copy %src%\external\nrd\Lib\Debug\*.dll %copy_dest% /Y
-    copy %src%\external\nrd\Lib\Debug\*.pdb %sym_dest% /Y
-) ELSE (
-    copy %src%\external\nrd\Lib\Release\*.dll %copy_dest% /Y
-)
 
 :: NvPerf
 copy %src%\_artifacts\sl.nvperf\%copy_cfg%_x64\sl.nvperf.dll %copy_dest% /Y
@@ -173,6 +170,11 @@ copy %features_src%\reflex.license.txt %copy_dest% /Y
 
 copy %src%\external\reflex-sdk-vk\lib\NvLowLatencyVk.dll %copy_dest% /Y
 
+:: Profiling Binary
+IF "%copy_cfg%"=="Develop" (
+    copy %src%\external\pix\bin\WinPixEventRuntime.dll %copy_dest% /Y
+)
+
 exit /b 0
 :endcopybin
 
@@ -193,31 +195,35 @@ IF "%cfg_alt%"=="None" (
 :: Interposer lib
 copy %src%\_artifacts\sl.interposer\%cfg%_x64\sl.interposer.lib %dest%\lib\x64\ /Y
 
-
 :: INCLUDES
 mkdir %dest%\include
 
-copy %src%\include\sl.h                %dest%\include
-copy %src%\include\sl_consts.h         %dest%\include
-copy %src%\include\sl_helpers.h        %dest%\include
-copy %src%\include\sl_helpers_vk.h     %dest%\include
-copy %src%\include\sl_hooks.h          %dest%\include
-copy %src%\include\sl_matrix_helpers.h %dest%\include
-copy %src%\include\sl_result.h         %dest%\include
-copy %src%\include\sl_security.h       %dest%\include
-copy %src%\include\sl_struct.h         %dest%\include
-copy %src%\include\sl_version.h        %dest%\include
+copy %src%\include\sl.h                 %dest%\include
+copy %src%\include\sl_appidentity.h     %dest%\include
+copy %src%\include\sl_consts.h          %dest%\include
+copy %src%\include\sl_core_api.h        %dest%\include
+copy %src%\include\sl_core_types.h      %dest%\include
+copy %src%\include\sl_device_wrappers.h %dest%\include
+copy %src%\include\sl_helpers.h         %dest%\include
+copy %src%\include\sl_helpers_vk.h      %dest%\include
+copy %src%\include\sl_hooks.h           %dest%\include
+copy %src%\include\sl_matrix_helpers.h  %dest%\include
+copy %src%\include\sl_result.h          %dest%\include
+copy %src%\include\sl_security.h        %dest%\include
+copy %src%\include\sl_struct.h          %dest%\include
+copy %src%\include\sl_version.h         %dest%\include
 
-copy %src%\include\sl_deepdvc.h        %dest%\include
-copy %src%\include\sl_dlss.h           %dest%\include
-copy %src%\include\sl_dlss_g.h         %dest%\include
+copy %src%\include\sl_deepdvc.h         %dest%\include
+copy %src%\include\sl_dlss.h            %dest%\include
+copy %src%\include\sl_dlss_d.h          %dest%\include
+copy %src%\include\sl_dlss_g.h          %dest%\include
+copy %src%\include\sl_nis.h             %dest%\include
+copy %src%\include\sl_nvperf.h          %dest%\include
+copy %src%\include\sl_pcl.h             %dest%\include
 copy %src%\include\sl_directsr.h             %dest%\include
-copy %src%\include\sl_nis.h            %dest%\include
-copy %src%\include\sl_nrd.h            %dest%\include
-copy %src%\include\sl_nvperf.h         %dest%\include
-copy %src%\include\sl_pcl.h            %dest%\include
-copy %src%\include\sl_reflex.h         %dest%\include
-copy %src%\include\sl_template.h       %dest%\include
+copy %src%\include\sl_reflex.h          %dest%\include
+copy %src%\include\sl_template.h        %dest%\include
+
 
 
 :: SCRIPTS
@@ -227,6 +233,8 @@ copy %src%\scripts\sl.common.json                       %dest%\scripts
 copy %src%\scripts\sl.interposer.json                   %dest%\scripts
 copy %src%\scripts\sl.reflex.json                       %dest%\scripts
 copy %src%\scripts\sl.imgui.json                        %dest%\scripts
+copy %src%\scripts\streamline_logging_disable.reg       %dest%\scripts
+copy %src%\scripts\streamline_logging_enable.reg        %dest%\scripts
 copy %src%\scripts\ngx_driver_onscreenindicator.reg     %dest%\scripts
 copy %src%\scripts\ngx_driver_onscreenindicator_off.reg %dest%\scripts
 
@@ -247,9 +255,10 @@ copy %src%\docs\ProgrammingGuide.md              %dest%\docs
 copy %src%\docs\ProgrammingGuideDeepDVC.md       %dest%\docs
 copy %src%\docs\ProgrammingGuideDLSS.md          %dest%\docs
 copy %src%\docs\ProgrammingGuideDLSS_G.md        %dest%\docs
+copy %src%\docs\media\dlssg*.png %dest%\docs\media
+copy %src%\docs\ProgrammingGuideDLSS_RR.md       %dest%\docs
 copy %src%\docs\ProgrammingGuideManualHooking.md %dest%\docs
 copy %src%\docs\ProgrammingGuideNIS.md           %dest%\docs
-copy %src%\docs\ProgrammingGuideNRD.md           %dest%\docs
 copy %src%\docs\ProgrammingGuidePCL.md           %dest%\docs
 copy %src%\docs\ProgrammingGuideReflex.md        %dest%\docs
 
@@ -259,12 +268,13 @@ copy "%src%\docs\RTX Developer Localization Strings.zip"             %dest%\docs
 copy "%src%\docs\RTX UI Developer Guidelines Chinese Version.pdf"    %dest%\docs
 copy "%src%\docs\RTX UI Developer Guidelines.pdf"                    %dest%\docs
 copy "%src%\docs\Debugging - JSON Configs (Plugin Configs).md"       %dest%\docs
-copy "%src%\docs\Debugging - NRD.md"                                 %dest%\docs
 copy "%src%\docs\Debugging - NvPerf GUI.md"                          %dest%\docs
 copy "%src%\docs\Debugging - SL ImGUI (Realtime Data Inspection).md" %dest%\docs
+copy %src%\docs\media\nvperf*.png %dest%\docs\media
+copy %src%\docs\media\sl_imgui*.png %dest%\docs\media
+copy %src%\docs\media\Validation.png %dest%\docs\media
 
 copy %src%\docs\Streamline*.pdf %dest%\docs
-copy %src%\docs\media\*.* %dest%\docs\media
 
 
 :: README AND LICENSES
@@ -272,8 +282,6 @@ copy %src%\README.md             %dest% /Y
 copy %src%\license.txt           %dest% /Y
 copy %src%\"NVIDIA Nsight Perf SDK License (28Sept2022).pdf" %dest% /Y
 copy %src%\3rd-party-licenses.md %dest% /Y
-copy %src%\release.txt           %dest% /Y
-
 
 :: SOURCE
 IF "%include_source%"=="True" (
@@ -322,19 +330,15 @@ IF "%include_source%"=="True" (
     xcopy %src%\source\plugins\sl.directsr %dest%\source\plugins\sl.directsr /S
 
     mkdir %dest%\external\dx-agility-sdk-headers-1.714.0-preview\
-    mkdir %dest%\external\dx-agility-sdk-headers-1.714.0-preview\include\
-    mkdir %dest%\external\dx-agility-sdk-headers-1.714.0-preview\include\d3dx12\
     xcopy %src%\external\dx-agility-sdk-headers-1.714.0-preview\ %dest%\external\dx-agility-sdk-headers-1.714.0-preview /S
-    xcopy %src%\external\dx-agility-sdk-headers-1.714.0-preview\include\ %dest%\external\dx-agility-sdk-headers-1.714.0-preview\include /S
-    xcopy %src%\external\dx-agility-sdk-headers-1.714.0-preview\include\d3dx12 %dest%\external\dx-agility-sdk-headers-1.714.0-preview\include\d3dx12 /S
     mkdir %dest%\source\plugins\sl.dlss
     xcopy %src%\source\plugins\sl.dlss     %dest%\source\plugins\sl.dlss     /S
+    mkdir %dest%\source\plugins\sl.dlss_d
+    xcopy %src%\source\plugins\sl.dlss_d   %dest%\source\plugins\sl.dlss_d   /S
     mkdir %dest%\source\plugins\sl.imgui
     xcopy %src%\source\plugins\sl.imgui    %dest%\source\plugins\sl.imgui    /S
     mkdir %dest%\source\plugins\sl.nis
     xcopy %src%\source\plugins\sl.nis      %dest%\source\plugins\sl.nis      /S
-    mkdir %dest%\source\plugins\sl.nrd
-    xcopy %src%\source\plugins\sl.nrd      %dest%\source\plugins\sl.nrd      /S
     mkdir %dest%\source\plugins\sl.pcl
     xcopy %src%\source\plugins\sl.pcl      %dest%\source\plugins\sl.pcl      /S
     mkdir %dest%\source\plugins\sl.reflex
@@ -349,6 +353,7 @@ IF "%include_source%"=="True" (
     mkdir %dest%\external\ngx-sdk
     mkdir %dest%\external\ngx-sdk\include
     mkdir %dest%\external\ngx-sdk\lib
+    mkdir %dest%\external\ngx-sdk\lib\Windows_x86_64
 
     xcopy %src%\external\json\include                          %dest%\external\json\include /S
     copy %src%\external\json\LICENSE.MIT                       %dest%\external\json
@@ -359,10 +364,18 @@ IF "%include_source%"=="True" (
     copy %src%\external\ngx-sdk\include\nvsdk_ngx_params.h     %dest%\external\ngx-sdk\include
     copy %src%\external\ngx-sdk\include\nvsdk_ngx.h            %dest%\external\ngx-sdk\include
     copy %src%\external\ngx-sdk\include\nvsdk_ngx_vk.h         %dest%\external\ngx-sdk\include
+    copy %src%\external\ngx-sdk\include\nvsdk_ngx_defs_dlssd.h       %dest%\external\ngx-sdk\include
+    copy %src%\external\ngx-sdk\include\nvsdk_ngx_helpers_dlssd.h    %dest%\external\ngx-sdk\include
+    copy %src%\external\ngx-sdk\include\nvsdk_ngx_helpers_dlssd_vk.h %dest%\external\ngx-sdk\include
+    copy %src%\external\ngx-sdk\include\nvsdk_ngx_params_dlssd.h     %dest%\external\ngx-sdk\include
     copy %src%\external\ngx-sdk\include\nvsdk_ngx_defs_deepdvc.h       %dest%\external\ngx-sdk\include
     copy %src%\external\ngx-sdk\include\nvsdk_ngx_helpers_deepdvc.h    %dest%\external\ngx-sdk\include
     copy %src%\external\ngx-sdk\include\nvsdk_ngx_helpers_deepdvc_vk.h %dest%\external\ngx-sdk\include
-    xcopy %src%\external\ngx-sdk\lib                           %dest%\external\ngx-sdk\lib /S
+
+    xcopy %src%\external\ngx-sdk\lib\Windows_x86_64                    %dest%\external\ngx-sdk\lib\Windows_x86_64 /S
+
+    mkdir %dest%\external\reflex-sdk-vk
+    xcopy %src%\external\reflex-sdk-vk\ %dest%\external\reflex-sdk-vk /S
 
     :: Shader Source
     copy %src%\shaders\copy.hlsl                       %dest%\shaders
@@ -370,8 +383,6 @@ IF "%include_source%"=="True" (
     copy %src%\shaders\copy_to_buffer_cs.h             %dest%\shaders
     copy %src%\shaders\copy_to_buffer_spv.h            %dest%\shaders
     copy %src%\shaders\mvec.hlsl                       %dest%\shaders
-    copy %src%\shaders\nrd_pack.hlsl                   %dest%\shaders
-    copy %src%\shaders\nrd_prep.hlsl                   %dest%\shaders
     copy %src%\shaders\vulkan_clear_image_view.comp    %dest%\shaders
     copy %src%\shaders\vulkan_clear_image_view_spirv.h %dest%\shaders
 
@@ -382,10 +393,6 @@ IF "%include_source%"=="True" (
     copy %src%\_artifacts\shaders\copy_to_buffer_spv.h %dest%\_artifacts\shaders
     copy %src%\_artifacts\shaders\mvec_cs.h            %dest%\_artifacts\shaders
     copy %src%\_artifacts\shaders\mvec_spv.h           %dest%\_artifacts\shaders
-    copy %src%\_artifacts\shaders\nrd_pack_cs.h        %dest%\_artifacts\shaders
-    copy %src%\_artifacts\shaders\nrd_pack_spv.h       %dest%\_artifacts\shaders
-    copy %src%\_artifacts\shaders\nrd_prep_cs.h        %dest%\_artifacts\shaders
-    copy %src%\_artifacts\shaders\nrd_prep_spv.h       %dest%\_artifacts\shaders
 
     :: Feature DLLs
     IF "%create_features_dir%"=="True" (
@@ -398,6 +405,8 @@ IF "%include_source%"=="True" (
         copy %src%\features\nvngx_dlssg.dll %dest%\features
         copy %src%\features\development\nvngx_dlssg.dll %dest%\features\development
 
+        copy %src%\features\nvngx_dlssd.dll %dest%\features
+        copy %src%\features\development\nvngx_dlssd.dll %dest%\features\development
 
         copy %src%\features\nvngx_deepdvc.dll %dest%\features
         copy %src%\features\development\nvngx_deepdvc.dll %dest%\features\development
@@ -405,7 +414,6 @@ IF "%include_source%"=="True" (
         :: Feature Licenses
         copy %src%\features\nvngx_dlss.license.txt %dest%\features\nvngx_dlss.license.txt
         copy %src%\features\nis.license.txt %dest%\features\nis.license.txt
-        copy %src%\features\NRD.license.txt %dest%\features\NRD.license.txt
         copy %src%\features\reflex.license.txt %dest%\features\reflex.license.txt
     )
 

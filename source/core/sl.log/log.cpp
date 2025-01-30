@@ -24,10 +24,19 @@
 #include <map>
 
 #include "include/sl.h"
+#include "include/sl_core_types.h"
 #include "source/core/sl.log/log.h"
 #include "source/core/sl.extra/extra.h"
 #include "source/core/sl.param/parameters.h"
 #include "source/core/sl.thread/thread.h"
+
+#ifndef NDEBUG
+#define ASSERT_ONLY_CODE 1
+#endif
+
+#if ASSERT_ONLY_CODE
+#include "assert.h"
+#endif
 
 namespace sl
 {
@@ -35,6 +44,7 @@ namespace log
 {
 
 #ifdef SL_WINDOWS
+extern bool g_slEnableLogPreMetaDataUniqueWAR = false;
 
 HMONITOR g_otherMonitor = {};
 
@@ -148,6 +158,20 @@ struct Log : ILog
         m_messageDelayMs = messageDelayMs;
     }
 
+    void flush() override
+    {
+        if (m_worker)
+        {
+            m_worker->flush(UINT_MAX);
+        }
+
+        // No need to fflush here because logging lambda calls print() which always flushes
+        // if (m_file)
+        // {
+        //     fflush(m_file);
+        // }
+    }
+
     void shutdown() override
     {
         if (m_worker)
@@ -257,7 +281,17 @@ struct Log : ILog
             }
         }
 
-        auto logLambda = [this, msg, level, color, file, line, func, type, fmt, formatted, isMetaDataUnique]()->void
+#if ASSERT_ONLY_CODE
+        if ((LogType)type == LogType::eError && IsDebuggerPresent())
+        {
+            // Use log message and originating file/line number for assert
+            _wassert(std::wstring(msg.begin(), msg.end()).c_str(), std::wstring(file.begin(), file.end()).c_str(), line);
+        }
+#endif
+
+        // This thread ID
+        auto tid = std::this_thread::get_id();
+        auto logLambda = [this, tid, msg, level, color, file, line, func, type, fmt, formatted, isMetaDataUnique]()->void
         {
             if (m_console && !m_consoleActive)
             {
@@ -321,10 +355,7 @@ struct Log : ILog
             // Log type
             std::string prefix[] = { "info","warn","error" };
             static_assert(countof(prefix) == (size_t)LogType::eCount);
-           
-            // This thread ID
-            auto tid = std::this_thread::get_id();
-
+            
             // Metadata that makes a log message unique
             std::ostringstream oss_logSourceMetdata;
             oss_logSourceMetdata << "[tid:" << tid << "]" << "[" << sl::extra::getPrettyTimestamp() + "]";

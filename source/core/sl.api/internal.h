@@ -26,6 +26,7 @@
 #include <vector>
 #ifdef SL_WINDOWS
 #include <windows.h>
+#include <unknwn.h>
 #endif
 
 #include "include/sl_struct.h"
@@ -86,79 +87,6 @@ struct DECLSPEC_UUID("ADEC44E2-61F0-45C3-AD9F-1B37379284FF") StreamlineRetrieveB
 
 namespace sl
 {
-
-template<typename T>
-T* findStruct(const void* ptr)
-{
-    auto base = static_cast<const BaseStructure*>(ptr);
-    while (base && base->structType != T::s_structType)
-    {
-        base = base->next;
-    }
-    return (T*)base;
-}
-
-template<typename T>
-T* findStruct(void* ptr)
-{
-    auto base = static_cast<const BaseStructure*>(ptr);
-    while (base && base->structType != T::s_structType)
-    {
-        base = base->next;
-    }
-    return (T*)base;
-}
-
-//! Find a struct of type T, but stop the search if we find a struct of type S
-template<typename T, typename S>
-T* findStruct(void* ptr)
-{
-    auto base = static_cast<const BaseStructure*>(ptr);
-    while (base && base->structType != T::s_structType)
-    {
-        base = base->next;
-
-        // If we find a struct of type S, we know should stop the search
-        if (base->structType == S::s_structType)
-        {
-            return nullptr;
-        }
-    }
-    return (T*)base;
-}
-
-template<typename T>
-T* findStruct(const void** ptr, uint32_t count)
-{
-    const BaseStructure* base{};
-    for (uint32_t i = 0; base == nullptr && i < count; i++)
-    {
-        base = static_cast<const BaseStructure*>(ptr[i]);
-        while (base && base->structType != T::s_structType)
-        {
-            base = base->next;
-        }
-    }
-    return (T*)base;
-}
-
-template<typename T>
-bool findStructs(const void** ptr, uint32_t count, std::vector<T*>& structs)
-{
-    for (uint32_t i = 0; i < count; i++)
-    {
-        auto base = static_cast<const BaseStructure*>(ptr[i]);
-        while (base)
-        {
-            if (base->structType == T::s_structType)
-            {
-                structs.push_back((T*)base);
-            }
-            base = base->next;
-        }
-    }
-    return structs.size() > 0;
-}
 
 struct VkDevices
 {

@@ -212,6 +212,8 @@ public:
     virtual ComputeStatus createCommandListContext(CommandQueue queue, uint32_t count, ICommandListContext*& ctx, const char friendlyName[])  override { return ComputeStatus::eNoImplementation; }
     virtual ComputeStatus destroyCommandListContext(ICommandListContext* ctx) override { return ComputeStatus::eNoImplementation; }
 
+    virtual uint64_t getCompletedValue(Fence fence) override { /* not implemented */ assert(false); return 0; }
+
     virtual ComputeStatus createCommandQueue(CommandQueueType type, CommandQueue& queue, const char friendlyName[], uint32_t index) override { return ComputeStatus::eNoImplementation; }
     virtual ComputeStatus destroyCommandQueue(CommandQueue& queue) override { return ComputeStatus::eNoImplementation; }
     virtual ComputeStatus createFence(FenceFlags flags, uint64_t initialValue, Fence& outFence, const char friendlyName[] = "")  override { return ComputeStatus::eNoImplementation; }
@@ -294,7 +296,10 @@ public:
     virtual ComputeStatus createResourcePool(IResourcePool** pool, const char* vramSegment) override final;
     virtual ComputeStatus destroyResourcePool(IResourcePool* pool) override final;
 
+    // OFA
     virtual ComputeStatus isNativeOpticalFlowSupported() override { return ComputeStatus::eNoImplementation; }
+
+    virtual ComputeStatus isDeviceExtensionSupported(const char* extension, uint32_t version) override { return ComputeStatus::eNoImplementation; }
 };
 
 }
