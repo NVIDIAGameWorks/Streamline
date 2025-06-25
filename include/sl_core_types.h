@@ -584,7 +584,7 @@ SL_STRUCT_BEGIN(ViewportHandle, StructType({ 0x171b6435, 0x9b3c, 0x4fc8, { 0x99,
     operator uint32_t() const { return value; }
 private:
     uint32_t value = UINT_MAX;
-    friend void sl::test::AbiValidation();
+    friend constexpr void sl::test::AbiValidation();
 SL_STRUCT_END()
 
 //! Specifies feature requirement flags
