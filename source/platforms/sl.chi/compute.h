@@ -529,6 +529,8 @@ enum class VendorId : uint32_t
     eNVDA = 0x10DE,
     eAMD = 0x1002,
     eIntel = 0x8086,
+    eQualcommACPI = 0x4D4F4351,
+    eQualcommPCI = 0x0571,
 };
 
 inline bool isVendorNvidia(VendorId id)
@@ -536,6 +538,10 @@ inline bool isVendorNvidia(VendorId id)
     return id == VendorId::eNVDA;
 }
 
+inline bool isVendorQualcomm(VendorId id)
+{
+    return (id == VendorId::eQualcommACPI) || (id == VendorId::eQualcommPCI);
+}
 
 enum FenceFlags : uint32_t
 {

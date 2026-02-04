@@ -202,7 +202,7 @@ bool getSystemCaps(common::SystemCaps*& info)
             DXGI_ADAPTER_DESC desc;
             if (SUCCEEDED(adapter->GetDesc(&desc)))
             {
-                // Intel, AMD or NVIDIA physical GPUs only
+                // Intel, AMD, Qulacomm or NVIDIA physical GPUs only
                 auto vendor = (chi::VendorId)desc.VendorId;
                 
 #ifndef SL_PRODUCTION
@@ -213,7 +213,7 @@ bool getSystemCaps(common::SystemCaps*& info)
                 }
 #endif
 
-                if (isVendorNvidia(vendor) || vendor == chi::VendorId::eIntel || vendor == chi::VendorId::eAMD)
+                if (isVendorNvidia(vendor) || isVendorQualcomm(vendor) || vendor == chi::VendorId::eIntel || vendor == chi::VendorId::eAMD)
                 {
                     info->adapters[info->gpuCount].nativeInterface = adapter;
                     info->adapters[info->gpuCount].vendor = vendor;
