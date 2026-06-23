@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2026 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -36,10 +36,36 @@
 #include <d3d11_4.h>
 
 #if SL_ENABLE_PROFILING
+
+#if !defined(_M_ARM64)
 #pragma comment( lib, "WinPixEventRuntime.lib")
 #define USE_PIX
+#endif // !_M_ARM64
+
 #include "external/pix/Include/WinPixEventRuntime/pix3.h"
-#endif
+
+#ifdef USE_PIX
+// LoadLibraryW: no SEH if DLL missing (NvBug 6091092).
+static const bool sPixAvailable{ LoadLibraryW(L"WinPixEventRuntime.dll") != nullptr };
+#define SL_PIX_CALL(...) do { if (sPixAvailable) { __VA_ARGS__; } } while (0)
+#else // !USE_PIX: pix3.h provides inline no-op stubs
+#define SL_PIX_CALL(...) do { __VA_ARGS__; } while (0)
+#endif // USE_PIX
+
+#else // !SL_ENABLE_PROFILING: NVI wrapper short-circuits before *Impl
+#define SL_PIX_CALL(...) ((void)0)
+#endif // SL_ENABLE_PROFILING
+
+#include "external/nsight-sdk/SystemsGraphics/include/NGFX_D3D12.h"
+#include "external/nsight-sdk/SystemsGraphics/include/NGFX_GraphicsCapture_D3D12.h"
+#include "external/nsight-sdk/SystemsGraphics/include/NGFX_SystemProfiling_D3D12.h"
+
+inline constexpr auto ngfxFrameBoundaryType(bool isGenerated, bool isBegin)
+{
+    return isGenerated
+        ? (isBegin ? NGFX_For_Dlss_DLSS_FG_PresentBoundaryType_Generated_Frame_Begin : NGFX_For_Dlss_DLSS_FG_PresentBoundaryType_Generated_Frame_End)
+        : (isBegin ? NGFX_For_Dlss_DLSS_FG_PresentBoundaryType_Real_Frame_Begin : NGFX_For_Dlss_DLSS_FG_PresentBoundaryType_Real_Frame_End);
+}
 
 namespace sl
 {
@@ -401,6 +427,7 @@ public:
         // GPU waits in vkd3d-proton (Linux DX12-to-Vulkan translation layer).
         D3D12_FENCE_FLAGS fenceFlags = useSharedFence ? D3D12_FENCE_FLAG_SHARED : D3D12_FENCE_FLAG_NONE;
         device->CreateFence(0, fenceFlags, IID_PPV_ARGS(&m_fence));
+        m_fence->SetName((m_name + L".fence").c_str());
         m_fenceValue.resize(count);
         for (uint32_t i = 0; i < count; i++)
         {
@@ -749,19 +776,29 @@ public:
         return WaitStatus::eNoTimeout;
     }
 
+    uint32_t resolvePresentFlags(SwapChain targetSwapChain, uint32_t presentSyncInterval, uint32_t presentFlags) override
+    {
+        BOOL fullscreen{ FALSE };
+        HRESULT hr{ ((IDXGISwapChain*)targetSwapChain)->GetFullscreenState(&fullscreen, nullptr) };
+        if (FAILED(hr))
+        {
+            SL_LOG_WARN("GetFullscreenState failed (0x%x)", hr);
+        }
+        if (fullscreen || presentSyncInterval)
+        {
+            presentFlags &= ~DXGI_PRESENT_ALLOW_TEARING;
+        }
+        else if (presentSyncInterval == 0)
+        {
+            presentFlags |= DXGI_PRESENT_ALLOW_TEARING;
+        }
+        return presentFlags;
+    }
+
     int present(SwapChain chain, uint32_t sync, uint32_t flags, void* params)
     {
-        BOOL fullscreen = FALSE;
-        ((IDXGISwapChain*)chain)->GetFullscreenState(&fullscreen, nullptr);
-        if (fullscreen || sync)
-        {
-            flags &= ~DXGI_PRESENT_ALLOW_TEARING;
-        }
-        else if (sync == 0)
-        {
-            flags |= DXGI_PRESENT_ALLOW_TEARING;
-        }
-        
+        flags = resolvePresentFlags(chain, sync, flags);
+
         HRESULT res{};
         if (params)
         {
@@ -772,6 +809,66 @@ public:
             res = ((IDXGISwapChain*)chain)->Present(sync, flags);
         }
         return res;
+    }
+
+    void delimitPresentRequest(uint32_t presentFrameIndex, uint32_t syncInterval, uint32_t flags, const void* presentParams) override
+    {
+        if (!m_nsightInitialized)
+        {
+            return;
+        }
+        if (m_cmdQueue.Get() == nullptr)
+        {
+            SL_LOG_WARN("D3D12 command queue is null - skipping present request marker");
+            return;
+        }
+        uint32_t generatedFrameIndex{ 0 };
+        NGFX_DLSS_FG_PresentBoundary_D3D12_Params params{
+            NGFX_DLSS_FG_PresentBoundary_D3D12_Params_VER,
+            NGFX_For_Dlss_DLSS_FG_PresentBoundaryType_Application_Present_Requested,
+            generatedFrameIndex,
+            m_cmdQueue.Get(),
+            (presentParams != nullptr),
+            syncInterval,
+            flags,
+            reinterpret_cast<const DXGI_PRESENT_PARAMETERS*>(presentParams),
+            presentFrameIndex
+        };
+        NGFX_Result result{ NGFX_DLSS_FG_PresentBoundary_D3D12(&params) };
+        if (result != NGFX_Result_Success && result != NGFX_Result_NotImplemented)
+        {
+            SL_LOG_WARN("delimitPresentRequest failed (%d)", result);
+        }
+    }
+
+    void delimitFrame(uint32_t presentFrameIndex, int32_t genFrameIndex, bool isBegin, uint32_t syncInterval, uint32_t flags, const void* presentParams) override
+    {
+        if (!m_nsightInitialized)
+        {
+            return;
+        }
+        if (m_cmdQueue.Get() == nullptr)
+        {
+            SL_LOG_WARN("D3D12 command queue is null - skipping frame boundary marker");
+            return;
+        }
+        auto isGenerated{ genFrameIndex >= 0 };
+        NGFX_DLSS_FG_PresentBoundary_D3D12_Params params{
+            NGFX_DLSS_FG_PresentBoundary_D3D12_Params_VER,
+            ngfxFrameBoundaryType(isGenerated, isBegin),
+            isGenerated ? static_cast<uint32_t>(genFrameIndex) : 0,
+            m_cmdQueue.Get(),
+            (presentParams != nullptr),
+            syncInterval,
+            flags,
+            reinterpret_cast<const DXGI_PRESENT_PARAMETERS*>(presentParams),
+            presentFrameIndex
+        };
+        NGFX_Result result{ NGFX_DLSS_FG_PresentBoundary_D3D12(&params) };
+        if (result != NGFX_Result_Success && result != NGFX_Result_NotImplemented)
+        {
+            SL_LOG_WARN("delimitFrame failed (%d)", result);
+        }
     }
 
     virtual void monitoringThreadTick() override
@@ -875,11 +972,11 @@ ComputeStatus D3D12::init(Device device, param::IParameters* params)
             heapDesc.NodeMask = (1 << Node);
             hr = m_device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&m_heap->descriptorHeap[Node]));
             if (FAILED(hr)) { SL_LOG_ERROR( " failed to create descriptor heap, hr=%d", hr); return ComputeStatus::eError; }
-            m_heap->descriptorHeap[Node]->SetName(L"sl.chi.heapGPU");
+            m_heap->descriptorHeap[Node]->SetName(extra::toWStr(SL_COMPOSE_NAME(kComputeTag, "heap.gpu")).c_str());
             heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
             hr = m_device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&m_heap->descriptorHeapCPU[Node]));
             if (FAILED(hr)) { SL_LOG_ERROR( " failed to create descriptor heap, hr=%d", hr); return ComputeStatus::eError; }
-            m_heap->descriptorHeapCPU[Node]->SetName(L"sl.chi.heapCPU");
+            m_heap->descriptorHeapCPU[Node]->SetName(extra::toWStr(SL_COMPOSE_NAME(kComputeTag, "heap.cpu")).c_str());
         }
         
         m_descriptorSize = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
@@ -891,13 +988,48 @@ ComputeStatus D3D12::init(Device device, param::IParameters* params)
 
     CHI_CHECK(createKernel((void*)copy_to_buffer_cs, copy_to_buffer_cs_len, "copy_to_buffer.cs", "main", m_copyKernel));
 
+    initNsightActivity();
+
     return ComputeStatus::eOk;
+}
+
+// Non-virtual: not all backends can initialize all NSight SDK activity types,
+// and the base class cannot provide a meaningful default implementation.
+void D3D12::initNsightActivity()
+{
+    NGFX_SetLibraryLoadFn(nsightSecureLoadLibraryCallback);
+
+    NGFX_GraphicsCapture_InitializeActivity_D3D12_Params gfxParams{ NGFX_GraphicsCapture_InitializeActivity_D3D12_Params_VER };
+    NGFX_Result gfxResult{ NGFX_GraphicsCapture_InitializeActivity_D3D12(&gfxParams) };
+    if (gfxResult == NGFX_Result_Success)
+    {
+        m_nsightInitialized = true;
+        SL_LOG_INFO("NSight Graphics attached, capture activity initialized");
+    }
+    else
+    {
+        SL_LOG_VERBOSE("NSight Graphics not attached, capture activity initialization failed (%d)", gfxResult);
+        NGFX_SystemProfiling_InitializeActivity_D3D12_Params sysParams{ NGFX_SystemProfiling_InitializeActivity_D3D12_Params_VER };
+        NGFX_Result sysResult{ NGFX_SystemProfiling_InitializeActivity_D3D12(&sysParams) };
+        if (sysResult == NGFX_Result_Success)
+        {
+            m_nsightInitialized = true;
+            SL_LOG_INFO("NSight Systems attached, profiling activity initialized");
+        }
+        else
+        {
+            SL_LOG_VERBOSE("NSight Systems not attached, profiling activity initialization failed (%d)", sysResult);
+        }
+    }
 }
 
 ComputeStatus D3D12::shutdown()
 {
+    m_nsightInitialized = false;
+
     CHI_CHECK(destroyKernel(m_copyKernel));
     m_copyKernel = {};
+
 
     for (UINT node = 0; node < MAX_NUM_NODES; node++)
     {
@@ -1236,6 +1368,7 @@ ComputeStatus D3D12::createCommandListContext(ChiCommandQueue *queue, uint32_t c
 {
     auto tmp = new CommandListContext();
     tmp->init(friendlyName, m_device, (ID3D12CommandQueue*)queue, count, dx11On12);
+    tmp->m_nsightInitialized = m_nsightInitialized;
     ctx = tmp;
     return ComputeStatus::eOk;
 }
@@ -1358,7 +1491,9 @@ ComputeStatus D3D12::setFullscreenState(SwapChain chain, bool fullscreen, Output
 
 ComputeStatus D3D12::getSwapChainBuffer(SwapChain chain, uint32_t index, Resource& buffer)
 {
-    ID3D12Resource* tmp;
+    ID3D12Resource* tmp = nullptr;
+
+    // Regular swapchain buffer
     if (FAILED(((IDXGISwapChain*)chain)->GetBuffer(index, IID_PPV_ARGS(&tmp))))
     {
         SL_LOG_ERROR( "Failed to get buffer from swapchain");
@@ -1367,6 +1502,39 @@ ComputeStatus D3D12::getSwapChainBuffer(SwapChain chain, uint32_t index, Resourc
     buffer = new sl::Resource(ResourceType::eTex2d, tmp);
     // We free these buffers but never allocate them so account for the VRAM
     manageVRAM(buffer, VRAMOperation::eAlloc);
+    return ComputeStatus::eOk;
+}
+
+// Private GUID used to attach per-plugin context to a native IDXGISwapChain.
+static const GUID kSwapChainPrivateDataGUID = { 0x7a3b9e2c, 0xd1f4, 0x4a8e, { 0xb5, 0xc6, 0x2e, 0x9f, 0x0a, 0x1d, 0x3b, 0x7c } };
+
+ComputeStatus D3D12::setSwapChainPrivateData(void* nativeSwapChain, void* data)
+{
+    if (!nativeSwapChain) return ComputeStatus::eInvalidArgument;
+    auto* swapChain = static_cast<IDXGISwapChain*>(nativeSwapChain);
+    HRESULT hr = swapChain->SetPrivateData(kSwapChainPrivateDataGUID, sizeof(data), &data);
+    return SUCCEEDED(hr) ? ComputeStatus::eOk : ComputeStatus::eError;
+}
+
+ComputeStatus D3D12::getSwapChainPrivateData(void* nativeSwapChain, void** data)
+{
+    if (!nativeSwapChain || !data) return ComputeStatus::eInvalidArgument;
+    auto* swapChain = static_cast<IDXGISwapChain*>(nativeSwapChain);
+    void* result = nullptr;
+    UINT dataSize = sizeof(result);
+    HRESULT hr = swapChain->GetPrivateData(kSwapChainPrivateDataGUID, &dataSize, &result);
+    // "Nothing attached yet" is a normal state, not an error. Map it to eOk + nullptr so callers
+    // don't need to special-case the underlying HRESULT, and so the contract matches Vulkan
+    // (vkGetPrivateData returns VK_SUCCESS with value 0 for an unset slot).
+    if (hr == DXGI_ERROR_NOT_FOUND)
+    {
+        *data = nullptr;
+        return ComputeStatus::eOk;
+    }
+    // dataSize mismatch would mean someone else wrote to our GUID with a different layout —
+    // treat as an error rather than returning a torn pointer.
+    if (FAILED(hr) || dataSize != sizeof(result)) return ComputeStatus::eError;
+    *data = result;
     return ComputeStatus::eOk;
 }
 
@@ -2022,7 +2190,17 @@ ComputeStatus D3D12::createBufferResourceImpl(ResourceDescription &resourceDesc,
 
     CD3DX12_HEAP_PROPERTIES heapProp(NativeHeapType, resourceDesc.creationMask, resourceDesc.visibilityMask ? resourceDesc.visibilityMask : m_visibleNodeMask);
 
-    if (m_allocateCallback)
+    if (resourceDesc.flags & ResourceFlags::eSharedResource)
+    {
+        HRESULT hr = m_device->CreateCommittedResource(&heapProp, D3D12_HEAP_FLAG_SHARED, &bufferDesc, NativeInitialState, nullptr, IID_PPV_ARGS(&res));
+        if (FAILED(hr))
+        {
+            SL_LOG_ERROR("CreateCommittedResource (shared buffer) failed: %s (width=%u, state=0x%x)",
+                std::system_category().message(hr).c_str(), (uint32_t)bufferDesc.Width, (uint32_t)NativeInitialState);
+            return ComputeStatus::eError;
+        }
+    }
+    else if (m_allocateCallback)
     {
         ResourceAllocationDesc desc = { ResourceType::eBuffer, &bufferDesc, (uint32_t)NativeInitialState, &heapProp };
         auto result = m_allocateCallback(&desc, m_device);
@@ -2044,8 +2222,8 @@ ComputeStatus D3D12::createBufferResourceImpl(ResourceDescription &resourceDesc,
 
 ComputeStatus D3D12::setDebugName(Resource res, const char name[])
 {
-    ID3D12Pageable *resource = (ID3D12Pageable*)(res->native);
-    resource->SetPrivateData(WKPDID_D3DDebugObjectName, (UINT)strlen(name), name);
+    auto wname = extra::utf8ToUtf16(name);
+    ((ID3D12Object*)(res->native))->SetName(wname.c_str());
     return ComputeStatus::eOk;
 }
 
@@ -2480,37 +2658,31 @@ ComputeStatus D3D12::endPerfSection(CommandList cmdList, const char* key, float 
 }
 
 
-ComputeStatus D3D12::beginProfiling(CommandList cmdList, uint32_t metadata, const char* marker)
-{
 #if SL_ENABLE_PROFILING
-    PIXBeginEvent(((ID3D12GraphicsCommandList*)cmdList), metadata, marker);
-#endif    
+ComputeStatus D3D12::beginProfilingImpl(CommandList cmdList, const char* marker, uint8_t r, uint8_t g, uint8_t b)
+{
+    SL_PIX_CALL(PIXBeginEvent(((ID3D12GraphicsCommandList*)cmdList), PIX_COLOR(r, g, b), marker));
     return ComputeStatus::eOk;
 }
 
-ComputeStatus D3D12::endProfiling(CommandList cmdList)
+ComputeStatus D3D12::endProfilingImpl(CommandList cmdList)
 {
-#if SL_ENABLE_PROFILING
-    PIXEndEvent(((ID3D12GraphicsCommandList*)cmdList));
+    SL_PIX_CALL(PIXEndEvent(((ID3D12GraphicsCommandList*)cmdList)));
+    return ComputeStatus::eOk;
+}
+
+ComputeStatus D3D12::beginProfilingQueueImpl(CommandQueue cmdQueue, const char* marker, uint8_t r, uint8_t g, uint8_t b)
+{
+    SL_PIX_CALL(PIXBeginEvent(((ID3D12CommandQueue*)cmdQueue), PIX_COLOR(r, g, b), marker));
+    return ComputeStatus::eOk;
+}
+
+ComputeStatus D3D12::endProfilingQueueImpl(CommandQueue cmdQueue)
+{
+    SL_PIX_CALL(PIXEndEvent(((ID3D12CommandQueue*)cmdQueue)));
+    return ComputeStatus::eOk;
+}
 #endif
-    return ComputeStatus::eOk;
-}
-
-ComputeStatus D3D12::beginProfilingQueue(CommandQueue cmdQueue, uint32_t metadata, const char* marker)
-{
-#if SL_ENABLE_PROFILING
-    PIXBeginEvent(((ID3D12CommandQueue*)cmdQueue), metadata, marker);
-#endif    
-    return ComputeStatus::eOk;
-}
-
-ComputeStatus D3D12::endProfilingQueue(CommandQueue cmdQueue)
-{
-#if SL_ENABLE_PROFILING
-    PIXEndEvent(((ID3D12CommandQueue*)cmdQueue));
-#endif
-    return ComputeStatus::eOk;
-}
 
 bool D3D12::signalCPUFence(Fence fence, uint64_t syncValue)
 {
@@ -2722,6 +2894,7 @@ ComputeStatus D3D12::destroySharedHandle(Handle& handle)
     return ComputeStatus::eOk;
 }
 
+
 ComputeStatus D3D12::getResourceFromSharedHandle(ResourceType type, Handle handle, Resource& resource)
 {
     if (type == ResourceType::eTex2d)
@@ -2734,7 +2907,7 @@ ComputeStatus D3D12::getResourceFromSharedHandle(ResourceType type, Handle handl
             return ComputeStatus::eError;
         }
         resource = new sl::Resource(ResourceType::eTex2d, tex);
-        setDebugName(resource, "sl.shared.from.d3d11");
+        setDebugName(resource, SL_COMPOSE_NAME(kComputeTag, "tex2d.shared-from-d3d11").c_str());
         // We free these buffers but never allocate them so account for the VRAM
         manageVRAM(resource, VRAMOperation::eAlloc);
     }
@@ -2748,6 +2921,7 @@ ComputeStatus D3D12::getResourceFromSharedHandle(ResourceType type, Handle handl
             return ComputeStatus::eError;
         }
         resource = new sl::Resource(ResourceType::eFence, fence);
+        setDebugName(resource, SL_COMPOSE_NAME(kComputeTag, "fence.shared").c_str());
     }
     else
     {

@@ -2340,7 +2340,7 @@ ImPlotPoint ImPlotPointGetterSlot2ForceZero(int idx, void* user_data)
 
 static void ImPlot_PlotLineG(const char* label_id, void* data, int count, int flags)
 {
-    SL_LOG_ERROR("sl.imgui unsupported function: ImPlot_PlotLineG");
+    SL_LOG_ERROR("%s unsupported function: ImPlot_PlotLineG", api::getPluginName());
     assert(0);
     return;
 }
@@ -2357,7 +2357,7 @@ static void ImPlot_SetNextFillStyle(const Float4& col, float alpha)
 
 static void ImPlot_PlotShadedG(const char* label_id, bool useGetterWithoutVal, void* data1, void* data2, int count, int flags)
 {       
-    SL_LOG_ERROR("sl.imgui unsupported function: ImPlot_PlotShadedG");
+    SL_LOG_ERROR("%s unsupported function: ImPlot_PlotShadedG", api::getPluginName());
     assert(0);
     return;
 }
@@ -3992,7 +3992,7 @@ void renderInternal()
         }
         else
         {
-            SL_LOG_ERROR("Unsupported render API used in sl.imgui plugin");
+            SL_LOG_ERROR("Unsupported render API used in %s plugin", api::getPluginName());
             assert(0);
         }
         
@@ -4011,7 +4011,7 @@ HRESULT slHookCreateSwapChainForCoreWindow(IDXGIFactory2* pFactory, IUnknown* pD
     auto& ctx = (*sl::imgui::getContext());
     ctx.cmdQueue = (chi::ChiCommandQueue *)pDevice;
     ctx.bufferCount = pDesc->BufferCount;
-    ctx.compute->createCommandListContext(ctx.cmdQueue, ctx.bufferCount, ctx.cmdList, "imgui-cmdlist");
+    ctx.compute->createCommandListContext(ctx.cmdQueue, ctx.bufferCount, ctx.cmdList, SL_RESOURCE_NAME("cmdCtx.render").c_str());
     ctx.frameMeter.reset();
     return S_OK;
 }
@@ -4021,7 +4021,7 @@ HRESULT slHookCreateSwapChainForHwnd(IDXGIFactory2* pFactory, IUnknown* pDevice,
     auto& ctx = (*sl::imgui::getContext());
     ctx.cmdQueue = (chi::ChiCommandQueue *)pDevice;
     ctx.bufferCount = pDesc->BufferCount;    
-    ctx.compute->createCommandListContext(ctx.cmdQueue, ctx.bufferCount, ctx.cmdList, "imgui-cmdlist");    
+    ctx.compute->createCommandListContext(ctx.cmdQueue, ctx.bufferCount, ctx.cmdList, SL_RESOURCE_NAME("cmdCtx.render").c_str());    
     ctx.frameMeter.reset();    
     return S_OK;
 }
@@ -4031,7 +4031,7 @@ HRESULT slHookCreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI_SW
     auto& ctx = (*sl::imgui::getContext());
     ctx.cmdQueue = (chi::ChiCommandQueue *)pDevice;
     ctx.bufferCount = pDesc->BufferCount;
-    ctx.compute->createCommandListContext(ctx.cmdQueue, ctx.bufferCount, ctx.cmdList, "imgui-cmdlist");
+    ctx.compute->createCommandListContext(ctx.cmdQueue, ctx.bufferCount, ctx.cmdList, SL_RESOURCE_NAME("cmdCtx.render").c_str());
     ctx.frameMeter.reset();
     return S_OK;
 }
@@ -4269,7 +4269,7 @@ VkResult slHookVkPresent(VkQueue Queue, const VkPresentInfoKHR* PresentInfo, boo
             {
                 ctx.compute->destroyCommandListContext(ctx.cmdList);
             }
-            chi::ComputeStatus ret = ctx.compute->createCommandListContext(ctx.cmdQueue, ctx.bufferCount, ctx.cmdList, "imgui-cmdlist");
+            chi::ComputeStatus ret = ctx.compute->createCommandListContext(ctx.cmdQueue, ctx.bufferCount, ctx.cmdList, SL_RESOURCE_NAME("cmdCtx.render").c_str());
             if (ret != chi::ComputeStatus::eOk)
             {
                 return VK_ERROR_INITIALIZATION_FAILED;

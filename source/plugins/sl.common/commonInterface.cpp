@@ -21,6 +21,7 @@
 */
 
 #include <map>
+#include <vector>
 
 #if defined(SL_WINDOWS)
 // Prevent warnings from MS headers
@@ -42,7 +43,7 @@
 #include "source/core/sl.param/parameters.h"
 #include "source/core/sl.interposer/hook.h"
 #include "source/core/sl.interposer/d3d12/d3d12.h"
-#include "source/platforms/sl.chi/capture.h"
+#include "source/core/sl.interposer/vulkan/layer.h"
 #include "source/platforms/sl.chi/d3d11.h"
 #include "source/platforms/sl.chi/d3d12.h"
 #include "source/platforms/sl.chi/vulkan.h"
@@ -60,15 +61,13 @@ namespace sl
 
 using namespace common;
 
+
 struct CommonInterfaceContext
 {
     RenderAPI platform{};
     sl::chi::ICompute* compute{};
     sl::chi::ICompute* computeDX11On12{};
     sl::chi::IResourcePool* pool{};
-#ifdef SL_CAPTURE
-    sl::chi::ICapture* capture{};
-#endif
     uint64_t currentFrame{};
 
     // Present hook health tracking
@@ -119,6 +118,7 @@ struct CommonInterfaceContext
     }
 
     UINT64 m_maxMemoryUsage = 0;
+
 };
 
 //! Our secondary context
@@ -130,6 +130,7 @@ uint64_t getCurrentFrame()
 {
     return ctx.currentFrame;
 }
+
 
 //! Get GPU information and share with other plugins
 //! 
@@ -387,12 +388,6 @@ std::pair<sl::chi::ICompute*, sl::chi::ICompute*> createCompute(void* device, Re
         // No callbacks here, d3d11 engines cannot allocate/deallocate d3d12 resources
         api::getContext()->parameters->set(sl::param::common::kComputeDX11On12API, ctx.computeDX11On12);
     }
-    
-#ifdef SL_CAPTURE
-    ctx.capture = sl::chi::getCapture();
-    ctx.capture->init(ctx.compute);
-    api::getContext()->parameters->set(sl::param::common::kCaptureAPI, ctx.capture);
-#endif
 
     return { ctx.compute, ctx.computeDX11On12 };
 }
@@ -421,6 +416,7 @@ bool destroyCompute()
     ctx.threadsD3D11 = {};
     ctx.threadsD3D12 = {};
     ctx.threadsVulkan = {};
+
     return true;
 }
 
@@ -577,7 +573,7 @@ sl::Result slEvaluateFeatureInternal(sl::Feature feature, const sl::FrameToken& 
 
 //! D3D12
 
-void presentCommon(UINT Flags)
+void presentCommon(UINT Flags, void* nativeSwapChain = nullptr, const std::vector<chi::SyncPoint>& presentSyncPoints = {})
 {
     if ((Flags & DXGI_PRESENT_TEST))
     {
@@ -640,7 +636,7 @@ void presentCommon(UINT Flags)
                     imgui::Float4 highlightColor{ 153.0f / 255.0f, 217.0f / 255.0f, 234.0f / 255.0f,1 };
                     imgui::Float4 warnColor{ 1.0f, 0.6f, 0, 1.0f };
                     auto v = api::getContext()->pluginVersion;
-                    if (ui->collapsingHeader(extra::format("sl.common v{}", (v.toStr() + "." + GIT_LAST_COMMIT_SHORT)).c_str(), imgui::kTreeNodeFlagDefaultOpen))
+                    if (ui->collapsingHeader(extra::format("{} v{}", api::getPluginName(), (v.toStr() + "." + GIT_LAST_COMMIT_SHORT)).c_str(), imgui::kTreeNodeFlagDefaultOpen))
                     {
                         // Data does not change here so no thread sync needed
                         uint64_t bytes, commonBytes;
@@ -652,7 +648,7 @@ void presentCommon(UINT Flags)
                             bytes += extraBytes;
                         }
                         // Our resource pool for volatile tags
-                        ctx.compute->getAllocatedBytes(commonBytes, api::getContext()->pluginName.c_str());
+                        ctx.compute->getAllocatedBytes(commonBytes, api::getPluginName());
                         static std::string s_platforms[] = { "D3D11","D3D12","Vulkan" };
                         ui->labelColored(highlightColor, "Computer: ", "%s", extra::format("{}", ctx.sysCaps.laptopDevice ? "Laptop" : "PC").c_str());
                         ui->labelColored(highlightColor, "OS: ", "%s", extra::format("{}.{}.{}", ctx.sysCaps.osVersionMajor, ctx.sysCaps.osVersionMinor, ctx.sysCaps.osVersionBuild).c_str());
@@ -741,7 +737,7 @@ void presentCommon(UINT Flags)
     }*/
 
     /*static std::string s_platforms[] = { "D3D11","D3D12","VK" };
-    s_stats = extra::format("sl.common {} - {}", v.toStr() + "." + GIT_LAST_COMMIT_SHORT, s_platforms[ctx.platform]);
+    s_stats = extra::format("{} {} - {}", api::getPluginName(), v.toStr() + "." + GIT_LAST_COMMIT_SHORT, s_platforms[ctx.platform]);
     api::getContext()->parameters->set(sl::param::common::kStats, (void*)s_stats.c_str());*/
 }
 
@@ -755,15 +751,31 @@ void afterPresentCommon(UINT Flags)
     recycleFramePresentEndResourceTags();
 }
 
+HRESULT slHookCreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI_SWAP_CHAIN_DESC* pDesc, IDXGISwapChain** ppSwapChain, bool& Skip)
+{
+    return S_OK;
+}
+
+HRESULT slHookCreateSwapChainForHwnd(IDXGIFactory2* pFactory, IUnknown* pDevice, HWND hWnd, const DXGI_SWAP_CHAIN_DESC1* pDesc, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* pFullscreenDesc, IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain, bool& Skip)
+{
+    return S_OK;
+}
+
+HRESULT slHookCreateSwapChainForCoreWindow(IDXGIFactory2* pFactory, IUnknown* pDevice, IUnknown* pWindow, const DXGI_SWAP_CHAIN_DESC1* pDesc, IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain, bool& Skip)
+{
+    return S_OK;
+}
+
+
 HRESULT slHookPresent1(IDXGISwapChain* swapChain, UINT SyncInterval, UINT Flags, DXGI_PRESENT_PARAMETERS* params, bool& Skip)
 {
-    presentCommon(Flags);
+    presentCommon(Flags, (void*)swapChain);
     return S_OK;
 }
 
 HRESULT slHookPresent(IDXGISwapChain* swapChain, UINT SyncInterval, UINT Flags, bool& Skip)
 {
-    presentCommon(Flags);
+    presentCommon(Flags, (void*)swapChain);
     return S_OK;
 }
 
@@ -783,7 +795,9 @@ HRESULT slHookResizeSwapChainPre(IDXGISwapChain* swapChain, UINT BufferCount, UI
 
 VkResult slHookVkPresent(VkQueue Queue, const VkPresentInfoKHR* PresentInfo, bool& Skip)
 {
-    presentCommon(0);
+    void* nativeSwapChain = (PresentInfo && PresentInfo->swapchainCount > 0) ? (void*)PresentInfo->pSwapchains[0] : nullptr;
+
+    presentCommon(0, nativeSwapChain);
 
     return VK_SUCCESS;
 }

@@ -41,20 +41,12 @@
 #include <array>
 #include <chrono>
 
-#ifdef SL_WINDOWS
 #define SL_IGNOREWARNING_PUSH __pragma(warning(push))
 #define SL_IGNOREWARNING_POP __pragma(warning(pop))
 #define SL_IGNOREWARNING(w) __pragma(warning(disable : w))
 #define SL_IGNOREWARNING_WITH_PUSH(w)                    \
         SL_IGNOREWARNING_PUSH                            \
         SL_IGNOREWARNING(w)
-#else
-#define SL_IGNOREWARNING_PUSH _Pragma("GCC diagnostic push")
-#define SL_IGNOREWARNING_POP _Pragma("GCC diagnostic pop")
-#define SL_INTERNAL_IGNOREWARNING(str) _Pragma(#str)
-#define SL_IGNOREWARNING(w) SL_INTERNAL_IGNOREWARNING(GCC diagnostic ignored #w)
-#define SL_IGNOREWARNING_WITH_PUSH(w) SL_IGNOREWARNING_PUSH SL_IGNOREWARNING(w)
-#endif
 
 
 namespace sl
@@ -132,7 +124,6 @@ inline constexpr uint32_t align(uint32_t size, uint32_t alignment)
 
 inline bool getEnvVar(const char* varName, std::string& value)
 {
-#if SL_WINDOWS
     auto neededSize = GetEnvironmentVariableA(varName, nullptr, 0);
     if (!neededSize)
     {
@@ -141,34 +132,12 @@ inline bool getEnvVar(const char* varName, std::string& value)
     value.resize(neededSize);
     neededSize = GetEnvironmentVariableA(varName, value.data(), neededSize);
     return true;
-#else
-    auto result = std::getenv(varName);
-    if (!result)
-    {
-        return false;
-    }
-    value = result;
-    return true;
-#endif
 }
 
 //! If value is null it will remove the environment variable
 inline bool setEnvVar(const char* varName, const char* value)
 {
-    bool result;
-#if SL_WINDOWS
-    result = (SetEnvironmentVariableA(varName, value) != 0);
-#else
-    if (value)
-    {
-        result = (setenv(varName, value, /*overwrite=*/1) == 0);
-    }
-    else
-    {
-        result = (unsetenv(varName) == 0);
-    }
-#endif
-    return result;
+    return (SetEnvironmentVariableA(varName, value) != 0);
 }
 
 #if SL_WINDOWS
@@ -381,7 +350,6 @@ struct TAverageValueMeter
     //! NOT thread safe
     int64_t timeFromLastTimestampUs()
     {
-#ifdef SL_WINDOWS
         if (startTime.QuadPart > 0)
         {
             LARGE_INTEGER endTime{};
@@ -391,9 +359,6 @@ struct TAverageValueMeter
             elapsedUs.QuadPart /= frequency.QuadPart;
         }
         return elapsedUs.QuadPart;
-#else
-        return 0;
-#endif
     }
 
     //! Performance sensitive code, can be called
@@ -432,11 +397,7 @@ struct TAverageValueMeter
     //! NOT thread safe
     inline int64_t getElapsedTimeUs() const
     {
-#ifdef SL_WINDOWS
         return elapsedUs.QuadPart;
-#else
-        return 0;
-#endif
     }
 
     //! Thread safe

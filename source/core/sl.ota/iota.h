@@ -36,10 +36,20 @@ namespace sl
 using Feature = uint32_t;
 
 #if defined(SL_UNITTEST_ONLY_CODE)
+// Forward declarations for friend access to protected setNGXPathOverride
+namespace api { class Context; }
+namespace plugin
+{
+bool onLoad(api::Context* ctx, const char* loaderJSON, const char* embeddedJSON);
+}
+void slSetOTAPath(const wchar_t* otaPath);
+
 namespace test
 {
 class SlOtaParserUnitTest;
 class SlPluginManagerUnitTest;
+class SlPluginDenylistUnitTest;
+class SlPluginManagerOTAOverrideTest;
 }
 #endif
 
@@ -97,7 +107,11 @@ class IOTA
     //!
     //! If a cache path override is in place, then this returns the overridden path.
     virtual bool getNGXPath(std::filesystem::path& ngxPath) const = 0;
+
   protected:
+    virtual void setNGXPathOverride(const std::optional<std::filesystem::path> ngxPath) = 0;
+    virtual void setOTAOverrideEnabled(std::optional<bool> enabled) = 0;
+
     virtual bool parseServerManifest(std::ifstream& manifest,
                                      std::map<std::string, Version>& versionMap,
                                      std::vector<std::string>& optionalDownloadPresent,
@@ -105,11 +119,13 @@ class IOTA
     virtual bool parseServerDenylist(std::ifstream& denylist) = 0;
     virtual bool parseMappingFile(std::ifstream& file) = 0;
 
-    virtual void setNGXPathOverride(const std::optional<std::filesystem::path> ngxPath) = 0;
-
 #if defined(SL_UNITTEST_ONLY_CODE)
+    friend bool sl::plugin::onLoad(api::Context* ctx, const char* loaderJSON, const char* embeddedJSON);
+    friend void sl::slSetOTAPath(const wchar_t* otaPath);
     friend class sl::test::SlOtaParserUnitTest;
+    friend class sl::test::SlPluginManagerOTAOverrideTest;
     friend class sl::test::SlPluginManagerUnitTest;
+    friend class sl::test::SlPluginDenylistUnitTest;
 #endif
 };
 

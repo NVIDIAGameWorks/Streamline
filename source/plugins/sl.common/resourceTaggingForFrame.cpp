@@ -183,7 +183,7 @@ sl::Result common::ResourceTaggingForFrame::setTag(const sl::Resource* resource,
                 // Defaults to eCopyDestination state
                 frameTag.clone =
                     m_pPool->allocate(actualResource,
-                                       extra::format("sl.tag.{}.volatile.{}", sl::getBufferTypeAsStr(tag), id).c_str());
+                                       (SL_RESOURCE_NAME("clone.tagVolatile.") + sl::getBufferTypeAsStr(tag) + "." + std::to_string(id)).c_str());
 
                 // Get tagged resource's state
                 chi::ResourceState state{};

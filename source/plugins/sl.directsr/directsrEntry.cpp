@@ -511,7 +511,7 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
 
         if (renderApi != sl::RenderAPI::eD3D12)
         {
-            SL_LOG_WARN("sl.directsr is only compatible with D3D12!");
+            SL_LOG_WARN("%s is only compatible with D3D12!", api::getPluginName());
             goto fail;
         }
     }
@@ -576,7 +576,7 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
 
 fail:
     freePluginGlobalState();
-    SL_LOG_WARN("sl.directsr failed");
+    SL_LOG_WARN("%s failed", api::getPluginName());
     return false;
 }
 

@@ -23,7 +23,11 @@
 #include <dxgi1_6.h>
 #include <d3d11_4.h>
 
+#include <algorithm>
+#include <mutex>
 #include <optional>
+#include <unordered_map>
+#include <vector>
 
 #include "include/sl.h"
 #include "source/core/sl.api/internal.h"
@@ -38,7 +42,6 @@
 #include "source/plugins/sl.common/versions.h"
 #include "source/platforms/sl.chi/d3d12.h"
 #include "source/platforms/sl.chi/vulkan.h"
-#include "source/platforms/sl.chi/capture.h"
 #include "source/plugins/sl.common/commonInterface.h"
 #include "source/plugins/sl.common/resourceTaggingForFrame.h"
 #include "source/plugins/sl.common/commonDRSInterface.h"
@@ -78,6 +81,10 @@ extern HRESULT slHookPresent(IDXGISwapChain* swapChain, UINT SyncInterval, UINT 
 extern HRESULT slHookAfterPresent(UINT Flags);
 extern HRESULT slHookPresent1(IDXGISwapChain* swapChain, UINT SyncInterval, UINT Flags, DXGI_PRESENT_PARAMETERS* params, bool& Skip);
 extern HRESULT slHookResizeSwapChainPre(IDXGISwapChain* swapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags, bool& Skip);
+
+extern HRESULT slHookCreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI_SWAP_CHAIN_DESC* pDesc, IDXGISwapChain** ppSwapChain, bool& Skip);
+extern HRESULT slHookCreateSwapChainForHwnd(IDXGIFactory2* pFactory, IUnknown* pDevice, HWND hWnd, const DXGI_SWAP_CHAIN_DESC1* pDesc, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* pFullscreenDesc, IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain, bool& Skip);
+extern HRESULT slHookCreateSwapChainForCoreWindow(IDXGIFactory2* pFactory, IUnknown* pDevice, IUnknown* pWindow, const DXGI_SWAP_CHAIN_DESC1* pDesc, IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain, bool& Skip);
 
 // VULKAN
 extern VkResult slHookVkPresent(VkQueue Queue, const VkPresentInfoKHR* PresentInfo, bool& Skip);
@@ -131,6 +138,8 @@ struct CommonEntryContext
     std::unique_ptr<ResourceTaggingBase> pBaseResourceTagging{};
     // Common constants must be set every frame, we allow up to 3 frames in flight
     common::ViewportIdFrameData<3, true> constants = { "common" };
+    std::unordered_map<Feature, std::vector<uint32_t>> featureViewportIds;
+    std::mutex featureViewportIdsMutex;
 
     // WAR for interposer < 2.3 which don't load PCL plugin.  PCL functionality will instead be handled in sl.common.
     PCLOptions pclOptions{};
@@ -140,6 +149,8 @@ struct CommonEntryContext
     // frame-based resource-tagging and thereby resource-tagging for multiple frames in the same frame as required by some SL clients
     // and is therefore not frame-aware.
     bool useResourceTaggingForFrame = false;
+
+
 };
 }
 
@@ -264,7 +275,7 @@ sl::Result common::ResourceTaggingGeneral::setTag(const sl::Resource* resource,
                 }
 
                 // Defaults to eCopyDestination state 
-                cr.clone = ctx.pool->allocate(actualResource, extra::format("sl.tag.{}.volatile.{}", sl::getBufferTypeAsStr(tag), id).c_str());
+                cr.clone = ctx.pool->allocate(actualResource, (SL_RESOURCE_NAME("clone.tagVolatile.") + sl::getBufferTypeAsStr(tag) + "." + std::to_string(id)).c_str());
 
                 // Get tagged resource's state
                 chi::ResourceState state{};
@@ -525,6 +536,50 @@ common::GetDataResult getCommonConstants(const common::EventData& ev, Constants*
     return (*common::getContext()).constants.get(ev, consts);
 }
 
+void registerCommonFeatureViewport(Feature feature, uint32_t viewportId)
+{
+    auto& ctx = (*common::getContext());
+    std::lock_guard<std::mutex> lock(ctx.featureViewportIdsMutex);
+    auto& viewportIds = ctx.featureViewportIds[feature];
+    if (std::find(viewportIds.begin(), viewportIds.end(), viewportId) == viewportIds.end())
+    {
+        viewportIds.push_back(viewportId);
+    }
+}
+
+void unregisterCommonFeatureViewport(Feature feature, uint32_t viewportId)
+{
+    auto& ctx = (*common::getContext());
+    std::lock_guard<std::mutex> lock(ctx.featureViewportIdsMutex);
+    auto it = ctx.featureViewportIds.find(feature);
+    if (it != ctx.featureViewportIds.end())
+    {
+        auto& viewportIds = it->second;
+        viewportIds.erase(std::remove(viewportIds.begin(), viewportIds.end(), viewportId), viewportIds.end());
+        if (viewportIds.empty())
+        {
+            ctx.featureViewportIds.erase(it);
+        }
+    }
+}
+
+namespace common
+{
+bool getFeatureViewports(Feature feature, std::vector<uint32_t>& viewportIds)
+{
+    auto& ctx = (*common::getContext());
+    std::lock_guard<std::mutex> lock(ctx.featureViewportIdsMutex);
+    auto it = ctx.featureViewportIds.find(feature);
+    if (it == ctx.featureViewportIds.end())
+    {
+        viewportIds.clear();
+        return false;
+    }
+    viewportIds = it->second;
+    return !viewportIds.empty();
+}
+}
+
 sl::Result slEvaluateFeature(sl::Feature feature, const sl::FrameToken& frame, const sl::BaseStructure** inputs, uint32_t numInputs, sl::CommandBuffer* cmdBuffer)
 {
 
@@ -677,34 +732,35 @@ bool createNGXFeature(void* cmdList, NVSDK_NGX_Feature feature, NVSDK_NGX_Handle
 
     extra::ScopedTasks vram([&ctx, id]()->void {ctx.compute->beginVRAMSegment(id); }, [&ctx]()->void {ctx.compute->endVRAMSegment(); });
 
+    NVSDK_NGX_Result status{};
     if (ctx.platform == RenderAPI::eD3D11)
     {
-        CHECK_NGX_RETURN_ON_ERROR(NVSDK_NGX_D3D11_CreateFeature((ID3D11DeviceContext*)cmdList, feature, ctx.ngxContext.params, handle));
+        status = NVSDK_NGX_D3D11_CreateFeature((ID3D11DeviceContext*)cmdList, feature, ctx.ngxContext.params, handle);
     }
     else if (ctx.platform == RenderAPI::eD3D12)
     {
-        CHECK_NGX_RETURN_ON_ERROR(NVSDK_NGX_D3D12_CreateFeature((ID3D12GraphicsCommandList*)cmdList, feature, ctx.ngxContext.params, handle));
+        status = NVSDK_NGX_D3D12_CreateFeature((ID3D12GraphicsCommandList*)cmdList, feature, ctx.ngxContext.params, handle);
     }
     else
     {
-        NVSDK_NGX_Result result = NVSDK_NGX_Result_FAIL_NotImplemented;
+        status = NVSDK_NGX_Result_FAIL_NotImplemented;
 
         if (!shouldSkipVulkanCreateFeature1(feature))
         {
             // Vulkan can't query device from command buffer, so we provide it ourselves.
             chi::Device device;
             CHI_CHECK_RF(ctx.compute->getDevice(device));
-            result = NVSDK_NGX_VULKAN_CreateFeature1((VkDevice)device, (VkCommandBuffer)cmdList, feature, ctx.ngxContext.params, handle);
+            status = NVSDK_NGX_VULKAN_CreateFeature1((VkDevice)device, (VkCommandBuffer)cmdList, feature, ctx.ngxContext.params, handle);
         }
 
         // Some old features don't support CreateFeature1, so fall back to CreateFeature.
-        if (result == NVSDK_NGX_Result_FAIL_NotImplemented || result == NVSDK_NGX_Result_FAIL_UnableToInitializeFeature)
+        if (status == NVSDK_NGX_Result_FAIL_NotImplemented || status == NVSDK_NGX_Result_FAIL_UnableToInitializeFeature)
         {
-            result = NVSDK_NGX_VULKAN_CreateFeature((VkCommandBuffer)cmdList, feature, ctx.ngxContext.params, handle);
+            status = NVSDK_NGX_VULKAN_CreateFeature((VkCommandBuffer)cmdList, feature, ctx.ngxContext.params, handle);
         }
-
-        CHECK_NGX_RETURN_ON_ERROR(result);
     }
+
+    if (status != NVSDK_NGX_Result_Success) { SL_LOG_ERROR("[%s] NGX create feature failed 0x%x", id, status); return false; }
     return true;
 }
 
@@ -714,18 +770,21 @@ bool evaluateNGXFeature(void* cmdList, NVSDK_NGX_Handle* handle, const char* id)
 
     extra::ScopedTasks vram([&ctx, id]()->void {ctx.compute->beginVRAMSegment(id); }, [&ctx]()->void {ctx.compute->endVRAMSegment(); });
 
+    NVSDK_NGX_Result status{};
     if (ctx.platform == RenderAPI::eD3D11)
     {
-        CHECK_NGX_RETURN_ON_ERROR(NVSDK_NGX_D3D11_EvaluateFeature((ID3D11DeviceContext*)cmdList, handle, ctx.ngxContext.params, nullptr));
+        status = NVSDK_NGX_D3D11_EvaluateFeature((ID3D11DeviceContext*)cmdList, handle, ctx.ngxContext.params, nullptr);
     }
     else if (ctx.platform == RenderAPI::eD3D12)
     {
-        CHECK_NGX_RETURN_ON_ERROR(NVSDK_NGX_D3D12_EvaluateFeature((ID3D12GraphicsCommandList*)cmdList, handle, ctx.ngxContext.params, nullptr));
+        status = NVSDK_NGX_D3D12_EvaluateFeature((ID3D12GraphicsCommandList*)cmdList, handle, ctx.ngxContext.params, nullptr);
     }
     else
     {
-        CHECK_NGX_RETURN_ON_ERROR(NVSDK_NGX_VULKAN_EvaluateFeature((VkCommandBuffer)cmdList, handle, ctx.ngxContext.params, nullptr));
+        status = NVSDK_NGX_VULKAN_EvaluateFeature((VkCommandBuffer)cmdList, handle, ctx.ngxContext.params, nullptr);
     }
+
+    if (status != NVSDK_NGX_Result_Success) { SL_LOG_ERROR("[%s] NGX evaluate feature failed 0x%x", id, status); return false; }
     return true;
 }
 
@@ -735,18 +794,21 @@ bool releaseNGXFeature(NVSDK_NGX_Handle* handle, const char* id)
 
     extra::ScopedTasks vram([&ctx, id]()->void {ctx.compute->beginVRAMSegment(id); }, [&ctx]()->void {ctx.compute->endVRAMSegment(); });
 
+    NVSDK_NGX_Result status{};
     if (ctx.platform == RenderAPI::eD3D11)
     {
-        CHECK_NGX_RETURN_ON_ERROR(NVSDK_NGX_D3D11_ReleaseFeature(handle));
+        status = NVSDK_NGX_D3D11_ReleaseFeature(handle);
     }
     else if (ctx.platform == RenderAPI::eD3D12)
     {
-        CHECK_NGX_RETURN_ON_ERROR(NVSDK_NGX_D3D12_ReleaseFeature(handle));
+        status = NVSDK_NGX_D3D12_ReleaseFeature(handle);
     }
     else
     {
-        CHECK_NGX_RETURN_ON_ERROR(NVSDK_NGX_VULKAN_ReleaseFeature(handle));
+        status = NVSDK_NGX_VULKAN_ReleaseFeature(handle);
     }
+
+    if (status != NVSDK_NGX_Result_Success) { SL_LOG_ERROR("[%s] NGX release feature failed 0x%x", id, status); return false; }
     return true;
 }
 
@@ -867,12 +929,7 @@ bool getNGXFeatureRequirements(NVSDK_NGX_Feature feature, common::PluginInfo& pl
                     assert(pluginInfo.opticalFlowInfo.queueIndex == 0);
                     SL_LOG_INFO("Native VK OFA feature supported on this device!");
 
-                    pluginInfo.minDriver =
-#ifdef SL_WINDOWS
-                        Version(527, 64, 0);
-#elif defined(SL_LINUX)
-                        Version(525, 72, 0);
-#endif
+                    pluginInfo.minDriver = Version(527, 64, 0);
                     pluginInfo.minVkAPIVersion = VK_API_VERSION_1_1;
                 }
                 else
@@ -972,7 +1029,8 @@ bool createNGXFeatureD3D12(void* cmdList, NVSDK_NGX_Feature feature, NVSDK_NGX_H
 {
     auto& ctx = (*common::getContext());
     extra::ScopedTasks vram([&ctx, id]()->void {ctx.computeD3D12->beginVRAMSegment(id); }, [&ctx]()->void {ctx.computeD3D12->endVRAMSegment(); });
-    CHECK_NGX_RETURN_ON_ERROR(NVSDK_NGX_D3D12_CreateFeature((ID3D12GraphicsCommandList*)cmdList, feature, ctx.ngxContextD3D12.params, handle));
+    NVSDK_NGX_Result status = NVSDK_NGX_D3D12_CreateFeature((ID3D12GraphicsCommandList*)cmdList, feature, ctx.ngxContextD3D12.params, handle);
+    if (status != NVSDK_NGX_Result_Success) { SL_LOG_ERROR("[%s] NGX create feature (D3D12) failed 0x%x", id, status); return false; }
     return true;
 }
 
@@ -980,7 +1038,8 @@ bool evaluateNGXFeatureD3D12(void* cmdList, NVSDK_NGX_Handle* handle, const char
 {
     auto& ctx = (*common::getContext());
     extra::ScopedTasks vram([&ctx, id]()->void {ctx.computeD3D12->beginVRAMSegment(id); }, [&ctx]()->void {ctx.computeD3D12->endVRAMSegment(); });
-    CHECK_NGX_RETURN_ON_ERROR(NVSDK_NGX_D3D12_EvaluateFeature((ID3D12GraphicsCommandList*)cmdList, handle, ctx.ngxContextD3D12.params, nullptr));
+    NVSDK_NGX_Result status = NVSDK_NGX_D3D12_EvaluateFeature((ID3D12GraphicsCommandList*)cmdList, handle, ctx.ngxContextD3D12.params, nullptr);
+    if (status != NVSDK_NGX_Result_Success) { SL_LOG_ERROR("[%s] NGX evaluate feature (D3D12) failed 0x%x", id, status); return false; }
     return true;
 }
 
@@ -988,7 +1047,8 @@ bool releaseNGXFeatureD3D12(NVSDK_NGX_Handle* handle, const char* id)
 {
     auto& ctx = (*common::getContext());
     extra::ScopedTasks vram([&ctx, id]()->void {ctx.computeD3D12->beginVRAMSegment(id); }, [&ctx]()->void {ctx.computeD3D12->endVRAMSegment(); });
-    CHECK_NGX_RETURN_ON_ERROR(NVSDK_NGX_D3D12_ReleaseFeature(handle));
+    NVSDK_NGX_Result status = NVSDK_NGX_D3D12_ReleaseFeature(handle);
+    if (status != NVSDK_NGX_Result_Success) { SL_LOG_ERROR("[%s] NGX release feature (D3D12) failed 0x%x", id, status); return false; }
     return true;
 }
 
@@ -1016,8 +1076,10 @@ void allocateNGXBufferCallback(D3D11_BUFFER_DESC* desc, ID3D11Buffer** resource)
         resDesc.heapType = chi::HeapType::eHeapTypeDefault;
     }
 
-    if (sl::chi::ComputeStatus::eOk == ctx.compute->createBuffer(resDesc, res))
+    const auto resourceName{ SL_COMPOSE_NAME("sl", "buf.resource") };
+    if (sl::chi::ComputeStatus::eOk == ctx.compute->createBuffer(resDesc, res, resourceName.c_str()))
     {
+        SL_LOG_VERBOSE("Allocated NGX buffer '%s' of width %d", resourceName.c_str(), resDesc.width);
         *resource = (ID3D11Buffer*)(res->native);
         delete res;
     }
@@ -1053,8 +1115,10 @@ void allocateNGXTex2dCallback(D3D11_TEXTURE2D_DESC* desc, ID3D11Texture2D** reso
         resDesc.heapType = chi::HeapType::eHeapTypeDefault;
     }
 
-    if (sl::chi::ComputeStatus::eOk == ctx.compute->createTexture2D(resDesc, res))
+    const auto resourceName{ SL_COMPOSE_NAME("sl", "tex2d.resource") };
+    if (sl::chi::ComputeStatus::eOk == ctx.compute->createTexture2D(resDesc, res, resourceName.c_str()))
     {
+        SL_LOG_VERBOSE("Allocated NGX resource '%s'", resourceName.c_str());
         *resource = (ID3D11Texture2D*)(res->native);
         delete res;
     }
@@ -1083,17 +1147,21 @@ void allocateNGXResourceCallback(D3D12_RESOURCE_DESC* desc, int state, CD3DX12_H
     auto compute = ctx.computeD3D12 ? ctx.computeD3D12 : ctx.compute;
 
     sl::chi::ComputeStatus status;
+    std::string resourceName{};
     //! Redirecting to host app if allocate callback is specified in sl::Preferences
     if (desc->Dimension == D3D12_RESOURCE_DIMENSION::D3D12_RESOURCE_DIMENSION_BUFFER)
     {
-        status = compute->createBuffer(resDesc, res);
+        resourceName = SL_COMPOSE_NAME("sl", "buf.resource");
+        status = compute->createBuffer(resDesc, res, resourceName.c_str());
     }
     else
     {
-        status = compute->createTexture2D(resDesc, res);
+        resourceName = SL_COMPOSE_NAME("sl", "tex2d.resource");
+        status = compute->createTexture2D(resDesc, res, resourceName.c_str());
     }
     if (status == sl::chi::ComputeStatus::eOk)
     {
+        SL_LOG_VERBOSE("Allocated NGX resource '%s'", resourceName.c_str());
         *resource = (ID3D12Resource*)(res->native);
         delete res;
     }
@@ -1142,12 +1210,31 @@ void releaseNGXResourceCallback(IUnknown* resource)
     }
 }
 
+std::string getNGXFeatureAsStr(NVSDK_NGX_Feature feature)
+{
+    switch (feature)
+    {
+        case NVSDK_NGX_Feature_SuperSampling:        return "SuperSampling";
+        case NVSDK_NGX_Feature_InPainting:           return "InPainting";
+        case NVSDK_NGX_Feature_ImageSuperResolution: return "ImageSuperResolution";
+        case NVSDK_NGX_Feature_SlowMotion:           return "SlowMotion";
+        case NVSDK_NGX_Feature_VideoSuperResolution: return "VideoSuperResolution";
+        case NVSDK_NGX_Feature_ImageSignalProcessing:return "ImageSignalProcessing";
+        case NVSDK_NGX_Feature_DeepResolve:          return "DeepResolve";
+        case NVSDK_NGX_Feature_FrameGeneration:      return "FrameGeneration";
+        case NVSDK_NGX_Feature_DeepDVC:              return "DeepDVC";
+        case NVSDK_NGX_Feature_RayReconstruction:    return "RayReconstruction";
+        default:                                     return "Unknown(" + std::to_string(static_cast<int>(feature)) + ")";
+    }
+}
+
 void ngxLog(const char* message, NVSDK_NGX_Logging_Level loggingLevel, NVSDK_NGX_Feature sourceComponent)
 {
+    std::string sFeatureName = getNGXFeatureAsStr(sourceComponent);
     switch (loggingLevel)
     {
-        case NVSDK_NGX_LOGGING_LEVEL_ON: SL_LOG_INFO(message); break;
-        case NVSDK_NGX_LOGGING_LEVEL_VERBOSE: SL_LOG_VERBOSE(message); break;
+        case NVSDK_NGX_LOGGING_LEVEL_ON:      SL_LOG_INFO("[%s] %s", sFeatureName.c_str(), message); break;
+        case NVSDK_NGX_LOGGING_LEVEL_VERBOSE:  SL_LOG_VERBOSE("[%s] %s", sFeatureName.c_str(), message); break;
     }
 };
 
@@ -1276,6 +1363,8 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
     parameters->set(param::global::kPFunGetConsts, getCommonConstants);
     parameters->set(param::global::kPFunGetTag, getCommonTag);
     parameters->set(param::common::kPFunRegisterEvaluateCallbacks, common::registerEvaluateCallbacks);
+    parameters->set(param::common::kPFunRegisterFeatureViewport, registerCommonFeatureViewport);
+    parameters->set(param::common::kPFunUnregisterFeatureViewport, unregisterCommonFeatureViewport);
 
     //! Plugin manager gives us the device type and the application id
     json& config = *(json*)api::getContext()->loaderConfig;
@@ -1333,7 +1422,7 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
     ctx.compute = compute;
     ctx.computeD3D12 = computeD3D12;
 
-    CHI_CHECK_RF(ctx.compute->createResourcePool(&ctx.pool, api::getContext()->pluginName.c_str()));
+    CHI_CHECK_RF(ctx.compute->createResourcePool(&ctx.pool, api::getPluginName()));
 
     // Allow lower level common interface to read config items etc.
     if (!common::onLoad(&config, &extraConfig, ctx.pool))
@@ -1341,17 +1430,6 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
         return false;
     }
 
-#ifdef SL_CAPTURE
-    if (extraConfig.contains("numberFrameCapture"))
-    {
-        int captIndex;
-        extraConfig.at("numberFrameCapture").get_to(captIndex);
-        sl::chi::ICapture* capture;
-        param::getPointerParam(api::getContext()->parameters, sl::param::common::kCaptureAPI, &capture);
-        capture->setMaxCaptureIndex(captIndex);
-    }
-#endif
-    
     if (ctx.needNGX)
     {
         // NGX initialization
@@ -1600,11 +1678,14 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
 void slOnPluginShutdown()
 {
     auto parameters = api::getContext()->parameters;
+    auto& ctx = (*common::getContext());
 
     // Remove all provided common interfaces
     parameters->set(param::global::kPFunGetConsts, nullptr);
     parameters->set(param::global::kPFunGetTag, nullptr);
     parameters->set(param::common::kPFunRegisterEvaluateCallbacks, nullptr);
+    parameters->set(param::common::kPFunRegisterFeatureViewport, nullptr);
+    parameters->set(param::common::kPFunUnregisterFeatureViewport, nullptr);
     parameters->set(param::common::kPFunGetStringFromModule, nullptr);
     parameters->set(param::common::kPFunUpdateCommonEmbeddedJSONConfig, nullptr);
     parameters->set(param::common::kPFunNGXGetFeatureRequirements, nullptr);
@@ -1613,7 +1694,10 @@ void slOnPluginShutdown()
     parameters->set(param::common::kKeyboardAPI, nullptr);
     parameters->set(param::common::kComputeAPI, nullptr);
 
-    auto& ctx = (*common::getContext());
+    {
+        std::lock_guard<std::mutex> lock(ctx.featureViewportIdsMutex);
+        ctx.featureViewportIds.clear();
+    }
 
     if (ctx.pBaseResourceTagging != nullptr)
     {
@@ -1634,6 +1718,7 @@ void slOnPluginShutdown()
         auto adapter = (IDXGIAdapter*)ctx.caps->adapters[i].nativeInterface;
         if(adapter) adapter->Release();
     }
+
 
     if (ctx.needNGX)
     {
@@ -1904,6 +1989,9 @@ SL_EXPORT void* slGetPluginFunction(const char* functionName)
     //! Hooks defined in the JSON config above
 
     //! D3D12
+    SL_EXPORT_FUNCTION(slHookCreateSwapChain);
+    SL_EXPORT_FUNCTION(slHookCreateSwapChainForHwnd);
+    SL_EXPORT_FUNCTION(slHookCreateSwapChainForCoreWindow);
     SL_EXPORT_FUNCTION(slHookPresent);
     SL_EXPORT_FUNCTION(slHookPresent1);
     SL_EXPORT_FUNCTION(slHookAfterPresent);

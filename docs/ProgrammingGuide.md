@@ -2,7 +2,7 @@
 Streamline - SL
 =======================
 
-Version 2.11.1
+Version 2.12.0
 =======
 
 1 SETTING UP
@@ -611,7 +611,8 @@ SL_API bool slSetVulkanInfo(const sl::VulkanInfo& info);
 ```
 
 > NOTE:
-> For more details regarding the `slSetVulkanInfo` please see [manual hooking programming guide](./ProgrammingGuideManualHooking.md)
+> 1. For more details regarding the `slSetVulkanInfo` please see [manual hooking programming guide](./ProgrammingGuideManualHooking.md)
+> 2. If the host application intends to view names of SL and NGX feature resources (e.g. DLSS textures and buffers) and SL and NGX profiling markers in tools such as Nsight, enable the `VK_EXT_debug_utils` instance extension when creating its `VkInstance`.
 
 ### 2.6 HOW TO CHECK FEATURE'S VERSION
 

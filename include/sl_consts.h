@@ -94,6 +94,12 @@ constexpr uint32_t INVALID_UINT = 0xffffffff;
 //! needs to send markers for previous and next frame so the total number of in-flight frames can be higher
 constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 6;
 
+struct uint2
+{
+    uint32_t x;
+    uint32_t y;
+};
+
 struct uint3
 {
     uint32_t x;

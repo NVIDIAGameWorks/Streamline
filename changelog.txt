@@ -1,3 +1,73 @@
+======== Release 2.12.0 Entries ========
+
+    * Added a new optional input buffer type `sl::kBufferTypeResponsivityMask`
+      to `sl.dlss_d` for biasing temporal responsivity per-pixel.
+
+    * Added Vulkan profiling marker support in `sl.common` for visualization
+      of SL and NGX workloads in tools such as Nsight Graphics and RenderDoc.
+      The host application must enable the `VK_EXT_debug_utils` instance
+      extension on its `VkInstance` to see SL/NGX resource names and
+      present-boundary markers. See section 2.5 "HOW TO PROVIDE CORRECT
+      DEVICE" in `ProgrammingGuide.md` for more information.
+
+    * Updated `sl.ota` to download the bundled SL SDK package as a single zip
+      archive instead of fetching individual plugin DLLs on a cold cache,
+      reducing the number of OTA fetches required at startup.
+
+    * Updated `sl.ota` to use the combined `-bootstrap`/`-update` NGX Updater
+      invocation on driver 565 and newer, reducing the number of NGX Updater
+      calls from two to one. Older drivers continue to use the separate
+      bootstrap-then-update path.
+
+    * Fixed a bug in `sl.dlss_g` causing excessive latency when VSync was
+      enabled and Frame Generation was disabled. The frame-latency waitable
+      object on the internal swap chain was configured but never waited on,
+      allowing multiple frames to accumulate in the DXGI flip queue. The
+      waitable is now waited on each frame with the limit set to 1 when
+      Frame Generation is off, eliminating the excess latency without
+      impacting FG-on performance.
+
+    * Fixed a bug in `sl.dlss_g` where VSync was incorrectly detected on
+      Vulkan swap chains.
+
+    * Fixed a bug in `sl.dlss_g` where the application's VSync `SyncInterval`
+      was not preserved when Frame Generation was disabled.
+
+    * Fixed a crash in `sl.dlss_g` when the OS transitioned the swap chain
+      out of fullscreen (for example, on monitor sleep) without invoking the
+      `SetFullscreenState` hook. Subsequent `Present()` calls could fail
+      with `DXGI_ERROR_MISCELLANEOUS` and crash the application.
+
+    * Fixed a crash in `sl.dlss_g` during window focus transitions.
+
+    * Fixed a bug in `sl.dlss_g` where Frame Generation would not activate in
+      `DLSSGMode::eAuto` due to an inverted internal filter check.
+
+    * Fixed a bug in `sl.dlss_g` where interpolation was not reset when an
+      invalid state was detected.
+
+    * Fixed a bug in `sl.dlss_g` where a D3D12 resource barrier mismatch
+      could occur on Frame Generation output buffers.
+
+    * Fixed a bug in `sl.dlss_g` where the `ComputeStatus` return from
+      `setFullscreenState()` was treated as an `HRESULT`, causing some error
+      codes to be silently ignored.
+
+    * Fixed a crash in `sl.interposer` when loading OTA plugins on an older
+      (pre-2.3.0) interposer.
+
+    * Improved logging for DRS key reads in `sl.dlss_g` and added the plugin
+      build configuration to startup logs to make diagnosis easier.
+
+    * Updated `sl.dlss_g` to only log the VSync clamping warning when Frame
+      Generation is active.
+
+    * Documented the Independent Flip (IFLIP) requirement for VSync with
+      Frame Generation, including guidance on diagnosing IFLIP state with
+      NVIDIA FrameView. See section 22.6 "IFLIP REQUIREMENT" in
+      `ProgrammingGuideDLSS_G.md` for more information.
+
+
 ======== Release 2.11.0 Entries ========
 
     * Added support for application-controlled VSync with DLSS Frame Generation.

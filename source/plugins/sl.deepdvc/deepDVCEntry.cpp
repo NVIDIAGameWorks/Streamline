@@ -237,7 +237,7 @@ Result deepDVCBeginEvaluation(chi::CommandList cmdList, const common::EventData&
         ctx.cachedStates.clear();
         if (ctx.ngxContext)
         {
-            if (ctx.ngxContext->createFeature(cmdList, NVSDK_NGX_Feature_DeepDVC, &viewport.handle, "sl.deepdvc"))
+            if (ctx.ngxContext->createFeature(cmdList, NVSDK_NGX_Feature_DeepDVC, &viewport.handle, api::getPluginName()))
             {
                 SL_LOG_INFO("Created deepdvc feature. Intensity = (%f), Saturation Boost = (%f). Viewport = (%u)", viewport.consts.intensity, viewport.consts.saturationBoost, data.id);
             }
@@ -280,7 +280,7 @@ Result deepDVCEndEvaluation(chi::CommandList cmdList, const common::EventData& d
     ctx.inputWidth = outExtent.width;
     ctx.inputHeight = outExtent.height;
 
-    CHI_VALIDATE(ctx.compute->beginPerfSection(cmdList, "sl.deepdvc"));
+    CHI_VALIDATE(ctx.compute->beginPerfSection(cmdList, SL_RESOURCE_NAME("perf.evaluate").c_str()));
 
     extra::ScopedTasks revTransitions;
     chi::ResourceTransition transitions[] =
@@ -304,11 +304,11 @@ Result deepDVCEndEvaluation(chi::CommandList cmdList, const common::EventData& d
         ctx.ngxContext->params->Set(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Height, outExtent.height);
         ctx.ngxContext->params->Set(NVSDK_NGX_Parameter_DeepDVC_Strength, options.intensity);
         ctx.ngxContext->params->Set(NVSDK_NGX_Parameter_DeepDVC_SaturationBoost, options.saturationBoost);
-        ctx.ngxContext->evaluateFeature(cmdList, ctx.currentViewport->handle, "sl.deepdvc");
+        ctx.ngxContext->evaluateFeature(cmdList, ctx.currentViewport->handle, api::getPluginName());
     }
 
     float ms = 0;
-    CHI_VALIDATE(ctx.compute->endPerfSection(cmdList, "sl.deepdvc", ms));
+    CHI_VALIDATE(ctx.compute->endPerfSection(cmdList, SL_RESOURCE_NAME("perf.evaluate").c_str(), ms));
 
     auto parameters = api::getContext()->parameters;
 
@@ -407,7 +407,7 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
                     ctx.uiStats.mode = "Mode: Off";
                     ctx.uiStats.viewport = ctx.uiStats.runtime = {};
                 }
-                if (ui->collapsingHeader(extra::format("sl.deepdvc v{}", (v.toStr() + "." + GIT_LAST_COMMIT_SHORT)).c_str(), imgui::kTreeNodeFlagDefaultOpen))
+                if (ui->collapsingHeader(extra::format("{} v{}", api::getPluginName(), (v.toStr() + "." + GIT_LAST_COMMIT_SHORT)).c_str(), imgui::kTreeNodeFlagDefaultOpen))
                 {
                     ui->text(ctx.uiStats.mode.c_str());
                     ui->text(ctx.uiStats.viewport.c_str());
@@ -474,7 +474,7 @@ HRESULT slHookCreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI_SW
 {
     auto& ctx = (*deepDVC::getContext());
     ctx.cmdQueue = pDevice;
-    ctx.compute->createCommandListContext(ctx.cmdQueue, 1, ctx.cmdList, "game command list");
+    ctx.compute->createCommandListContext(ctx.cmdQueue, 1, ctx.cmdList, SL_RESOURCE_NAME("cmdCtx.game").c_str());
     common::EventData data;
     sl::ViewportHandle viewport = { 0 };
     sl::DeepDVCOptions options;
@@ -491,7 +491,7 @@ HRESULT slHookCreateSwapChainForHwnd(IDXGIFactory2* pFactory, IUnknown* pDevice,
 {
     auto& ctx = (*deepDVC::getContext());
     ctx.cmdQueue = pDevice;
-    ctx.compute->createCommandListContext(ctx.cmdQueue, 1, ctx.cmdList, "game command list");
+    ctx.compute->createCommandListContext(ctx.cmdQueue, 1, ctx.cmdList, SL_RESOURCE_NAME("cmdCtx.game").c_str());
     common::EventData data;
     sl::ViewportHandle viewport = { 0 };
     sl::DeepDVCOptions options;
@@ -523,7 +523,7 @@ HRESULT slHookPresent1(IDXGISwapChain* swapChain, UINT SyncInterval, UINT Flags,
         if (!ctx.temp)
         {
             chi::ResourceDescription desc(outDesc.width, outDesc.height, outDesc.format, chi::HeapType::eHeapTypeDefault, chi::ResourceState::eStorageRW, chi::ResourceFlags::eShaderResourceStorage | chi::ResourceFlags::eColorAttachment);
-            CHI_VALIDATE(ctx.compute->createTexture2D(desc, ctx.temp, "sl.deepdvc.temp"));
+            CHI_VALIDATE(ctx.compute->createTexture2D(desc, ctx.temp, SL_RESOURCE_NAME("tex2d.temp").c_str()));
         }
         extra::ScopedTasks revTransitions;
         chi::ResourceTransition transitions[] =
@@ -538,7 +538,7 @@ HRESULT slHookPresent1(IDXGISwapChain* swapChain, UINT SyncInterval, UINT Flags,
             ctx.ngxContext->params->Set(NVSDK_NGX_Parameter_Color, (void*)ctx.temp->native);
             ctx.ngxContext->params->Set(NVSDK_NGX_Parameter_DeepDVC_Strength, options.intensity);
             ctx.ngxContext->params->Set(NVSDK_NGX_Parameter_DeepDVC_SaturationBoost, options.saturationBoost);
-            ctx.ngxContext->evaluateFeature(ctx.cmdList->getCmdList(), ctx.currentViewport->handle, "sl.deepdvc");
+            ctx.ngxContext->evaluateFeature(ctx.cmdList->getCmdList(), ctx.currentViewport->handle, api::getPluginName());
         }
         ctx.compute->copyResource(ctx.cmdList->getCmdList(), backBuffer, ctx.temp);
         ctx.cmdList->executeCommandList();

@@ -59,14 +59,14 @@ class OTA : public IOTA
     std::optional<uint32_t> appIdForProjectId(EngineType engineType, const std::string& engineVersion, const std::string& projectId) const override;
 
   protected:
+    void setNGXPathOverride(const std::optional<std::filesystem::path> ngxPath) override;
+    void setOTAOverrideEnabled(std::optional<bool> enabled) override;
     bool parseServerManifest(std::ifstream& manifest,
                              std::map<std::string, Version>& versionMap,
                              std::vector<std::string>& optionalDownloadPresent,
                              bool useOverride) override;
     bool parseServerDenylist(std::ifstream& denylist) override;
     bool parseMappingFile(std::ifstream& file) override;
-
-    void setNGXPathOverride(const std::optional<std::filesystem::path> ngxPath) override;
 
   private:
     static constexpr uint32_t SL_DLSS_OVERRIDE_ID = 0x10e41e06;

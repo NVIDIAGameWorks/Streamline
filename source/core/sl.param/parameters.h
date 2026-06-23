@@ -63,9 +63,10 @@ namespace common
 constexpr const char* kSystemCaps = "sl.param.common.gpuInfo";
 constexpr const char* kComputeAPI = "sl.param.common.computeAPI";
 constexpr const char* kComputeDX11On12API = "sl.param.common.computeDX11On12API";
-constexpr const char* kCaptureAPI = "sl.param.common.captureAPI";
 constexpr const char* kKeyboardAPI = "sl.param.common.keyboardAPI";
 constexpr const char* kPFunRegisterEvaluateCallbacks = "sl.param.common.registerEvaluateCallbacks";
+constexpr const char* kPFunRegisterFeatureViewport = "sl.param.common.registerFeatureViewport";
+constexpr const char* kPFunUnregisterFeatureViewport = "sl.param.common.unregisterFeatureViewport";
 constexpr const char* kPFunGetStringFromModule = "sl.param.common.getStringFromModule";
 constexpr const char* kPFunUpdateCommonEmbeddedJSONConfig = "sl.param.common.updateCommonEmbeddedJSONConfig";
 constexpr const char* kPFunNGXGetFeatureRequirements = "sl.param.common.NGXGetFeatureRequirements";
@@ -84,7 +85,6 @@ namespace dlss_g
 {
 
 constexpr const char* kCurrentFrame = "sl.param.reserved.frame";
-
 }
 
 namespace dlss

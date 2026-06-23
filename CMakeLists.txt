@@ -113,6 +113,8 @@ if (STREAMLINE_FEATURE_DIRECTSR)
     list (APPEND STREAMLINE_DLLS "${STREAMLINE_PLUGIN_DLL_DIR}sl.directsr.dll")
 endif()
 
+message("DLLs: ${STREAMLINE_DLLS}")
+
 # We copy all the Jsons that may be present. 
 if(NOT STREAMLINE_PLUGIN_JSON_DIR)
     message(STATUS "No sl.interposer.json found. Cmake cannot find the json files.")

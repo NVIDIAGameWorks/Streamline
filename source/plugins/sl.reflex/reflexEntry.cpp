@@ -21,6 +21,7 @@
 */
 
 #include <unordered_set>
+#include <functional>
 
 #include "include/sl.h"
 #include "include/sl_consts.h"
@@ -174,6 +175,7 @@ struct LatencyContext
     float4x4 prevWorldToViewMatrix{};
     float4x4 prevViewToClipMatrix{};
     bool predictCamera = false;
+    std::function<void(uint32_t frame, const sl::ReflexCameraData& cameraData)> cameraDataCallback;
 
 
     //! Can be overridden via sl.reflex.json config
@@ -195,15 +197,17 @@ struct LatencyContext
     std::atomic<bool> enabled = false;
 
     PFunSetPCLStatsMarker* setStatsMarkerFunc = nullptr;
-
+    
     sl::chi::Fence gameWaitFence{};
     uint32_t gameWaitSyncValue{};
     chi::ICommandListContext* gameWaitCmdList{};
+
 
     //! Circular buffer to store simulation start timestamps
     std::array<std::pair<uint32_t, std::chrono::high_resolution_clock::time_point>, kSimulationTimingHistorySize> simulationStartTimes{};
     //! Mutex for thread-safe access to simulation timing data
     std::mutex simulationTimingMutex;
+    std::mutex callbacksMutex;
 };
 }
 
@@ -215,6 +219,7 @@ void updateEmbeddedJSON(json& config);
 sl::Result slReflexSetMarker(sl::PCLMarker marker, const sl::FrameToken& frame);
 sl::Result slReflexGetCameraDataInternal(const sl::ViewportHandle& viewport, const uint32_t frame, sl::ReflexCameraData& outCameraData);
 sl::Result slReflexSetCameraDataFenceInternal(const sl::ViewportHandle& viewport, sl::chi::Fence fence, const uint32_t syncValue, chi::ICommandListContext* cmdList);
+sl::Result slReflexSetCameraDataCallbackInternal(std::function<void(uint32_t frame, const sl::ReflexCameraData& cameraData)> callback);
 sl::Result slReflexGetSimulationDeltaUsInternal(uint32_t frameId, uint64_t& outDeltaTimeUs);
 
 //! Define our plugin, make sure to update version numbers in versions.h
@@ -495,10 +500,13 @@ internal::shared::Status getSharedData(BaseStructure* requestedData, const BaseS
     // v5
     remote->slReflexGetSimulationDeltaUs = slReflexGetSimulationDeltaUsInternal;
 
+    // v6
+    remote->slReflexSetCameraDataCallback = slReflexSetCameraDataCallbackInternal;
+
     // Let newer requester know that we are older
-    if (remote->structVersion > kStructVersion5)
+    if (remote->structVersion > kStructVersion6)
     {
-        remote->structVersion = kStructVersion5;
+        remote->structVersion = kStructVersion6;
     }
 
     return internal::shared::Status::eOk;
@@ -564,6 +572,12 @@ sl::Result slReflexSetCameraData(const sl::ViewportHandle& viewport, const sl::F
     ctx.prevWorldToViewMatrix = inCameraData.worldToViewMatrix;
     ctx.prevViewToClipMatrix = inCameraData.viewToClipMatrix;
 
+    std::lock_guard<std::mutex> lock(ctx.callbacksMutex);
+    if (ctx.cameraDataCallback)
+    {
+        ctx.cameraDataCallback(frame, inCameraData);
+    }
+
     return sl::Result::eOk;
 }
 
@@ -588,6 +602,14 @@ sl::Result slReflexSetCameraDataFenceInternal(const sl::ViewportHandle& viewport
     ctx.gameWaitCmdList = cmdList;
     ctx.gameWaitFence = fence;
     ctx.gameWaitSyncValue = syncValue;
+    return sl::Result::eOk;
+}
+
+sl::Result slReflexSetCameraDataCallbackInternal(std::function<void(uint32_t frame, const sl::ReflexCameraData& cameraData)> callback)
+{
+    auto& ctx = (*reflex::getContext());
+    std::lock_guard<std::mutex> lock(ctx.callbacksMutex);
+    ctx.cameraDataCallback = callback;
     return sl::Result::eOk;
 }
 
@@ -725,7 +747,7 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
         auto renderUI = [&ctx](imgui::ImGUI* ui, bool finalFrame)->void
         {
             auto v = api::getContext()->pluginVersion;
-            if (ui->collapsingHeader(extra::format("sl.reflex v{}", (v.toStr() + "." + GIT_LAST_COMMIT_SHORT)).c_str(), imgui::kTreeNodeFlagDefaultOpen))
+            if (ui->collapsingHeader(extra::format("{} v{}", api::getPluginName(), (v.toStr() + "." + GIT_LAST_COMMIT_SHORT)).c_str(), imgui::kTreeNodeFlagDefaultOpen))
             {
                 std::scoped_lock lock(ctx.uiStats.mtx);
                 ui->text(ctx.uiStats.mode.c_str());

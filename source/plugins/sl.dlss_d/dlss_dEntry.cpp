@@ -43,8 +43,6 @@
 #include "source/plugins/sl.dlss_d/versions.h"
 #include "source/plugins/sl.imgui/imgui.h"
 
-#include "source/platforms/sl.chi/capture.h"
-
 #include "_artifacts/shaders/mvec_cs.h"
 #include "_artifacts/shaders/mvec_spv.h"
 #include "_artifacts/json/dlss_d_json.h"
@@ -104,9 +102,6 @@ struct DLSSDContext
 
     common::NGXContext* ngxContext = {};
     sl::chi::ICompute* compute;
-#ifdef SL_CAPTURE
-    sl::chi::ICapture* capture;
-#endif
     sl::chi::Kernel mvecKernel;
 
 #ifndef SL_PRODUCTION
@@ -206,7 +201,7 @@ void updateEmbeddedJSON(json& config)
         bool supported = false;
         if (!((detectedDriver >= minDriverFeatureEnabled && detectedDriver <= maxDriverFeatureEnabled) || detectedDriver >= minDriver))
         {
-            SL_LOG_WARN("sl.dlss_d requires a driver supporting DLSSD. Please update driver.");
+            SL_LOG_WARN("%s requires a driver supporting DLSSD. Please update driver.", api::getPluginName());
         }
         else
         {
@@ -379,7 +374,7 @@ Result dlssdBeginEvent(chi::CommandList pCmdList, const common::EventData& data,
 
                 // Delayed releaseFeature call by 3 frames to avoid race conditions
                 auto releaseFeatureLambda = [&ctx, handle = viewport.handle](void) -> void {
-                    ctx.ngxContext->releaseFeature(handle, "sl.dlss_d");
+                    ctx.ngxContext->releaseFeature(handle, api::getPluginName());
                 };
                 CHI_VALIDATE(ctx.compute->destroy(releaseFeatureLambda, 3));
 
@@ -485,7 +480,7 @@ Result dlssdBeginEvent(chi::CommandList pCmdList, const common::EventData& data,
                     viewport.consts.normalRoughnessMode == DLSSDNormalRoughnessMode::eUnpacked ? NVSDK_NGX_DLSS_Roughness_Mode_Unpacked : NVSDK_NGX_DLSS_Roughness_Mode_Packed);
                 ctx.ngxContext->params->Set(NVSDK_NGX_Parameter_Use_HW_Depth, linearDepth ? NVSDK_NGX_DLSS_Depth_Type_Linear : NVSDK_NGX_DLSS_Depth_Type_HW);
 
-                if (ctx.ngxContext->createFeature(pCmdList, NVSDK_NGX_Feature_RayReconstruction, &viewport.handle, "sl.dlss_d"))
+                if (ctx.ngxContext->createFeature(pCmdList, NVSDK_NGX_Feature_RayReconstruction, &viewport.handle, api::getPluginName()))
                 {
                     SL_LOG_INFO("Created DLSSDContext feature (%u,%u)(optimal) -> (%u,%u) for viewport %u", viewport.settings.optimalRenderWidth, viewport.settings.optimalRenderHeight, viewport.consts.outputWidth, viewport.consts.outputHeight, data.id);
                     // Log the extent information for easier debugging
@@ -560,6 +555,7 @@ Result dlssdEndEvent(chi::CommandList pCmdList, const common::EventData& data, c
             CommonResource disocclusionMask{};
             CommonResource scalingOutputAlpha{};
             CommonResource alpha{};
+            CommonResource responsivityMask{};
 
             SL_CHECK(getTaggedResource(kBufferTypeScalingInputColor, colorIn, data.frame, ctx.viewport->id, false, inputs, numInputs));
             SL_CHECK(getTaggedResource(kBufferTypeScalingOutputColor, colorOut, data.frame, ctx.viewport->id, false, inputs, numInputs));
@@ -615,6 +611,7 @@ Result dlssdEndEvent(chi::CommandList pCmdList, const common::EventData& data, c
             getTaggedResource(kBufferTypeDisocclusionMask, disocclusionMask, data.frame, ctx.viewport->id, true, inputs, numInputs);
             getTaggedResource(kBufferTypeScalingOutputAlpha, scalingOutputAlpha, data.frame, ctx.viewport->id, true, inputs, numInputs);
             getTaggedResource(kBufferTypeAlpha, alpha, data.frame, ctx.viewport->id, true, inputs, numInputs);
+            getTaggedResource(kBufferTypeResponsivityMask, responsivityMask, data.frame, ctx.viewport->id, true, inputs, numInputs);
 
             CommonResource& depth = linearDepth ? linearDepth : hwDepth;
 
@@ -670,49 +667,13 @@ Result dlssdEndEvent(chi::CommandList pCmdList, const common::EventData& data, c
             sl::Extent disocclusionMaskExt = disocclusionMask.getExtent();
             sl::Extent scalingOutputAlphaExt = scalingOutputAlpha.getExtent();
             sl::Extent alphaExt = alpha.getExtent();
-
-#ifdef SL_CAPTURE
-
-            // Capture
-            if (extra::keyboard::getInterface()->wasKeyPressed("capture")) ctx.capture->startRecording("DLSSDContext");
-
-            if (ctx.capture->getIsCapturing()) {
-                double time = ctx.capture->getTimeSinceStart();
-                int captureIndex = ctx.capture->getCaptureIndex();
-
-                ctx.capture->appendGlobalConstantDump(captureIndex, time, consts);
-
-                const std::vector<int> dlssdStructureSizes = std::vector<int>{ sizeof(sl::DLSSDOptions) , sizeof(sl::DLSSDOptimalSettings)};
-                ctx.capture->appendFeatureStructureDump(captureIndex, 0, &ctx.viewport->consts, dlssdStructureSizes[0]);
-                ctx.capture->appendFeatureStructureDump(captureIndex, 1, &ctx.viewport->settings, dlssdStructureSizes[1]);
-
-                ctx.capture->dumpResource(captureIndex, kBufferTypeScalingInputColor,    colorInExt, pCmdList,   colorIn );
-                ctx.capture->dumpResource(captureIndex, kBufferTypeDepth            ,    depthExt  , pCmdList,   depth   );
-                ctx.capture->dumpResource(captureIndex, kBufferTypeMotionVectors             ,    mvecExt   , pCmdList,   mvec    );
-                ctx.capture->dumpResource(captureIndex, kBufferTypeAlbedo, albedoExt, pCmdList, albedo);
-                ctx.capture->dumpResource(captureIndex, kBufferTypeSpecularAlbedo, specAlbedoExt, pCmdList, specularAlbedo);
-                if (ctx.viewport->consts.normalRoughnessMode == DLSSDNormalRoughnessMode::eUnpacked)
-                {
-                    ctx.capture->dumpResource(captureIndex, kBufferTypeNormals, normalsExt, pCmdList, normals);
-                    ctx.capture->dumpResource(captureIndex, kBufferTypeRoughness, roughnessExt, pCmdList, roughness);
-                }
-                else
-                {
-                    ctx.capture->dumpResource(captureIndex, kBufferTypeNormalRoughness, normalsExt, pCmdList, normals);
-                }
-
-                ctx.capture->incrementCaptureIndex();
-
-            }
-
-            if (ctx.capture->getIndexHasReachedMaxCapatureIndex()) ctx.capture->dumpPending();
-#endif
+            sl::Extent responsivityMaskExt = responsivityMask.getExtent();
 
             // Depending if camera motion is provided or not we can use input directly or not
             auto mvecIn = mvec;
 
 #if SL_ENABLE_TIMING
-            CHI_VALIDATE(ctx.compute->beginPerfSection(pCmdList, "sl.dlss_d"));
+            CHI_VALIDATE(ctx.compute->beginPerfSection(pCmdList, SL_RESOURCE_NAME("perf.evaluate").c_str()));
 #endif
             {
                 ctx.cacheState(colorIn, colorIn.getState());
@@ -760,6 +721,7 @@ Result dlssdEndEvent(chi::CommandList pCmdList, const common::EventData& data, c
                 ctx.cacheState(disocclusionMask, disocclusionMask.getState());
                 ctx.cacheState(scalingOutputAlpha, scalingOutputAlpha.getState());
                 ctx.cacheState(alpha, alpha.getState());
+                ctx.cacheState(responsivityMask, responsivityMask.getState());
 
                 unsigned int renderWidth = colorInExt.width;
                 unsigned int renderHeight = colorInExt.height;
@@ -792,9 +754,9 @@ Result dlssdEndEvent(chi::CommandList pCmdList, const common::EventData& data, c
                     }
                     if (!ctx.viewport->mvec)
                     {
-                        ctx.compute->beginVRAMSegment("sl.dlss_d");
+                        ctx.compute->beginVRAMSegment(api::getPluginName());
                         sl::chi::ResourceDescription desc(renderWidth, renderHeight, sl::chi::eFormatRG16F,sl::chi::HeapType::eHeapTypeDefault, sl::chi::ResourceState::eTextureRead);
-                        CHI_VALIDATE(ctx.compute->createTexture2D(desc, ctx.viewport->mvec, "sl.dlss_d.mvec"));
+                        CHI_VALIDATE(ctx.compute->createTexture2D(desc, ctx.viewport->mvec, SL_RESOURCE_NAME("tex2d.mvec").c_str()));
                         ctx.cacheState(ctx.viewport->mvec);
                         ctx.compute->endVRAMSegment();
                     }
@@ -888,6 +850,7 @@ Result dlssdEndEvent(chi::CommandList pCmdList, const common::EventData& data, c
                         {disocclusionMask, chi::ResourceState::eTextureRead, ctx.cachedStates[disocclusionMask]},
                         {scalingOutputAlpha, chi::ResourceState::eTextureRead, ctx.cachedStates[scalingOutputAlpha]},
                         {alpha, chi::ResourceState::eTextureRead, ctx.cachedStates[alpha]},
+                        {responsivityMask, chi::ResourceState::eTextureRead, ctx.cachedStates[responsivityMask]},
                     };
                     ctx.compute->transitionResources(pCmdList, transitions, (uint32_t)countof(transitions), &revTransitions);
 
@@ -1000,6 +963,8 @@ Result dlssdEndEvent(chi::CommandList pCmdList, const common::EventData& data, c
                         ctx.ngxContext->params->Set(NVSDK_NGX_Parameter_DLSS_DisocclusionMask, (void*)disocclusionMask);
                         ctx.ngxContext->params->Set(NVSDK_NGX_Parameter_DLSSD_OutputAlpha, (void*)scalingOutputAlpha);
                         ctx.ngxContext->params->Set(NVSDK_NGX_Parameter_DLSSD_Alpha, (void*)alpha);
+                        ctx.ngxContext->params->Set(NVSDK_NGX_Parameter_DLSSD_ResponsivityMask, (void*)responsivityMask);
+                        
                     }
 
                     ctx.ngxContext->params->Set(NVSDK_NGX_Parameter_DLSS_Input_Color_Subrect_Base_X, colorInExt.left);
@@ -1074,29 +1039,31 @@ Result dlssdEndEvent(chi::CommandList pCmdList, const common::EventData& data, c
                     ctx.ngxContext->params->Set(NVSDK_NGX_Parameter_DLSSD_OutputAlpha_Subrect_Base_Y, scalingOutputAlphaExt.top);
                     ctx.ngxContext->params->Set(NVSDK_NGX_Parameter_DLSSD_Alpha_Subrect_Base_X, alphaExt.left);
                     ctx.ngxContext->params->Set(NVSDK_NGX_Parameter_DLSSD_Alpha_Subrect_Base_Y, alphaExt.top);
+                    ctx.ngxContext->params->Set(NVSDK_NGX_Parameter_DLSSD_ResponsivityMask_Subrect_Base_X, responsivityMaskExt.left);
+                    ctx.ngxContext->params->Set(NVSDK_NGX_Parameter_DLSSD_ResponsivityMask_Subrect_Base_Y, responsivityMaskExt.top);
 
                     ctx.ngxContext->params->Set(NVSDK_NGX_Parameter_DLSS_WORLD_TO_VIEW_MATRIX, &ctx.viewport->consts.worldToCameraView);
                     ctx.ngxContext->params->Set(NVSDK_NGX_Parameter_DLSS_VIEW_TO_CLIP_MATRIX, &ctx.commonConsts->cameraViewToClip);
 
-                    ctx.ngxContext->evaluateFeature(pCmdList, ctx.viewport->handle, "sl.dlss_d");
+                    ctx.ngxContext->evaluateFeature(pCmdList, ctx.viewport->handle, api::getPluginName());
                 }
 
                 float ms = 0;
 #if SL_ENABLE_TIMING
-                CHI_VALIDATE(ctx.compute->endPerfSection(pCmdList, "sl.dlss_d", ms));
+                CHI_VALIDATE(ctx.compute->endPerfSection(pCmdList, SL_RESOURCE_NAME("perf.evaluate").c_str(), ms));
 #endif
 
 #ifndef SL_PRODUCTION
                 /*static std::string s_stats;
                 auto v = api::getContext()->pluginVersion;
                 
-                s_stats = extra::format("sl.dlss_d {} - NGX {} - ({}x{})->({}x{}) - {}ms", v.toStr() + "." + GIT_LAST_COMMIT_SHORT, ctx.ngxVersion,
+                s_stats = extra::format("{} {} - NGX {} - ({}x{})->({}x{}) - {}ms", api::getPluginName(), v.toStr() + "." + GIT_LAST_COMMIT_SHORT, ctx.ngxVersion,
                     renderWidth, renderHeight, ctx.viewport->consts.outputWidth, ctx.viewport->consts.outputHeight, ms);
                 parameters->set(sl::param::dlss_d::kStats, (void*)s_stats.c_str());*/
 
                 {
                     uint64_t bytes;
-                    ctx.compute->getAllocatedBytes(bytes, "sl.dlss_d");
+                    ctx.compute->getAllocatedBytes(bytes, api::getPluginName());
                     std::scoped_lock lock(ctx.uiStats.mtx);
                     ctx.uiStats.mode = getDLSSModeAsStr(ctx.viewport->consts.mode);
                     ctx.uiStats.viewport = extra::format("Viewport {}x{} -> {}x{}", renderWidth, renderHeight, ctx.viewport->consts.outputWidth, ctx.viewport->consts.outputHeight);
@@ -1220,7 +1187,7 @@ Result slFreeResources(Feature feature, const sl::ViewportHandle& viewport)
         if (instance.handle)
         {
             SL_LOG_INFO("Releasing DLSSDContext instance id %u", viewport);
-            ctx.ngxContext->releaseFeature(instance.handle, "sl.dlss_d");
+            ctx.ngxContext->releaseFeature(instance.handle, api::getPluginName());
             // OK to release null resources
             CHI_VALIDATE(ctx.compute->destroyResource(instance.mvec));
 
@@ -1287,11 +1254,6 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
 
     param::getPointerParam(parameters, sl::param::common::kComputeAPI, &ctx.compute);
 
-#ifdef SL_CAPTURE
-    extra::keyboard::getInterface()->registerKey("capture", extra::keyboard::VirtKey('U', true, true));
-    param::getPointerParam(parameters, sl::param::common::kCaptureAPI, &ctx.capture);
-#endif
-
     {
         json& config = *(json*)api::getContext()->loaderConfig;
         int appId = 0;
@@ -1342,7 +1304,7 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
                     ctx.uiStats.mode = "Mode: Off";
                     ctx.uiStats.viewport = ctx.uiStats.runtime = {};
                 }
-                if (ui->collapsingHeader(extra::format("sl.dlss_d v{}", (v.toStr() + "." + GIT_LAST_COMMIT_SHORT)).c_str(), imgui::kTreeNodeFlagDefaultOpen))
+                if (ui->collapsingHeader(extra::format("{} v{}", api::getPluginName(), (v.toStr() + "." + GIT_LAST_COMMIT_SHORT)).c_str(), imgui::kTreeNodeFlagDefaultOpen))
                 {
                     ui->text("NGX v%s ", ctx.ngxVersion.c_str());
                     ui->text(ctx.uiStats.mode.c_str());
@@ -1376,7 +1338,7 @@ void slOnPluginShutdown()
 
     for(auto v : ctx.viewports)
     {
-        ctx.ngxContext->releaseFeature(v.second.handle, "sl.dlss_d");
+        ctx.ngxContext->releaseFeature(v.second.handle, api::getPluginName());
         CHI_VALIDATE(ctx.compute->destroyResource(v.second.mvec));
     }
     CHI_VALIDATE(ctx.compute->destroyKernel(ctx.mvecKernel));

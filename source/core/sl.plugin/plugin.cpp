@@ -69,6 +69,11 @@ ILog* getInterface()
 #if defined(SL_PRODUCTION)
 #define ENABLE_DISALLOW_NEWER_PLUGINS_WAR 1
 #define ENABLE_SL_OTA_DENYLIST 1
+#elif defined(SL_DUMMY_PLUGIN)
+// Enable denylist checking in dummy-plugin for unit testing
+// Note: SL_UNITTEST_ONLY_CODE is defined in premake.lua for dummy-plugin
+#define ENABLE_DISALLOW_NEWER_PLUGINS_WAR 0
+#define ENABLE_SL_OTA_DENYLIST 1
 #else
 #define ENABLE_DISALLOW_NEWER_PLUGINS_WAR 0
 #define ENABLE_SL_OTA_DENYLIST 0
@@ -90,6 +95,13 @@ static bool isAppDenylisted(api::Context* ctx)
 
     std::filesystem::path otaCachePath;
     bool otaCacheFound = ota::getInterface()->getNGXPath(otaCachePath);
+
+    // If OTA cache path is not found or empty, denylist doesn't apply
+    if (!otaCacheFound || otaCachePath.empty())
+    {
+        SL_LOG_INFO("OTA cache path not found - denylist does not apply");
+        return false;
+    }
 
     auto relative = std::filesystem::relative(pluginPath, otaCachePath);
     if (relative.empty() ||
@@ -200,7 +212,14 @@ static bool isLoadingAllowed(api::Context* ctx)
 #if ENABLE_SL_OTA_DENYLIST
     if (isAppDenylisted(ctx))
     {
-        SL_LOG_WARN("appId=0x%x doesn't allow loading from OTA: plugin=%s", appId, api::getContext()->pluginName.c_str());
+        json& loader = *(json*)ctx->loaderConfig;
+        uint32_t deniedAppId = loader.at("appId");
+        std::string projectId{};
+        if (loader.contains("ngx") && loader.at("ngx").contains("projectId"))
+        {
+            loader.at("ngx").at("projectId").get_to(projectId);
+        }
+        SL_LOG_WARN("appId=0x%x projectId='%s' doesn't allow loading from OTA: plugin=%s", deniedAppId, projectId.c_str(), api::getContext()->pluginName.c_str());
         return false;
     }
 #endif
@@ -241,6 +260,20 @@ bool onLoad(api::Context* ctx, const char* loaderJSON, const char* embeddedJSON)
         {
             SL_LOG_INFO("Enabling WAR for LogPreMetaDataUnique ABI Breakage");
         }
+
+#if defined(SL_UNITTEST_ONLY_CODE)
+        // If the loader provides an OTA cache path override, set it on this plugin's OTA singleton
+        // This ensures the plugin uses the same OTA path as the plugin manager
+        // NOTE: Only used for unit tests - this field is not set in production builds
+        if (loader.contains("ngx") && loader["ngx"].contains("otaCachePath"))
+        {
+            std::string otaPath = loader["ngx"]["otaCachePath"];
+            if (!otaPath.empty())
+            {
+                ota::getInterface()->setNGXPathOverride(std::filesystem::path(otaPath));
+            }
+        }
+#endif
 
         if (!isLoadingAllowed(ctx))
         {

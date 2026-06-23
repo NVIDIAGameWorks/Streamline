@@ -114,6 +114,7 @@ class Context
 };
 
 Context *getContext();
+const char* getPluginName();
 
 #define SL_PLUGIN_COMMON_STARTUP()                                         \
 using namespace plugin;                                                    \
@@ -147,6 +148,7 @@ namespace api                                                                   
     /* Created on DLL attached and destroyed on DLL detach from process */                                 \
     static Context* s_ctx{};                                                                               \
     Context *getContext() { return s_ctx; }                                                                \
+    const char* getPluginName() { return N; }                                                              \
 }                                                                                                          \
                                                                                                            \
 SL_PLUGIN_CONTEXT_DEFINE(PLUGIN_NAMESPACE, PLUGIN_CTX)                                                     \

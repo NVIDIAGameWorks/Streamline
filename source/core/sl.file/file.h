@@ -41,14 +41,10 @@
 #include "source/core/sl.extra/extra.h"
 #include "source/core/sl.log/log.h"
 
-#ifdef SL_WINDOWS
 #include <KnownFolders.h>
 #include <shellapi.h>
 #include <ShlObj.h>
 EXTERN_C IMAGE_DOS_HEADER __ImageBase; // MS linker feature
-#else
-#include <linux/limits.h>
-#endif
 
 namespace fs = std::filesystem;
 
@@ -70,21 +66,13 @@ inline bool copy(const wchar_t* dst, const wchar_t* src)
 inline void write(const wchar_t* fname, const std::vector<uint8_t>& data)
 {
     fs::path p(fname);
-#ifdef SL_WINDOWS
     std::fstream file(fname, std::ios::binary | std::ios::out);
-#else
-    std::fstream file(extra::utf16ToUtf8(fname).c_str(), std::ios::binary | std::ios::out);
-#endif
     file.write((char*)data.data(), data.size());
 }
 
 inline FILE* open(const wchar_t* path, const wchar_t* mode)
 {
-#if SL_WINDOWS    
     FILE* file = _wfsopen(path, mode, _SH_DENYNO);
-#else
-    FILE* file = fopen(extra::utf16ToUtf8(path).c_str(), extra::utf16ToUtf8(mode).c_str());
-#endif
     if (!file)
     {
         if (errno != ENOENT)
@@ -164,11 +152,7 @@ inline std::vector<uint8_t> read(const wchar_t* fname)
     fs::path p(fname);
     size_t file_size = fs::file_size(p);
     std::vector<uint8_t> ret_buffer(file_size);
-#ifdef SL_LINUX
-    std::fstream file(extra::toStr(fname), std::ios::binary | std::ios::in);
-#else
     std::fstream file(fname, std::ios::binary | std::ios::in);
-#endif
     file.read((char*)ret_buffer.data(), file_size);
     return ret_buffer;
 }
@@ -183,7 +167,6 @@ inline const wchar_t* getTmpPath()
 // Required when using symlinks
 inline std::string getRealPath(const char* filename)
 {
-#ifdef SL_WINDOWS
     auto file = CreateFileA(filename,   // file to open
         GENERIC_READ,          // open for reading
         FILE_SHARE_READ,       // share for reading
@@ -194,10 +177,6 @@ inline std::string getRealPath(const char* filename)
     char buffer[MAX_PATH] = {};
     GetFinalPathNameByHandleA(file, buffer, MAX_PATH, FILE_NAME_OPENED);
     CloseHandle(file);
-#else
-    char buffer[PATH_MAX] = {};
-    ::realpath(filename, buffer);
-#endif
     return std::string(buffer);
 }
 
@@ -233,7 +212,6 @@ inline std::string removeExtension(const std::string& filename)
 inline bool remove(const wchar_t* path)
 {
     bool success = false;
-#if SL_WINDOWS    
     SHFILEOPSTRUCTW fileOperation;
     fileOperation.wFunc = FO_DELETE;
     fileOperation.pFrom = path;
@@ -249,30 +227,17 @@ inline bool remove(const wchar_t* path)
         success = true;
     }
 
-#else
-    success = remove(path) == 0;
-#endif
-
     return success;
 }
 
 inline bool move(const wchar_t* from, const wchar_t* to)
 {
-#if SL_WINDOWS
     if (!MoveFileW(from, to))
     {
         SL_LOG_ERROR( "File move failed: '%S' -> '%S' (error code %" PRIu32 ")", from, to, GetLastError());
         return false;
     }
     return true;
-#else
-    if (rename(extra::toStr(from).c_str(), extra::toStr(to).c_str()) < 0)
-    {
-        SL_LOG_ERROR("File move failed: '%S' -> '%S' (%s)", from, to, strerror(errno));
-        return false;
-    }
-    return true;
-#endif
 }
 
 inline bool createDirectoryRecursively(const wchar_t* path)
@@ -289,76 +254,47 @@ inline bool createDirectoryRecursively(const wchar_t* path)
 
 inline std::wstring getModulePath()
 {
-    std::wstring res;
-#ifdef SL_WINDOWS
     wchar_t modulePath[MAX_PATH] = { 0 };
     GetModuleFileNameW((HINSTANCE)&__ImageBase, modulePath, MAX_PATH);
     fs::path dllPath(modulePath);
     dllPath.remove_filename();
-    res = dllPath.c_str();
-#endif
-    return res;
+    return dllPath.c_str();
 }
 
 inline std::wstring getExecutablePath()
 {
-#ifdef SL_LINUX
-    char exePath[PATH_MAX] = {};
-    readlink("/proc/self/exe", exePath, sizeof(exePath));
-    return extra::toWStr(exePath);
-#else
     WCHAR pathAbsW[MAX_PATH] = {};
     GetModuleFileNameW(GetModuleHandleA(NULL), pathAbsW, ARRAYSIZE(pathAbsW));
     std::wstring searchPathW = pathAbsW;
     searchPathW.erase(searchPathW.rfind('\\'));
     return searchPathW + L"\\";
-#endif
 }
 
 inline std::wstring getExecutableName()
 {
-#ifdef SL_LINUX
-    char exePath[PATH_MAX] = {};
-    readlink("/proc/self/exe", exePath, sizeof(exePath));
-    return extra::toWStr(exePath);
-#else
     WCHAR pathAbsW[MAX_PATH] = {};
     GetModuleFileNameW(GetModuleHandleA(NULL), pathAbsW, ARRAYSIZE(pathAbsW));
     std::wstring searchPathW = pathAbsW;
     searchPathW = searchPathW.substr(searchPathW.rfind('\\') + 1);
     searchPathW.erase(searchPathW.rfind('.'));
     return searchPathW;
-#endif
 }
 
 inline std::wstring getExecutableNameAndExtension()
 {
-#ifdef SL_LINUX
-    char exePath[PATH_MAX] = {};
-    readlink("/proc/self/exe", exePath, sizeof(exePath));
-    return extra::toWStr(exePath);
-#else
     WCHAR pathAbsW[MAX_PATH] = {};
     GetModuleFileNameW(GetModuleHandleA(NULL), pathAbsW, ARRAYSIZE(pathAbsW));
     std::wstring searchPathW = pathAbsW;
     searchPathW = searchPathW.substr(searchPathW.rfind('\\') + 1);
     return searchPathW;
-#endif
 }
 
 inline std::wstring getFullPathOfExecutable()
 {
-#ifdef SL_WINDOWS
     WCHAR pathAbsW[MAX_PATH] = {};
     GetModuleFileNameW(GetModuleHandleA(NULL), pathAbsW, ARRAYSIZE(pathAbsW));
     std::wstring searchPathW = pathAbsW;
     return searchPathW;
-#else
-    char exePath[PATH_MAX] = {};
-    readlink("/proc/self/exe", exePath, sizeof(exePath));
-    static std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> convert;
-    return convert.from_bytes(exePath);
-#endif
 }
 
 inline bool isRelativePath(const std::wstring& path)

@@ -251,6 +251,9 @@ inline const char* getBufferTypeAsStr(BufferType buf)
         SL_CASE_STR(kBufferTypeAmbientOcclusionDenoised);
         SL_CASE_STR(kBufferTypeUIColorAndAlpha);
         SL_CASE_STR(kBufferTypeUIAlpha);
+        SL_CASE_STR(kBufferTypeReserved70);
+        SL_CASE_STR(kBufferTypeReserved71);
+        SL_CASE_STR(kBufferTypeReserved72);
         SL_CASE_STR(kBufferTypeShadowHint);
         SL_CASE_STR(kBufferTypeReflectionHint);
         SL_CASE_STR(kBufferTypeParticleHint);
@@ -290,6 +293,7 @@ inline const char* getBufferTypeAsStr(BufferType buf)
         SL_CASE_STR(kBufferTypeColorBeforeDepthOfField);
         SL_CASE_STR(kBufferTypeColorAfterDepthOfField);
         SL_CASE_STR(kBufferTypeScalingOutputAlpha);
+        SL_CASE_STR(kBufferTypeResponsivityMask);
         SL_CASE_STR(kBufferTypeBidirectionalDistortionField);
         SL_CASE_STR(kBufferTypeTransparencyLayer);
         SL_CASE_STR(kBufferTypeTransparencyLayerOpacity);

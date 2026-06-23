@@ -14,7 +14,7 @@ application.
 > - Records into existing command-lists, giving applications finer work-scheduling power.
 > - Support for full RGBA scaling with `sl::DLSSOptions::alphaUpscalingEnabled`.
 
-Version 2.11.1
+Version 2.12.0
 =======
 
 ### 1.0 CHECK IF DIRECTSR IS SUPPORTED

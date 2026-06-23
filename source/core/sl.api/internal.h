@@ -67,14 +67,6 @@ struct ID3D12Device;
 struct ID3D12Resource;
 enum D3D12_BARRIER_LAYOUT;
 
-#ifdef SL_LINUX
-using HMODULE = void*;
-#define GetProcAddress dlsym
-#define FreeLibrary dlclose
-#define LoadLibraryA(lib) dlopen(lib, RTLD_LAZY)
-#define LoadLibraryW(lib) dlopen(sl::extra::toStr(lib).c_str(), RTLD_LAZY)
-#else
-
 constexpr uint32_t kTemporaryAppId = 100721531;
 //! Special marker
 constexpr uint32_t kReflexMarkerSleep = 0x1000;
@@ -84,8 +76,6 @@ struct DECLSPEC_UUID("ADEC44E2-61F0-45C3-AD9F-1B37379284FF") StreamlineRetrieveB
 {
 
 };
-
-#endif
 
 namespace sl
 {

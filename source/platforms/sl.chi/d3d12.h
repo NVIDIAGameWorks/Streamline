@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2026 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -276,6 +276,7 @@ class D3D12 : public Generic
     std::map<size_t, ID3D12RootSignature*> m_rootSignatureMap = {};
     thread::ThreadContext<DispatchDataD3D12> m_dispatchContext;
 
+
     size_t hashRootSignature(const CD3DX12_ROOT_SIGNATURE_DESC& desc);
 
     virtual std::wstring getDebugName(Resource res) override final;
@@ -299,6 +300,16 @@ class D3D12 : public Generic
         getNativeResourceState(state, res);
         return (D3D12_RESOURCE_STATES)res;
     }
+
+    void initNsightActivity();
+
+protected:
+#if SL_ENABLE_PROFILING
+    ComputeStatus beginProfilingImpl(CommandList cmdList, const char* marker, uint8_t r, uint8_t g, uint8_t b) override final;
+    ComputeStatus endProfilingImpl(CommandList cmdList) override final;
+    ComputeStatus beginProfilingQueueImpl(CommandQueue cmdQueue, const char* marker, uint8_t r, uint8_t g, uint8_t b) override final;
+    ComputeStatus endProfilingQueueImpl(CommandQueue cmdQueue) override final;
+#endif
 
 public:
 
@@ -333,6 +344,18 @@ public:
     virtual ComputeStatus setFullscreenState(SwapChain chain, bool fullscreen, Output out) override final;
     virtual ComputeStatus getSwapChainBuffer(SwapChain chain, uint32_t index, Resource& buffer) override final;
 
+    ComputeStatus notifySwapChainCreated(SwapChain chain, uint32_t bufferCount) override final { return ComputeStatus::eOk; }
+    void notifySwapChainDestroyed(SwapChain chain) override final {}
+    ChiCommandQueue* getHybridPresentationQueue() override final { return nullptr; }
+    ComputeStatus copyFrameToHybridBackBuffer(SwapChain chain, Resource source,
+                                              const HybridCopyParams& params,
+                                              CommandQueue pacerQueue) override final { return ComputeStatus::eOk; }
+    ComputeStatus waitForHybridCopyComplete(SwapChain chain) override final { return ComputeStatus::eOk; }
+    ComputeStatus notifyHybridPresent(CommandQueue queue) override final { return ComputeStatus::eOk; }
+
+    ComputeStatus setSwapChainPrivateData(void* nativeSwapChain, void* data) override final;
+    ComputeStatus getSwapChainPrivateData(void* nativeSwapChain, void** data) override final;
+
     virtual ComputeStatus bindKernel(const Kernel InKernel) override final;
     virtual ComputeStatus bindSharedState(CommandList cmdList, UINT node) override final;
     virtual ComputeStatus bindSampler(uint32_t binding, uint32_t reg, Sampler sampler) override;
@@ -364,11 +387,6 @@ public:
 
     ComputeStatus beginPerfSection(CommandList cmdList, const char *key, unsigned int node, bool InReset = false) override final;
     ComputeStatus endPerfSection(CommandList cmdList, const char *key, float &OutAvgTimeMS, unsigned int node) override final;
-    ComputeStatus beginProfiling(CommandList cmdList, UINT Metadata, const char* marker) override final;
-    ComputeStatus endProfiling(CommandList cmdList) override final;
-    ComputeStatus beginProfilingQueue(CommandQueue cmdQueue, UINT Metadata, const char* marker) override final;
-    ComputeStatus endProfilingQueue(CommandQueue cmdQueue) override final;
-
     virtual bool signalCPUFence(Fence fence, uint64_t syncValue) override final;
 
     virtual ComputeStatus notifyOutOfBandCommandQueue(ChiCommandQueue* queue, OutOfBandCommandQueueType type) override final;

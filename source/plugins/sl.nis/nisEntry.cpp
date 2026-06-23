@@ -166,8 +166,8 @@ bool initializeNIS(chi::CommandList cmdList, const common::EventData& data)
     if (!ctx.scalerCoef && !ctx.usmCoef)
     {
         auto texDesc = sl::chi::ResourceDescription(kFilterSize / 4, kPhaseCount, sl::chi::eFormatRGBA32F);
-        CHI_CHECK_RF(ctx.compute->createTexture2D(texDesc, ctx.scalerCoef, "nisScalerCoef"));
-        CHI_CHECK_RF(ctx.compute->createTexture2D(texDesc, ctx.usmCoef, "nisUSMCoef"));
+        CHI_CHECK_RF(ctx.compute->createTexture2D(texDesc, ctx.scalerCoef, SL_RESOURCE_NAME("tex2d.scaler-coef").c_str()));
+        CHI_CHECK_RF(ctx.compute->createTexture2D(texDesc, ctx.usmCoef, SL_RESOURCE_NAME("tex2d.usm-coef").c_str()));
 
         int rowPitchAlignment = 1; // D3D11
         RenderAPI platform;
@@ -184,8 +184,8 @@ bool initializeNIS(chi::CommandList cmdList, const common::EventData& data)
         if (!ctx.uploadScalerCoef)
         {
             chi::ResourceDescription bufferDesc(deviceRowPitch * kPhaseCount, 1, chi::eFormatINVALID, chi::HeapType::eHeapTypeUpload, chi::ResourceState::eUnknown);
-            CHI_CHECK_RF(ctx.compute->createBuffer(bufferDesc, ctx.uploadScalerCoef, "sl.ctx.uploadScalerCoef"));
-            CHI_CHECK_RF(ctx.compute->createBuffer(bufferDesc, ctx.uploadUsmCoef, "sl.ctx.uploadUsmCoef"));
+            CHI_CHECK_RF(ctx.compute->createBuffer(bufferDesc, ctx.uploadScalerCoef, SL_RESOURCE_NAME("buf.upload-scaler-coef").c_str()));
+            CHI_CHECK_RF(ctx.compute->createBuffer(bufferDesc, ctx.uploadUsmCoef, SL_RESOURCE_NAME("buf.upload-usm-coef").c_str()));
         }
 
         std::vector<float> blobScale(totalBytes / sizeof(float));
@@ -331,7 +331,7 @@ Result nisEndEvaluation(chi::CommandList cmdList, const common::EventData& data,
     }
 
 #if SL_ENABLE_TIMING
-    CHI_VALIDATE(ctx.compute->beginPerfSection(cmdList, "sl.nis"));
+    CHI_VALIDATE(ctx.compute->beginPerfSection(cmdList, SL_RESOURCE_NAME("perf.evaluate").c_str()));
 #endif
 
     // Resource state already obtained and stored in resource description
@@ -357,7 +357,7 @@ Result nisEndEvaluation(chi::CommandList cmdList, const common::EventData& data,
 
     float ms = 0;
 #if SL_ENABLE_TIMING
-    CHI_VALIDATE(ctx.compute->endPerfSection(cmdList, "sl.nis", ms));
+    CHI_VALIDATE(ctx.compute->endPerfSection(cmdList, SL_RESOURCE_NAME("perf.evaluate").c_str(), ms));
 #endif
 
     auto parameters = api::getContext()->parameters;
@@ -366,7 +366,7 @@ Result nisEndEvaluation(chi::CommandList cmdList, const common::EventData& data,
     // Report our stats, shown by sl.nis plugin
     /*static std::string s_stats;
     auto v = api::getContext()->pluginVersion;
-    s_stats = extra::format("sl.nis {} - ({}x{})->({}x{}) - {}ms", v.toStr() + "." + GIT_LAST_COMMIT_SHORT, inExtent.width, inExtent.height,outDesc.width, outDesc.height, ms);
+    s_stats = extra::format("{} {} - ({}x{})->({}x{}) - {}ms", api::getPluginName(), v.toStr() + "." + GIT_LAST_COMMIT_SHORT, inExtent.width, inExtent.height,outDesc.width, outDesc.height, ms);
     parameters->set(sl::param::nis::kStats, (void*)s_stats.c_str());*/
 
     std::scoped_lock lock(ctx.uiStats.mtx);
@@ -489,7 +489,7 @@ bool slOnPluginStartup(const char* jsonConfig, void* device)
                     ctx.uiStats.mode = "Mode: Off";
                     ctx.uiStats.viewport = ctx.uiStats.runtime = {};
                 }
-                if (ui->collapsingHeader(extra::format("sl.nis v{}", (v.toStr() + "." + GIT_LAST_COMMIT_SHORT)).c_str(), imgui::kTreeNodeFlagDefaultOpen))
+                if (ui->collapsingHeader(extra::format("{} v{}", api::getPluginName(), (v.toStr() + "." + GIT_LAST_COMMIT_SHORT)).c_str(), imgui::kTreeNodeFlagDefaultOpen))
                 {
                     ui->text(ctx.uiStats.mode.c_str());
                     ui->text(ctx.uiStats.viewport.c_str());

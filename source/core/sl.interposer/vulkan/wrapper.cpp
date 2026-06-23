@@ -45,11 +45,7 @@ HMODULE loadVulkanLibrary()
 {
     if (!s_module)
     {
-#ifdef SL_WINDOWS
         s_module = ::LoadLibraryA("vulkan-1.dll");
-#else
-        s_module = ::LoadLibraryA("vulkan-1.so");
-#endif
     }
     return s_module;
 }

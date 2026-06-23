@@ -200,10 +200,18 @@ constexpr BufferType kBufferTypeColorBeforeDepthOfField = 65;
 constexpr BufferType kBufferTypeColorAfterDepthOfField = 66;
 //! Optional - Color buffer that overrides the alpha channel of kBufferTypeScalingOutputColor
 constexpr BufferType kBufferTypeScalingOutputAlpha  = 67;
+//! Optional buffer for responsivity mask
+constexpr BufferType kBufferTypeResponsivityMask = 68;
 //! Optional - UI Alpha
 //! A 1 channel resource containing the alpha value of on-screen elements, between 0.0f and 1.0f inclusive.
 //!  Similar to kBufferTypeUIColorAndAlpha, but only the alpha channel for optimized run-time performance.
-constexpr BufferType kBufferTypeUIAlpha = 68;
+constexpr BufferType kBufferTypeUIAlpha = 69;
+//! Reserved for future use, do not use
+constexpr BufferType kBufferTypeReserved70 = 70;
+//! Reserved for future use, do not use
+constexpr BufferType kBufferTypeReserved71 = 71;
+//! Reserved for future use, do not use
+constexpr BufferType kBufferTypeReserved72 = 72;
 
 //! Features supported with this SDK
 //! 
@@ -241,8 +249,14 @@ constexpr Feature kFeatureNvPerf = 1002;
 
 constexpr Feature kFeatureDirectSR = 1003;
 
+
 // ImGUI 
 constexpr Feature kFeatureImGUI = 9999;
+
+#if defined(SL_UNITTEST_ONLY_CODE)
+//! Dummy plugin for testing plugin.cpp functionality
+constexpr Feature kFeatureDummyPlugin = 65534;
+#endif
 
 //! Common feature, NOT intended to be used directly
 constexpr Feature kFeatureCommon = UINT_MAX;

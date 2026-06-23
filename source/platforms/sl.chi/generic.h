@@ -30,16 +30,7 @@
 
 #include "source/platforms/sl.chi/compute.h"
 
-#if !defined(SL_WINDOWS)
-typedef struct GUID {
-    unsigned long  Data1;
-    unsigned short Data2;
-    unsigned short Data3;
-    unsigned char  Data4[ 8 ];
-} GUID;
-#else
 typedef LUID    NVSDK_NGX_LUID;
-#endif
 
 #include <atomic>
 #include <utility>
@@ -104,11 +95,15 @@ enum class VRAMOperation
     eCount
 };
 
+void* nsightSecureLoadLibraryCallback(const wchar_t* libName);
+
 class Generic : public ICompute
 {
 protected:
     using KernelMap = std::map<Kernel, KernelDataBase*>;
     KernelMap m_kernels = {};
+
+    bool m_nsightInitialized{ false };
 
     std::atomic<uint32_t> m_finishedFrame = 0;
 
@@ -180,6 +175,13 @@ protected:
 
     VRAMSegment manageVRAM(Resource res, VRAMOperation op);
 
+#if SL_ENABLE_PROFILING
+    ComputeStatus beginProfilingImpl(CommandList cmdList, const char* marker, uint8_t r, uint8_t g, uint8_t b) override { return ComputeStatus::eNoImplementation; }
+    ComputeStatus endProfilingImpl(CommandList cmdList) override { return ComputeStatus::eNoImplementation; }
+    ComputeStatus beginProfilingQueueImpl(CommandQueue cmdQueue, const char* marker, uint8_t r, uint8_t g, uint8_t b) override { return ComputeStatus::eNoImplementation; }
+    ComputeStatus endProfilingQueueImpl(CommandQueue cmdQueue) override { return ComputeStatus::eNoImplementation; }
+#endif
+
 public:
 
     virtual ComputeStatus init(Device InDevice, param::IParameters* params);
@@ -244,6 +246,7 @@ public:
     virtual ComputeStatus setDebugName(Resource res, const char friendlyName[]) override { return ComputeStatus::eNoImplementation; }
         
     virtual ComputeStatus getRefreshRate(WindowHandle window, float& refreshRate) override;
+    virtual ComputeStatus getDisplayId(WindowHandle window, uint32_t& displayId) override;
     virtual ComputeStatus getSwapChainBuffer(SwapChain chain, uint32_t index, Resource& buffer) override { return ComputeStatus::eNoImplementation; }
 
     virtual ComputeStatus pushState(CommandList cmdList) override { return ComputeStatus::eOk; }
@@ -297,11 +300,6 @@ public:
     ComputeStatus getFullscreenState(SwapChain chain, bool& fullscreen) override { return ComputeStatus::eNoImplementation; };
     ComputeStatus setFullscreenState(SwapChain chain, bool fullscreen, Output out = nullptr) override { return ComputeStatus::eNoImplementation; }
 
-    ComputeStatus beginProfiling(CommandList cmdList, unsigned int Metadata, const char* marker) override { return ComputeStatus::eOk;  }
-    ComputeStatus endProfiling(CommandList cmdList)  override { return ComputeStatus::eOk; }
-    ComputeStatus beginProfilingQueue(CommandQueue cmdList, uint32_t metadata, const char* marker)  override { return ComputeStatus::eOk; }
-    ComputeStatus endProfilingQueue(CommandQueue cmdList)  override { return ComputeStatus::eOk; }
-
     virtual bool signalCPUFence(Fence fence, uint64_t syncValue) = 0;
 
     virtual ComputeStatus setSleepMode(const ReflexOptions& consts) override;
@@ -326,6 +324,9 @@ public:
     virtual ComputeStatus isNativeOpticalFlowSupported() override { return ComputeStatus::eNoImplementation; }
 
     virtual ComputeStatus isDeviceExtensionSupported(const char* extension, uint32_t version) override { return ComputeStatus::eNoImplementation; }
+
+    ComputeStatus setSwapChainPrivateData(void* nativeSwapChain, void* data) override { return ComputeStatus::eNoImplementation; }
+    ComputeStatus getSwapChainPrivateData(void* nativeSwapChain, void** data) override { return ComputeStatus::eNoImplementation; }
 };
 
 }

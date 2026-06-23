@@ -38,8 +38,6 @@ namespace interposer
 // 8 bytes for 64bit address and 8 bytes for code
 constexpr uint32_t kCodePatchSize = 16;
 
-#ifdef SL_WINDOWS
-
 using VirtualAddress = void*;
 
 struct ExportedFunction
@@ -105,17 +103,6 @@ inline T call(T replacement, ExportedFunction& f)
 {
     return reinterpret_cast<T>(f.target);
 }
-
-#else
-
-struct IHook
-{
-    virtual void setEnabled(bool value) = 0;
-    virtual bool isEnabled() const = 0;
-    virtual const json& getConfig() const = 0;
-};
-
-#endif
 
 bool hasInterface();
 IHook* getInterface();

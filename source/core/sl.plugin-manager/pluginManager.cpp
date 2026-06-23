@@ -20,14 +20,8 @@
 * SOFTWARE.
 */
 
-#ifdef SL_WINDOWS
 #include <Windows.h>
 #include <versionhelpers.h>
-#else
-#include <dlfcn.h>
-#include <dirent.h>
-#include <unistd.h>
-#endif
 
 #include <set>
 #include <sstream>
@@ -539,11 +533,7 @@ Result PluginManager::setFeatureEnabled(Feature feature, bool value)
 
 Result PluginManager::findPlugins(const fs::path& directory, std::vector<fs::path>& files)
 {
-#ifdef SL_WINDOWS
     std::wstring dynamicLibraryExt = L".dll";
-#else
-    std::wstring dynamicLibraryExt = L".so";
-#endif
 
     SL_LOG_INFO("Looking for plugins in %S ...", directory.c_str());
     try
@@ -1303,6 +1293,16 @@ void PluginManager::populateLoaderJSON(uint32_t deviceType, json& config)
         config["ngx"]["engineType"] = m_engine;
         config["ngx"]["engineVersion"] = m_engineVersion;
         config["ngx"]["projectId"] = m_projectId;
+        
+#if defined(SL_UNITTEST_ONLY_CODE)
+        // Pass OTA cache path to plugins so they can sync their OTA path override
+        // NOTE: Only used for unit tests - do not rely on this in production plugins
+        std::filesystem::path ngxPath;
+        if (m_ota->getNGXPath(ngxPath))
+        {
+            config["ngx"]["otaCachePath"] = ngxPath.string();
+        }
+#endif
 
         config["preferences"]["flags"] = m_pref.flags;
 #if !defined(SL_UNITTEST_ONLY_CODE)

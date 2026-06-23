@@ -72,7 +72,7 @@ struct D3D11CommandListContext : public ICommandListContext
             }
             else
             {
-                m_compute->createFence(eFenceFlagsShared, m_syncValue, m_fence, "sl.dlssg.d3d11.fence");
+                m_compute->createFence(eFenceFlagsShared, m_syncValue, m_fence, (std::string(debugName) + ".fence").c_str());
             }
         }
     }
@@ -833,7 +833,7 @@ ComputeStatus D3D11::bindConsts(uint32_t pos, uint32_t base, void *data, size_t 
         desc.height = 1;
         desc.heapType = eHeapTypeUpload;
         desc.state = ResourceState::eConstantBuffer;
-        createBuffer(desc, buffer, "sl.d3d11.const_buffer");
+        createBuffer(desc, buffer, SL_COMPOSE_NAME(kComputeTag, "buf.const-d3d11").c_str());
         ctx.kernel->constBuffers[base] = (ID3D11Buffer*)(buffer->native);
     }
     auto buffer = ctx.kernel->constBuffers[base];
@@ -933,8 +933,8 @@ ComputeStatus D3D11::getTextureDriverData(Resource res, ResourceDriverDataD3D11&
             SL_LOG_ERROR( "CreateShaderResourceView failed - status %d", status);
             return ComputeStatus::eError;
         }
-        constexpr char SRVFriendlyName[] = "sl.compute.textureCachedSRV";
-        data.SRV->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(SRVFriendlyName), SRVFriendlyName); // Narrow character type debug object name
+        auto srvName = SL_COMPOSE_NAME(kComputeTag, "srv.texture-cached");
+        data.SRV->SetPrivateData(WKPDID_D3DDebugObjectName, (DWORD)(srvName.size() + 1), srvName.c_str());
 
         SL_LOG_VERBOSE("Cached SRV resource 0x%llx node %u fmt %s size (%u,%u)", res, 0, getDXGIFormatStr(Desc.nativeFormat), (UINT)Desc.width, (UINT)Desc.height);
 
@@ -993,8 +993,8 @@ ComputeStatus D3D11::getSurfaceDriverData(Resource res, ResourceDriverDataD3D11&
             return ComputeStatus::eError;
         }
 
-        constexpr char UAVFriendlyName[] = "sl.compute.surfaceCachedUAV";
-        data.UAV->SetPrivateData(WKPDID_D3DDebugObjectName, sizeof(UAVFriendlyName), UAVFriendlyName); // Narrow character type debug object name
+        auto uavName = SL_COMPOSE_NAME(kComputeTag, "uav.surface-cached");
+        data.UAV->SetPrivateData(WKPDID_D3DDebugObjectName, (DWORD)(uavName.size() + 1), uavName.c_str());
 
         SL_LOG_VERBOSE("Cached UAV resource 0x%llx node %u fmt %s size (%u,%u)", res, 0, getDXGIFormatStr(Desc.nativeFormat), (UINT)Desc.width, (UINT)Desc.height);
 
@@ -1377,6 +1377,7 @@ ComputeStatus D3D11::cloneResource(Resource resource, Resource &clone, const cha
     clone->width = desc.width;
     clone->height = desc.height;
 
+    setDebugName(clone, friendlyName);
     manageVRAM(clone, VRAMOperation::eAlloc);
 
     return ComputeStatus::eOk;
@@ -1619,20 +1620,6 @@ ComputeStatus D3D11::endPerfSection(CommandList cmdList, const char* key, float 
     return ComputeStatus::eOk;
 }
 
-ComputeStatus D3D11::beginProfiling(CommandList cmdList, unsigned int Metadata, const char* marker)
-{
-#if SL_ENABLE_PROFILING
-#endif
-    return ComputeStatus::eError;
-}
-
-ComputeStatus D3D11::endProfiling(CommandList cmdList)
-{
-#if SL_ENABLE_PROFILING
-#endif
-    return ComputeStatus::eError;
-}
-
  bool D3D11::signalCPUFence(Fence fence, uint64_t syncValue)
 {
     assert(false);
@@ -1766,7 +1753,7 @@ ComputeStatus D3D11::getResourceFromSharedHandle(ResourceType type, Handle handl
             return ComputeStatus::eError;
         }
         resource = new sl::Resource(ResourceType::eTex2d, tex);
-        setDebugName(resource, "sl.shared.from.d3d12");
+        setDebugName(resource, SL_COMPOSE_NAME(kComputeTag, "tex2d.shared-from-d3d12").c_str());
         // We free these buffers but never allocate them so account for the VRAM
         manageVRAM(resource, VRAMOperation::eAlloc);
     }

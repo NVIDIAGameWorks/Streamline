@@ -30,6 +30,7 @@ nvcfg.SL_DLSS_DN_PUBLIC_SDK = true
 
 
 
+
 nvcfg.SL_BUILD_LATEWARP = true
 
 
@@ -39,6 +40,10 @@ nvcfg.SL_BUILD_LATEWARP = true
 
 -- SL DirectSR plugin build config option. Enabling this will enable the DirectSR plugin build
 nvcfg.SL_BUILD_DIRECTSR = true
+
+
+
+
 
 
 
@@ -163,14 +168,8 @@ workspace "streamline"
 		EXTERNAL .. "vulkan/Include"
 	}
    	 
-	if os.host() == "windows" then
-		systemversion "latest"
-		defines { "SL_SDK", "SL_WINDOWS", "WIN32" , "WIN64" , "_CONSOLE", "NOMINMAX"}
-	else
-		defines { "SL_SDK", "SL_LINUX" }
-		-- stop on first error and also downgrade checks for casting due to ReShade 
-		buildoptions {"-std=c++17", "-Wfatal-errors", "-fpermissive"}
-	end
+	systemversion "latest"
+	defines { "SL_SDK", "SL_WINDOWS", "WIN32" , "WIN64" , "_CONSOLE", "NOMINMAX"}
 
 	filter "platforms:x64"
 		architecture "x64"
@@ -188,7 +187,7 @@ workspace "streamline"
 	cppdialect "C++20"
 	
 	filter "configurations:Debug"
-		defines { "DEBUG", "SL_ENABLE_TIMING=1", "SL_DEBUG" }
+		defines { "DEBUG", "SL_ENABLE_TIMING=1", "SL_ENABLE_PROFILING=1", "SL_DEBUG" }
 		if _OPTIONS["use-debug-runtime"] then
 			defines { "_DEBUG" }
 			runtime "Debug"
@@ -218,11 +217,8 @@ workspace "streamline"
 			'powershell.exe -NoProfile -ExecutionPolicy Bypass ' .. path.translate(TOOLS) .. 'bin2cheader.ps1 -i "%{file.basename}.cs" > "%{file.basename}_cs.h"',
 			'popd'
 		 }
-		 -- One or more outputs resulting from the build (required)
 		 buildoutputs { shaders_output .. "%{file.basename}.spv", shaders_output .. "%{file.basename}.cs" }
-		 -- One or more additional dependencies for this build command (optional)
-		 --buildinputs { 'path/to/file1.ext', 'path/to/file2.ext' }
-	
+
 	filter { "files:**.json" }
 		buildmessage 'Compiling %{file.relpath} to %{file.basename}_json.h'
 		local json_output = out_dir() .. "json/"
@@ -241,7 +237,7 @@ workspace "streamline"
 
 	filter {} -- clear filter when you know you no longer need it!
 	
-	vpaths { ["shaders"] = {"**.hlsl" } }
+	vpaths { ["shaders"] = {"**.hlsl or **.slang" } }
 
 group ""
 
@@ -255,11 +251,7 @@ project "sl.interposer"
 	characterset ("MBCS")
 	staticruntime "off"
 	
-	if os.host() == "windows" then
-		prebuildcommands { 'pushd ' .. path.translate(out_dir()), path.translate(TOOLS) .. "gitVersion.bat", 'popd' }
-	else
-		prebuildcommands { 'pushd ' .. path.translate(out_dir()), path.translate(TOOLS) .. "gitVersion.sh", 'popd' }
-	end
+	prebuildcommands { 'pushd ' .. path.translate(out_dir()), path.translate(TOOLS) .. "gitVersion.bat", 'popd' }
 
 	
 	filter { filter_platforms }
@@ -275,22 +267,11 @@ project "sl.interposer"
 		"./source/core/sl.interposer/**.rc",
 	}
 
-	if os.host() == "windows" then
-		vpaths { ["proxies/d3d12"] = {"./source/core/sl.interposer/d3d12/**.h", "./source/core/sl.interposer/d3d12/**.cpp" }}
-		vpaths { ["proxies/d3d11"] = {"./source/core/sl.interposer/d3d11/**.h", "./source/core/sl.interposer/d3d11/**.cpp" }}
-		vpaths { ["proxies/dxgi"] = {"./source/core/sl.interposer/dxgi/**.h", "./source/core/sl.interposer/dxgi/**.cpp" }}
+	vpaths { ["proxies/d3d12"] = {"./source/core/sl.interposer/d3d12/**.h", "./source/core/sl.interposer/d3d12/**.cpp" }}
+	vpaths { ["proxies/d3d11"] = {"./source/core/sl.interposer/d3d11/**.h", "./source/core/sl.interposer/d3d11/**.cpp" }}
+	vpaths { ["proxies/dxgi"] = {"./source/core/sl.interposer/dxgi/**.h", "./source/core/sl.interposer/dxgi/**.cpp" }}
 
-		linkoptions { "/DEF:../../source/core/sl.interposer/exports.def" }
-	else
-		-- remove on Linux all DX related stuff
-		removefiles
-		{
-			"./source/core/sl.interposer/d3d**",
-			"./source/core/sl.interposer/dxgi**",
-			"./source/core/sl.interposer/resource.h",
-			"./source/core/sl.interposer/**.rc"
-		}
-	end
+	linkoptions { "/DEF:../../source/core/sl.interposer/exports.def" }
 
 	vpaths { ["proxies/vulkan"] = {"./source/core/sl.interposer/vulkan/**.h", "./source/core/sl.interposer/vulkan/**.cpp" }}
 	vpaths { ["hook"] = {"./source/core/sl.interposer/hook**"}}
@@ -315,16 +296,14 @@ project "sl.interposer"
 	}
 
 
-	if os.host() == "windows" then
-		defines {"VK_USE_PLATFORM_WIN32_KHR", "SL_ENABLE_EXCEPTION_HANDLING"}
-		vpaths { ["security"] = {"./source/security/**.h","./source/security/**.cpp"}}
+	defines {"VK_USE_PLATFORM_WIN32_KHR", "SL_ENABLE_EXCEPTION_HANDLING"}
+	vpaths { ["security"] = {"./source/security/**.h","./source/security/**.cpp"}}
 
-		links {"dbghelp.lib"}
+	links {"dbghelp.lib"}
 
-		filter { filter_platforms }
-			links {EXTERNAL .. "nvapi/amd64/nvapi64.lib"}
-		filter{}
-	end
+	filter { filter_platforms }
+		links {EXTERNAL .. "nvapi/amd64/nvapi64.lib"}
+	filter{}
 	
 	vpaths { ["manager"] = {"./source/core/sl.plugin-manager/**.h", "./source/core/sl.plugin-manager/**.cpp" }}
 	vpaths { ["api"] = {"./source/core/sl.api/**.h","./source/core/sl.api/**.cpp"}}
@@ -361,43 +340,28 @@ project "sl.compute"
 		includedirs { "./external/nvapi" }
 	filter{}
 
-	if os.host() == "windows" then
-		if (os.isfile(EXTERNAL .. "slang/bin/windows-x64/release/slangc.exe")) then
-		files {
-			"./shaders/**.hlsl"
-		}
-		end
-		files {
-			"./source/platforms/sl.chi/capture.h",
-			"./source/platforms/sl.chi/capture.cpp",
-			"./source/platforms/sl.chi/compute.h",
-			"./source/platforms/sl.chi/generic.h",
-			"./source/platforms/sl.chi/d3d12.cpp",
-			"./source/platforms/sl.chi/d3d12.h",
-			"./source/platforms/sl.chi/d3d11.cpp",
-			"./source/platforms/sl.chi/d3d11.h",
-			"./source/platforms/sl.chi/vulkan.cpp",
-			"./source/platforms/sl.chi/vulkan.h",
-			"./source/platforms/sl.chi/generic.cpp",
-			"./source/core/sl.security/**.h",
-			"./source/core/sl.security/**.cpp"
-		}
-		filter { "options:with-nvllvk=yes" }
-			defines { "SL_WITH_NVLLVK" }
-			files { "./source/platforms/sl.chi/nvllvk.cpp" }
-		filter {}
-	else
-		files {
-			"./shaders/**.hlsl",
-			"./source/platforms/sl.chi/capture.h",
-			"./source/platforms/sl.chi/capture.cpp",
-			"./source/platforms/sl.chi/compute.h",
-			"./source/platforms/sl.chi/generic.h",
-			"./source/platforms/sl.chi/vulkan.cpp",
-			"./source/platforms/sl.chi/vulkan.h",
-			"./source/platforms/sl.chi/generic.cpp"	
-		}
+	if (os.isfile(EXTERNAL .. "slang/bin/windows-x64/release/slangc.exe")) then
+	files {
+		"./shaders/**.hlsl",
+	}
 	end
+	files {
+		"./source/platforms/sl.chi/compute.h",
+		"./source/platforms/sl.chi/generic.h",
+		"./source/platforms/sl.chi/d3d12.cpp",
+		"./source/platforms/sl.chi/d3d12.h",
+		"./source/platforms/sl.chi/d3d11.cpp",
+		"./source/platforms/sl.chi/d3d11.h",
+		"./source/platforms/sl.chi/vulkan.cpp",
+		"./source/platforms/sl.chi/vulkan.h",
+		"./source/platforms/sl.chi/generic.cpp",
+		"./source/core/sl.security/**.h",
+		"./source/core/sl.security/**.cpp"
+	}
+	filter { "options:with-nvllvk=yes" }
+		defines { "SL_WITH_NVLLVK" }
+		files { "./source/platforms/sl.chi/nvllvk.cpp" }
+	filter {}
 
 	vpaths { ["chi"] = {"./source/platforms/sl.chi/**.h","./source/platforms/sl.chi/**.cpp"}}
 	vpaths { ["security"] = {"./source/core/sl.security/**.h","./source/core/sl.security/**.cpp"}}
@@ -457,16 +421,15 @@ project "sl.common"
 
 	files { 
 		"./source/core/sl.extra/**.cpp",
-		"./source/plugins/sl.common/**.json",
-		"./source/plugins/sl.common/**.h", 
-		"./source/plugins/sl.common/**.cpp",
+		"./source/plugins/sl.common/*.json",
+		"./source/plugins/sl.common/*.h",
+		"./source/plugins/sl.common/*.cpp",
 		"./source/core/ngx/**.h",
 		"./source/core/ngx/**.cpp",
 		"./source/core/sl.ota/**.cpp",
 	}
-
 	vpaths { ["imgui"] = {EXTERNAL .. "imgui/**.cpp" }}
-	vpaths { ["impl"] = {"./source/plugins/sl.common/**.h", "./source/plugins/sl.common/**.cpp" }}
+	vpaths { ["impl"] = {"./source/plugins/sl.common/*.h", "./source/plugins/sl.common/*.cpp" }}
 	--vpaths { ["ngx"] = {"./source/core/ngx/**.h", "./source/core/ngx/**.cpp"}}
 
 	filter { filter_platforms }
@@ -478,7 +441,6 @@ project "sl.common"
 		"delayimp.lib", "d3d12.lib", "dxgi.lib", "dxguid.lib", (out_static_lib_dir("sl.compute") .. "sl.compute.lib"),
 		"Version.lib"
 	}
-
 	-- Release and debug runtimes are not compatible, so we always build against
 	-- the release runtime.
 	filter "configurations:Debug"
@@ -495,6 +457,11 @@ project "sl.common"
 		defines { "SL_WITH_NVLLVK" }
 		links { "NvLowLatencyVk.lib" }
 		linkoptions { "/DELAYLOAD:NvLowLatencyVk.dll" }
+	filter {}
+
+	filter { "configurations:Debug", "platforms:x64" }
+	-- Match d3d12.cpp's PIX lib pragma scope (SL_ENABLE_PROFILING && !_M_ARM64); only x64 ships PIX binaries.
+			linkoptions { "/DELAYLOAD:WinPixEventRuntime.dll" }
 	filter {}
 
 if (os.isdir("./source/plugins/sl.dlss_g")) then
@@ -595,7 +562,8 @@ project "sl.template"
 	vpaths { ["impl"] = {"./source/plugins/sl.template/**.h", "./source/plugins/sl.template/**.cpp" }}
 			
 	removefiles {"./source/core/sl.extra/extra.cpp"}
-	
+
+
 project "sl.nis"
 	kind "SharedLib"
 	targetdir (out_dynamic_lib_dir())
@@ -743,5 +711,6 @@ if (os.isdir("./source/plugins/sl.nvperf")) then
 
 		links { "d3d12.lib", "vulkan-1.lib"}
 end
+
 
 group ""

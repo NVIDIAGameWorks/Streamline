@@ -22,9 +22,11 @@
 
 #pragma once
 
+#include <atomic>
 #include <map>
 #include <unordered_set>
 #include <shared_mutex>
+#include <vector>
 
 #include "include/sl.h"
 #include "include/sl_helpers.h"
@@ -80,6 +82,104 @@ namespace chi
 using CommandList = void*;
 class ICompute;
 }
+
+// Threading: proxyBuffers vector is only modified during swapchain create/resize/destroy.
+// On D3D12, present is serialized by the runtime so no concurrent access occurs.
+// On Vulkan, acquire and present can run on different threads (see dlss_gEntry.cpp),
+// but swapchain recreation requires external synchronization by the app per Vulkan spec
+// (see defines.h: "In VK, queue is an externally synchronized parameter").
+// The SDK relies on this app-side guarantee — no mutex is added here for proxyBuffers.
+// proxyBufferIndex is atomic as a forward-looking measure for Vulkan acquire/present threading.
+struct SwapChainContext
+{
+    virtual ~SwapChainContext() = default;
+
+    chi::Resource getCurrentProxyBuffer() const
+    {
+        uint32_t idx = proxyBufferIndex.load(std::memory_order_acquire);
+        return (idx < proxyBuffers.size()) ? proxyBuffers[idx] : nullptr;
+    }
+    chi::Resource getProxyBuffer(uint32_t index) const
+    {
+        return (index < proxyBuffers.size()) ? proxyBuffers[index] : nullptr;
+    }
+    uint32_t getCurrentProxyBufferIndex() const { return proxyBufferIndex.load(std::memory_order_acquire); }
+    uint32_t getProxyBufferCount() const { return static_cast<uint32_t>(proxyBuffers.size()); }
+    bool hasProxyBuffers() const { return !proxyBuffers.empty(); }
+
+    //! Platform-agnostic accessor: retrieves the SwapChainContext stored on the native swap chain
+    //! via ICompute::getSwapChainPrivateData and returns its current proxy buffer.
+    static chi::Resource getProxyBufferFromSwapChain(chi::ICompute* compute, void* nativeSwapChain)
+    {
+        if (!compute || !nativeSwapChain) return nullptr;
+
+        void* rawCtx = nullptr;
+        auto status = compute->getSwapChainPrivateData(nativeSwapChain, &rawCtx);
+        if (status != chi::ComputeStatus::eOk || !rawCtx)
+        {
+            return nullptr;
+        }
+        auto* ctx = static_cast<SwapChainContext*>(rawCtx);
+        if (!ctx->hasProxyBuffers())
+        {
+            return nullptr;
+        }
+        return ctx->getCurrentProxyBuffer();
+    }
+
+    void addProxyBuffer(chi::Resource buffer) { proxyBuffers.push_back(buffer); }
+
+    void resizeProxyBuffers(chi::ICompute* compute, chi::Resource templateBuffer, uint32_t count, const char friendlyName[] = "sl.proxy-buffer")
+    {
+        if (!proxyBuffers.empty())
+        {
+            SL_LOG_WARN("resizeProxyBuffers called with %u existing proxy buffers — destroying them first", (uint32_t)proxyBuffers.size());
+        }
+        destroyAndClearProxyBuffers(compute);
+        chi::ResourceDescription desc(templateBuffer->width, templateBuffer->height, templateBuffer->nativeFormat,
+            chi::HeapType::eHeapTypeDefault, chi::ResourceState::ePresent,
+            chi::ResourceFlags::eShaderResourceStorage | chi::ResourceFlags::eColorAttachment);
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            chi::Resource buffer{};
+            auto status = compute->createTexture2D(desc, buffer, friendlyName);
+            if (status != chi::ComputeStatus::eOk)
+            {
+                SL_LOG_ERROR("resizeProxyBuffers: createTexture2D failed at buffer %u/%u (status %d) — cleaning up", i, count, status);
+                destroyAndClearProxyBuffers(compute);
+                return;
+            }
+            proxyBuffers.push_back(buffer);
+        }
+    }
+
+    void destroyAndClearProxyBuffers(chi::ICompute* compute)
+    {
+        for (auto& buffer : proxyBuffers)
+        {
+            compute->destroyResource(buffer);
+        }
+        proxyBuffers.clear();
+    }
+
+    void advanceProxyBufferIndex()
+    {
+        if (proxyBuffers.empty())
+        {
+            proxyBufferIndex.store(0, std::memory_order_release);
+        }
+        else
+        {
+            proxyBufferIndex.store(
+                (proxyBufferIndex.load(std::memory_order_relaxed) + 1) % static_cast<uint32_t>(proxyBuffers.size()),
+                std::memory_order_release);
+        }
+    }
+
+private:
+    std::vector<chi::Resource> proxyBuffers{};
+    std::atomic<uint32_t> proxyBufferIndex{};
+};
 
 namespace common
 {
@@ -285,6 +385,8 @@ struct PluginInfo
 using PFunUpdateCommonEmbeddedJSONConfig = void(void* config, const PluginInfo& info);
 using PFunGetStringFromModule = bool(const char* moduleName, const char* stringName, std::string& value);
 using PFunGetConstants = GetDataResult(const EventData&, Constants** consts);
+using PFunRegisterFeatureViewport = void(Feature feature, uint32_t viewportId);
+using PFunUnregisterFeatureViewport = void(Feature feature, uint32_t viewportId);
 
 inline GetDataResult getConsts(const EventData& data, sl::Constants** consts)
 {
@@ -298,6 +400,8 @@ inline GetDataResult getConsts(const EventData& data, sl::Constants** consts)
     }
     return getConsts(data, consts);
 }
+
+bool getFeatureViewports(Feature feature, std::vector<uint32_t>& viewportIds);
 
 using PFunBeginEndEvent = sl::Result(chi::CommandList cmdList, const common::EventData& data, const sl::BaseStructure** inputs, uint32_t numInputs);
 using PFunRegisterEvaluateCallbacks = void(Feature feature, PFunBeginEndEvent* beginEvent, PFunBeginEndEvent* endEvent);

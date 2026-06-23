@@ -47,13 +47,6 @@ enum class LogLevel : uint32_t;
 namespace log
 {
 
-#ifndef SL_WINDOWS
-#define FOREGROUND_BLUE 1
-#define FOREGROUND_GREEN 2
-#define FOREGROUND_RED 4
-#define FOREGROUND_INTENSITY 8
-#endif
-
 enum ConsoleForeground
 {
     BLACK = 0,

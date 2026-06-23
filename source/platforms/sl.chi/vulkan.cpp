@@ -23,10 +23,25 @@
 #include "source/core/sl.log/log.h"
 #include "source/platforms/sl.chi/vulkan.h"
 #include "source/core/sl.param/parameters.h"
-#include "source/core/sl.security/secureLoadLibrary.h"
 #include "shaders/vulkan_clear_image_view_spirv.h"
 #include "nvllvk.h"
 #include "external/vulkan/include/vulkan/vulkan_win32.h"
+
+#include "external/nsight-sdk/SystemsGraphics/include/NGFX_Vulkan.h"
+#include "external/nsight-sdk/SystemsGraphics/include/NGFX_GraphicsCapture_Vulkan.h"
+#include "external/nsight-sdk/SystemsGraphics/include/NGFX_SystemProfiling_Vulkan.h"
+
+// Swap chain private data requires Vulkan 1.3 (VkPrivateDataSlot, VK_OBJECT_TYPE_SWAPCHAIN_KHR, vkSet/GetPrivateData).
+#if !defined(VK_VERSION_1_3)
+#error "Vulkan SDK 1.3+ headers required for swap chain private data support"
+#endif
+
+inline constexpr auto ngfxFrameBoundaryType(bool isGenerated, bool isBegin)
+{
+    return isGenerated
+        ? (isBegin ? NGFX_For_Dlss_DLSS_FG_PresentBoundaryType_Generated_Frame_Begin : NGFX_For_Dlss_DLSS_FG_PresentBoundaryType_Generated_Frame_End)
+        : (isBegin ? NGFX_For_Dlss_DLSS_FG_PresentBoundaryType_Real_Frame_Begin : NGFX_For_Dlss_DLSS_FG_PresentBoundaryType_Real_Frame_End);
+}
 
 // Errors are negative so don't check for VK_SUCCESS only since there are other 'non fatal' values > 0, we show them as warnings
 #define VK_CHECK(f) {auto _r = f;if(_r < 0){SL_LOG_ERROR("%s failed - error %d",#f,_r); return ComputeStatus::eError;} else if(_r != 0) {SL_LOG_WARN("%s - warning %d",#f,_r);}}
@@ -175,7 +190,7 @@ struct Allocator
         sl::Resource r;
         r.native = cmdBuffer;
         r.type = (ResourceType)ResourceType::eCommandBuffer;
-        m_pCompute->setDebugName(&r, (m_sDebugName + "_command_buffer").c_str());
+        m_pCompute->setDebugName(&r, (m_sDebugName + ".command-buffer").c_str());
         return cmdBuffer;
     }
     void freeCmdBuffer(VkCommandBuffer cmdBuffer)
@@ -253,7 +268,7 @@ public:
         sl::Resource r{};
         r.type = (ResourceType)ResourceType::eFence;
         r.native = m_presentSemaphore;
-        m_compute->setDebugName(&r, "SL_present_semaphore");
+        m_compute->setDebugName(&r, (std::string(debugName) + ".present-semaphore").c_str());
 
         VkFenceCreateInfo fenceCreateinfo = {};
         fenceCreateinfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
@@ -264,14 +279,14 @@ public:
             r.type = (ResourceType)ResourceType::eFence;
             r.native = m_acquireSemaphore[i];
             std::stringstream name{};
-            name << "SL_acquire_semaphore_" << i;
+            name << debugName << ".acquire-semaphore." << i;
             m_compute->setDebugName(&r, name.str().c_str());
 
             VK_CHECK_RV(m_ddt.CreateFence(dev, &fenceCreateinfo, NULL, &m_acquireFence[i]));
             r.type = (ResourceType)ResourceType::eHostFence;
             r.native = m_acquireFence[i];
             name = std::stringstream{};
-            name << "SL_acquire_fence_" << i;
+            name << debugName << ".acquire-fence." << i;
             m_compute->setDebugName(&r, name.str().c_str());
         }
 
@@ -298,7 +313,7 @@ public:
                 sl::Resource r;
                 r.native = m_fence[i];
                 r.type = (ResourceType)ResourceType::eFence;
-                m_compute->setDebugName(&r, (std::string(debugName) + "_semaphore").c_str());
+                m_compute->setDebugName(&r, (std::string(debugName) + ".semaphore").c_str());
             }
             {
                 VkCommandPool allocator{};
@@ -307,7 +322,7 @@ public:
                 sl::Resource r;
                 r.native = allocator;
                 r.type = (ResourceType)ResourceType::eCommandPool;
-                m_compute->setDebugName(&r, (std::string(debugName) + "_command_pool").c_str());
+                m_compute->setDebugName(&r, (std::string(debugName) + ".command-pool").c_str());
                 m_allocators[i].init(allocator, &m_ddt, m_compute, m_device, debugName);
             }
 
@@ -730,6 +745,60 @@ public:
         return res;
     }
 
+    void delimitPresentRequest(uint32_t presentFrameIndex, uint32_t syncInterval, uint32_t flags, const void* presentParams) override
+    {
+        if (!m_nsightInitialized)
+        {
+            return;
+        }
+        if (m_cmdQueue == VK_NULL_HANDLE)
+        {
+            SL_LOG_WARN("Vulkan command queue is null - skipping present request marker");
+            return;
+        }
+        uint32_t generatedFrameIndex{ 0 };
+        NGFX_DLSS_FG_PresentBoundary_Vulkan_Params params{
+            NGFX_DLSS_FG_PresentBoundary_Vulkan_Params_VER,
+            NGFX_For_Dlss_DLSS_FG_PresentBoundaryType_Application_Present_Requested,
+            generatedFrameIndex,
+            m_cmdQueue,
+            reinterpret_cast<const VkPresentInfoKHR*>(presentParams),
+            presentFrameIndex
+        };
+        NGFX_Result result{ NGFX_DLSS_FG_PresentBoundary_Vulkan(&params) };
+        if (result != NGFX_Result_Success && result != NGFX_Result_NotImplemented)
+        {
+            SL_LOG_WARN("delimitPresentRequest failed (%d)", result);
+        }
+    }
+
+    void delimitFrame(uint32_t presentFrameIndex, int32_t genFrameIndex, bool isBegin, uint32_t syncInterval, uint32_t flags, const void* /*presentParams*/) override
+    {
+        if (!m_nsightInitialized)
+        {
+            return;
+        }
+        if (m_cmdQueue == VK_NULL_HANDLE)
+        {
+            SL_LOG_WARN("Vulkan command queue is null - skipping frame boundary marker");
+            return;
+        }
+        auto isGenerated{ genFrameIndex >= 0 };
+        NGFX_DLSS_FG_PresentBoundary_Vulkan_Params params{
+            NGFX_DLSS_FG_PresentBoundary_Vulkan_Params_VER,
+            ngfxFrameBoundaryType(isGenerated, isBegin),
+            isGenerated ? static_cast<uint32_t>(genFrameIndex) : 0,
+            m_cmdQueue,
+            nullptr,
+            presentFrameIndex
+        };
+        NGFX_Result result{ NGFX_DLSS_FG_PresentBoundary_Vulkan(&params) };
+        if (result != NGFX_Result_Success && result != NGFX_Result_NotImplemented)
+        {
+            SL_LOG_WARN("delimitFrame failed (%d)", result);
+        }
+    }
+
     void getFrameStats(SwapChain chain, void* frameStats)
     {
         assert(false);
@@ -1022,6 +1091,29 @@ ComputeStatus Vulkan::init(Device device, param::IParameters* params)
     m_ddt = m_vk->dispatchDeviceMap[m_device];
     m_idt = m_vk->dispatchInstanceMap[m_instance];
 
+    if (m_ddt.CreatePrivateDataSlot)
+    {
+        VkPrivateDataSlotCreateInfo slotCI = { VK_STRUCTURE_TYPE_PRIVATE_DATA_SLOT_CREATE_INFO };
+        if (m_ddt.CreatePrivateDataSlot(m_device, &slotCI, nullptr, &m_privateDataSlot) != VK_SUCCESS)
+        {
+            SL_LOG_WARN("Failed to create VkPrivateDataSlot - swap chain private data will not be available");
+            m_privateDataSlot = VK_NULL_HANDLE;
+        }
+    }
+    else
+    {
+        SL_LOG_WARN("vkCreatePrivateDataSlot not available (driver pre-1.3) - swap chain private data will not be available");
+    }
+
+    // VK_EXT_debug_utils is optional. When not enabled on the host VkInstance, SL's debug
+    // names (setDebugName, setDebugNameVk overloads) and profiling markers (begin/endProfilingImpl,
+    // queue*DebugUtilsLabelEXT) all silently no-op. Surface this at session start so the
+    // condition is visible without waiting for the first profiling marker.
+    if (m_ddt.SetDebugUtilsObjectNameEXT == nullptr)
+    {
+        SL_LOG_WARN("VK_EXT_debug_utils extension not enabled - VK debug names and profiling markers disabled!");
+    }
+
     if (m_reflex)
     {
         m_reflex->initDispatchTable(m_ddt);
@@ -1059,7 +1151,7 @@ ComputeStatus Vulkan::init(Device device, param::IParameters* params)
     VkResult result;
     {
         result = m_ddt.CreateSampler(m_device, &samplerCreateInfo, 0, &m_sampler[eSamplerLinearClamp]);
-        setDebugNameVk(m_sampler[eSamplerLinearClamp], "eSamplerLinearClamp");
+        setDebugNameVk(m_sampler[eSamplerLinearClamp], SL_COMPOSE_NAME(kComputeTag, "sampler.linear-clamp").c_str());
         assert(result == VK_SUCCESS);
     }
     {
@@ -1067,14 +1159,14 @@ ComputeStatus Vulkan::init(Device device, param::IParameters* params)
         samplerCreateInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
         samplerCreateInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
         result = m_ddt.CreateSampler(m_device, &samplerCreateInfo, 0, &m_sampler[eSamplerLinearMirror]);
-        setDebugNameVk(m_sampler[eSamplerLinearClamp], "eSamplerLinearMirror");
+        setDebugNameVk(m_sampler[eSamplerLinearMirror], SL_COMPOSE_NAME(kComputeTag, "sampler.linear-mirror").c_str());
         assert(result == VK_SUCCESS);
     }
     {
         samplerCreateInfo.magFilter = VK_FILTER_NEAREST;
         samplerCreateInfo.minFilter = VK_FILTER_NEAREST;
         result = m_ddt.CreateSampler(m_device, &samplerCreateInfo, 0, &m_sampler[eSamplerPointMirror]);
-        setDebugNameVk(m_sampler[eSamplerLinearClamp], "eSamplerPointMirror");
+        setDebugNameVk(m_sampler[eSamplerPointMirror], SL_COMPOSE_NAME(kComputeTag, "sampler.point-mirror").c_str());
         assert(result == VK_SUCCESS);
     }
     {
@@ -1082,7 +1174,7 @@ ComputeStatus Vulkan::init(Device device, param::IParameters* params)
         samplerCreateInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         samplerCreateInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         result = m_ddt.CreateSampler(m_device, &samplerCreateInfo, 0, &m_sampler[eSamplerPointClamp]);
-        setDebugNameVk(m_sampler[eSamplerLinearClamp], "eSamplerPointClamp");
+        setDebugNameVk(m_sampler[eSamplerPointClamp], SL_COMPOSE_NAME(kComputeTag, "sampler.point-clamp").c_str());
         assert(result == VK_SUCCESS);
     }
     m_idt.GetPhysicalDeviceMemoryProperties(m_physicalDevice, &m_vkPhysicalDeviceMemoryProperties);
@@ -1103,7 +1195,7 @@ ComputeStatus Vulkan::init(Device device, param::IParameters* params)
     if (result != VK_SUCCESS) {
         return ComputeStatus::eError;
     }
-    setDebugNameVk(m_imageViewClear.descriptorSetLayout, "SL_imageViewClear_descriptorSetLayout");
+    setDebugNameVk(m_imageViewClear.descriptorSetLayout, SL_COMPOSE_NAME(kComputeTag, "descriptorSetLayout.imageViewClear").c_str());
 
     VkPushConstantRange range;
     range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -1120,7 +1212,7 @@ ComputeStatus Vulkan::init(Device device, param::IParameters* params)
     if (result != VK_SUCCESS) {
         return ComputeStatus::eError;
     }
-    setDebugNameVk(m_imageViewClear.pipelineLayout, "SL_imageViewClear_pipelineLayout");
+    setDebugNameVk(m_imageViewClear.pipelineLayout, SL_COMPOSE_NAME(kComputeTag, "pipelineLayout.imageViewClear").c_str());
 
     // Create the compute pipeline for image view clears
     VkShaderModule csm;
@@ -1144,7 +1236,7 @@ ComputeStatus Vulkan::init(Device device, param::IParameters* params)
     if (result != VK_SUCCESS) {
         return ComputeStatus::eError;
     }
-    setDebugNameVk(m_imageViewClear.doClear, "SL_imageViewClear_pipeline");
+    setDebugNameVk(m_imageViewClear.doClear, SL_COMPOSE_NAME(kComputeTag, "pipeline.imageViewClear").c_str());
 
     m_ddt.DestroyShaderModule(m_device, csm, nullptr);
 
@@ -1153,11 +1245,45 @@ ComputeStatus Vulkan::init(Device device, param::IParameters* params)
 
     genericPostInit();
 
+    initNsightActivity();
+
     return ComputeStatus::eOk;
+}
+
+// Non-virtual: not all backends can initialize all NSight SDK activity types,
+// and the base class cannot provide a meaningful default implementation.
+void Vulkan::initNsightActivity()
+{
+    NGFX_SetLibraryLoadFn(nsightSecureLoadLibraryCallback);
+
+    NGFX_GraphicsCapture_InitializeActivity_Vulkan_Params gfxParams{ NGFX_GraphicsCapture_InitializeActivity_Vulkan_Params_VER };
+    NGFX_Result gfxResult{ NGFX_GraphicsCapture_InitializeActivity_Vulkan(&gfxParams) };
+    if (gfxResult == NGFX_Result_Success)
+    {
+        m_nsightInitialized = true;
+        SL_LOG_INFO("NSight Graphics attached, capture activity initialized");
+    }
+    else
+    {
+        SL_LOG_VERBOSE("NSight Graphics not attached, capture activity initialization failed (%d)", gfxResult);
+        NGFX_SystemProfiling_InitializeActivity_Vulkan_Params sysParams{ NGFX_SystemProfiling_InitializeActivity_Vulkan_Params_VER };
+        NGFX_Result sysResult{ NGFX_SystemProfiling_InitializeActivity_Vulkan(&sysParams) };
+        if (sysResult == NGFX_Result_Success)
+        {
+            m_nsightInitialized = true;
+            SL_LOG_INFO("NSight Systems attached, profiling activity initialized");
+        }
+        else
+        {
+            SL_LOG_VERBOSE("NSight Systems not attached, profiling activity initialization failed (%d)", sysResult);
+        }
+    }
 }
 
 ComputeStatus Vulkan::shutdown()
 {
+    m_nsightInitialized = false;
+
     m_dispatchContext.clear();
 
     assert(m_device != NULL);
@@ -1207,6 +1333,12 @@ ComputeStatus Vulkan::shutdown()
     {
         m_idt.DestroyDebugUtilsMessengerEXT(m_instance, m_debugUtilsMessenger, nullptr);
         m_debugUtilsMessenger = VK_NULL_HANDLE;
+    }
+
+    if (m_privateDataSlot != VK_NULL_HANDLE && m_ddt.DestroyPrivateDataSlot)
+    {
+        m_ddt.DestroyPrivateDataSlot(m_device, m_privateDataSlot, nullptr);
+        m_privateDataSlot = VK_NULL_HANDLE;
     }
 
     delete m_vk;
@@ -1442,6 +1574,7 @@ ComputeStatus Vulkan::createCommandListContext(ChiCommandQueue* queue,
 { 
     auto tmp = new CommandListContextVK();
     tmp->init(this, m_vk, friendlyName, m_device, (CommandQueueVk*)queue, count);
+    tmp->m_nsightInitialized = m_nsightInitialized;
     ctx = tmp;
     return ComputeStatus::eOk;
 }
@@ -1518,6 +1651,7 @@ ComputeStatus Vulkan::createCommandQueue(CommandQueueType type,
     VkQueue tmp{};
     CHI_CHECK(getDeviceQueue(queueFamily, queueIndex + index, queueCreateFlags, tmp));
     queue = (ChiCommandQueue *)(new chi::CommandQueueVk{ tmp, type, queueFamily, queueIndex + index });
+    setDebugName((chi::CommandQueueVk*)queue, friendlyName);
 
     return ComputeStatus::eOk;
 }
@@ -1639,7 +1773,7 @@ ComputeStatus Vulkan::bindConsts(uint32_t base, uint32_t reg, void *data, size_t
         slot.registerIndex = base;
         ResourceDescription cbDesc = ResourceDescription{alignedDataSize * instances,1,chi::NativeFormatUnknown,chi::eHeapTypeUpload, chi::ResourceState::eConstantBuffer};
         Resource cb;
-        CHI_CHECK(createBuffer(cbDesc, cb, "const buffer"));
+        CHI_CHECK(createBuffer(cbDesc, cb, SL_COMPOSE_NAME(kComputeTag, "buf.const").c_str()));
         slot.handles.push_back(cb);
         slot.mapped = {};
         auto info = (sl::Resource*)cb;
@@ -1813,7 +1947,7 @@ ComputeStatus Vulkan::processDescriptors(DispatchData& thread)
             dslInfo.pBindings = bindings.data();
             //dslInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
             VK_CHECK(m_ddt.CreateDescriptorSetLayout(m_device, &dslInfo, 0, &thread.kernel->descriptorSetLayout));
-            setDebugNameVk(thread.kernel->descriptorSetLayout, "SL_thread_kernel_descriptorSetLayout");
+            setDebugNameVk(thread.kernel->descriptorSetLayout, SL_COMPOSE_NAME(kComputeTag, "descriptorSetLayout.thread-kernel").c_str());
 
             VkPipelineLayoutCreateInfo plInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
             plInfo.setLayoutCount = 1;
@@ -1821,7 +1955,7 @@ ComputeStatus Vulkan::processDescriptors(DispatchData& thread)
             plInfo.pushConstantRangeCount = 0;
             plInfo.pPushConstantRanges = {};
             VK_CHECK(m_ddt.CreatePipelineLayout(m_device, &plInfo, 0, &thread.kernel->pipelineLayout));
-            setDebugNameVk(thread.kernel->pipelineLayout, "SL_thread_kernel_pipelineLayout");
+            setDebugNameVk(thread.kernel->pipelineLayout, SL_COMPOSE_NAME(kComputeTag, "pipelineLayout.thread-kernel").c_str());
         }
 
         auto id = GetCurrentThreadId();
@@ -1837,7 +1971,7 @@ ComputeStatus Vulkan::processDescriptors(DispatchData& thread)
         PoolDescCombo& combo = thread.signatureToDesc[thread.signature];
         VK_CHECK(m_ddt.CreateDescriptorPool(m_device, &descriptorPoolInfo, nullptr, &combo.pool));
         std::stringstream name{};
-        name << "SL_thread_" << id << "_descriptor_pool";
+        name << SL_COMPOSE_NAME(kComputeTag, "descriptorPool.thread") << "." << id;
         setDebugNameVk(combo.pool, name.str().c_str());
 
         combo.descSetData.descSet.resize(thread.kernel->numDescriptorSets);
@@ -1846,7 +1980,7 @@ ComputeStatus Vulkan::processDescriptors(DispatchData& thread)
             VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO , nullptr, combo.pool, 1, &thread.kernel->descriptorSetLayout };
             VK_CHECK(m_ddt.AllocateDescriptorSets(m_device, &allocInfo, &combo.descSetData.descSet[i]));
             name = std::stringstream{};
-            name << "SL_thread_" << id << "_kernel_descriptor_set_" << i;
+            name << SL_COMPOSE_NAME(kComputeTag, "descriptorSet.thread") << "." << id << ".kernel." << i;
             setDebugNameVk(combo.descSetData.descSet[i], name.str().c_str());
         }
 
@@ -1974,7 +2108,7 @@ ComputeStatus Vulkan::processDescriptors(DispatchData& thread)
         pipelineInfo.stage.module = thread.kernel->shaderModule;
         pipelineInfo.stage.pName = "main";
         VK_CHECK(m_ddt.CreateComputePipelines(m_device, nullptr, 1, &pipelineInfo, 0, &thread.kernel->pipeline));
-        setDebugNameVk(thread.kernel->pipeline, "SL_thread_kernel_pipeline");
+        setDebugNameVk(thread.kernel->pipeline, SL_COMPOSE_NAME(kComputeTag, "pipeline.thread-kernel").c_str());
     }
     return ComputeStatus::eOk;
 }
@@ -2149,7 +2283,7 @@ ComputeStatus Vulkan::createTexture2DResourceSharedImpl(ResourceDescription &res
             return ComputeStatus::eError;
         }
         std::stringstream name{};
-        name << InFriendlyName << "_device_memory";
+        name << InFriendlyName << ".device_memory";
         setDebugNameVk(deviceMemory, name.str().c_str());
 
         result = m_ddt.BindImageMemory(m_device, image, deviceMemory, 0);
@@ -3231,6 +3365,68 @@ ComputeStatus Vulkan::copyBufferToReadbackBuffer(CommandList InCmdList, Resource
     return ComputeStatus::eOk;
 }
 
+#if SL_ENABLE_PROFILING
+ComputeStatus Vulkan::beginProfilingImpl(CommandList cmdList, const char* marker, uint8_t r, uint8_t g, uint8_t b)
+{
+    if (m_ddt.CmdBeginDebugUtilsLabelEXT == NULL)
+    {
+        return ComputeStatus::eNotSupported;
+    }
+
+    VkDebugUtilsLabelEXT labelInfo = { VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT };
+    labelInfo.pLabelName = marker;
+    labelInfo.color[0] = r / 255.0f;
+    labelInfo.color[1] = g / 255.0f;
+    labelInfo.color[2] = b / 255.0f;
+    labelInfo.color[3] = 1.0f;
+    m_ddt.CmdBeginDebugUtilsLabelEXT((VkCommandBuffer)cmdList, &labelInfo);
+
+    return ComputeStatus::eOk;
+}
+
+ComputeStatus Vulkan::endProfilingImpl(CommandList cmdList)
+{
+    if (m_ddt.CmdEndDebugUtilsLabelEXT == NULL)
+    {
+        return ComputeStatus::eNotSupported;
+    }
+
+    m_ddt.CmdEndDebugUtilsLabelEXT((VkCommandBuffer)cmdList);
+
+    return ComputeStatus::eOk;
+}
+
+ComputeStatus Vulkan::beginProfilingQueueImpl(CommandQueue cmdQueue, const char* marker, uint8_t r, uint8_t g, uint8_t b)
+{
+    if (m_ddt.QueueBeginDebugUtilsLabelEXT == NULL)
+    {
+        return ComputeStatus::eNotSupported;
+    }
+
+    VkDebugUtilsLabelEXT labelInfo = { VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT };
+    labelInfo.pLabelName = marker;
+    labelInfo.color[0] = r / 255.0f;
+    labelInfo.color[1] = g / 255.0f;
+    labelInfo.color[2] = b / 255.0f;
+    labelInfo.color[3] = 1.0f;
+    m_ddt.QueueBeginDebugUtilsLabelEXT((VkQueue)cmdQueue, &labelInfo);
+
+    return ComputeStatus::eOk;
+}
+
+ComputeStatus Vulkan::endProfilingQueueImpl(CommandQueue cmdQueue)
+{
+    if (m_ddt.QueueEndDebugUtilsLabelEXT == NULL)
+    {
+        return ComputeStatus::eNotSupported;
+    }
+
+    m_ddt.QueueEndDebugUtilsLabelEXT((VkQueue)cmdQueue);
+
+    return ComputeStatus::eOk;
+}
+#endif
+
 ComputeStatus Vulkan::beginPerfSection(CommandList cmdList, const char *key, unsigned int node, bool reset)
 {
     std::scoped_lock lock(m_mutexProfiler);
@@ -3266,7 +3462,7 @@ ComputeStatus Vulkan::beginPerfSection(CommandList cmdList, const char *key, uns
             return ComputeStatus::eError;
         }
         std::stringstream name{};
-        name << "SL_query_pool_" << Data.QueryIdx;
+        name << SL_COMPOSE_NAME(kComputeTag, "queryPool") << "." << Data.QueryIdx;
         setDebugNameVk(Data.QueryPool[Data.QueryIdx], name.str().c_str());
         m_ddt.CmdResetQueryPool(commandBuffer, Data.QueryPool[Data.QueryIdx], 0, 2);
     }
@@ -3359,7 +3555,7 @@ ComputeStatus Vulkan::getSwapChainBuffer(SwapChain swapchain, uint32_t index, Re
     VkImageView imageView;
     VK_CHECK(m_ddt.CreateImageView(m_device, &texViewCreateInfo, 0, &imageView));
     std::stringstream name{};
-    name << "SL_swapchain_image_" << index << "_view";
+    name << SL_COMPOSE_NAME(kComputeTag, "imageView.swapchain") << "." << index;
     setDebugNameVk(imageView, name.str().c_str());
 
     // This pointer is deleted when DestroyResource is called on the object.
@@ -3537,5 +3733,36 @@ ComputeStatus Vulkan::getNativeFormat(Format format, NativeFormat& native)
      }
      return ComputeStatus::eNotSupported;
  }
+
+ComputeStatus Vulkan::setSwapChainPrivateData(void* nativeSwapChain, void* data)
+{
+    if (!nativeSwapChain) return ComputeStatus::eInvalidArgument;
+    if (m_privateDataSlot == VK_NULL_HANDLE || !m_ddt.SetPrivateData)
+    {
+        SL_LOG_WARN("VkPrivateDataSlot not available");
+        return ComputeStatus::eNotSupported;
+    }
+    auto swapchain = (VkSwapchainKHR)nativeSwapChain;
+    auto res = m_ddt.SetPrivateData(m_device, VK_OBJECT_TYPE_SWAPCHAIN_KHR, (uint64_t)swapchain, m_privateDataSlot, reinterpret_cast<uint64_t>(data));
+    if (res != VK_SUCCESS)
+    {
+        SL_LOG_ERROR("vkSetPrivateData failed with %d", res);
+        return ComputeStatus::eError;
+    }
+    return ComputeStatus::eOk;
+}
+
+ComputeStatus Vulkan::getSwapChainPrivateData(void* nativeSwapChain, void** data)
+{
+    if (!nativeSwapChain || !data) return ComputeStatus::eInvalidArgument;
+    if (m_privateDataSlot == VK_NULL_HANDLE || !m_ddt.GetPrivateData)
+    {
+        return ComputeStatus::eNotSupported;
+    }
+    uint64_t raw = 0;
+    m_ddt.GetPrivateData(m_device, VK_OBJECT_TYPE_SWAPCHAIN_KHR, (uint64_t)(VkSwapchainKHR)nativeSwapChain, m_privateDataSlot, &raw);
+    *data = reinterpret_cast<void*>(raw);
+    return ComputeStatus::eOk;
+}
 }
 }

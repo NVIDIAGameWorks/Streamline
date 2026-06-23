@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2022-2023 NVIDIA CORPORATION. All rights reserved
+* Copyright (c) 2022-2026 NVIDIA CORPORATION. All rights reserved
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -272,6 +272,16 @@ class Vulkan : public Generic
 
     ComputeStatus fillSupportedDeviceExtensions();
     std::unordered_map<std::string, uint32_t> m_supportedDeviceExtensions = {};
+    void initNsightActivity();
+
+protected:
+#if SL_ENABLE_PROFILING
+    ComputeStatus beginProfilingImpl(CommandList cmdList, const char* marker, uint8_t r, uint8_t g, uint8_t b) override final;
+    ComputeStatus endProfilingImpl(CommandList cmdList) override final;
+    ComputeStatus beginProfilingQueueImpl(CommandQueue cmdQueue, const char* marker, uint8_t r, uint8_t g, uint8_t b) override final;
+    ComputeStatus endProfilingQueueImpl(CommandQueue cmdQueue) override final;
+#endif
+
 public:
 
     virtual ComputeStatus init(Device InDevice, param::IParameters* params);
@@ -345,6 +355,16 @@ public:
 
     virtual ComputeStatus getSwapChainBuffer(SwapChain chain, uint32_t index, Resource& buffer) override final;
     
+    // Hybrid GPU support - Vulkan doesn't support hybrid GPU yet
+    virtual ComputeStatus notifySwapChainCreated(SwapChain chain, uint32_t bufferCount) override final { return ComputeStatus::eOk; }
+    virtual void notifySwapChainDestroyed(SwapChain chain) override final {}
+    virtual ChiCommandQueue* getHybridPresentationQueue() override final { return nullptr; }
+    virtual ComputeStatus copyFrameToHybridBackBuffer(SwapChain chain, Resource source,
+                                                      const HybridCopyParams& params,
+                                                      CommandQueue pacerQueue) override final { return ComputeStatus::eOk; }
+    virtual ComputeStatus waitForHybridCopyComplete(SwapChain chain) override final { return ComputeStatus::eOk; }
+    virtual ComputeStatus notifyHybridPresent(CommandQueue queue) override final { return ComputeStatus::eOk; }
+
     virtual ComputeStatus clearView(CommandList InCmdList, Resource InResource, const float4 Color, const RECT * pRect, unsigned int NumRects, CLEAR_TYPE &outType) override final;
 
     virtual ComputeStatus setDebugName(Resource InOutResource, const char InFriendlyName[]) override final;
@@ -372,6 +392,12 @@ public:
 
     // check if an extension is available
     virtual ComputeStatus isDeviceExtensionSupported(const char* extension, uint32_t version) override final;
+
+    ComputeStatus setSwapChainPrivateData(void* nativeSwapChain, void* data) override final;
+    ComputeStatus getSwapChainPrivateData(void* nativeSwapChain, void** data) override final;
+
+private:
+    VkPrivateDataSlot m_privateDataSlot{};
 };
 
 }

@@ -2,7 +2,7 @@
 Streamline - Manual Hooking
 =======================
 
-Version 2.11.1
+Version 2.12.0
 =======
 
 The automated global hooking is a great way to quickly enable SL features in any application. However, this can lead to unnecessary overhead caused by the entire API redirection through SL proxies and problems with tools and 3rd party libraries which do not expect to receive SL proxies as inputs.
@@ -463,6 +463,9 @@ else
     VkPhysicalDeviceVulkan13Features features13 = sl::getVkPhysicalDeviceVulkan13Features(reqs.numFeatures13, reqs.features13);
 }
 ```
+
+> **NOTE:**
+> If the host application intends to view names of SL and NGX feature resources (e.g. DLSS textures and buffers) and SL and NGX profiling markers in tools such as Nsight, enable the `VK_EXT_debug_utils` instance extension on its `VkInstance` (in addition to the extensions reported by `slGetFeatureRequirements`).
 
 Now that you have the information about the additional extensions, features and queues required by SL feature(s) you can proceed to create Vulkan instance and device. For more details please check out the [implementation](../source/core/sl.interposer/vulkan/wrapper.cpp).
 

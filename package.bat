@@ -186,10 +186,12 @@ copy %features_src%\reflex.license.txt %copy_dest% /Y
 
 copy %src%\external\reflex-sdk-vk\lib\NvLowLatencyVk.dll %copy_dest% /Y
 
+
+
 :: Profiling Binary
-IF "%copy_cfg%"=="Develop" (
+IF NOT "%copy_cfg%"=="Production" (
     copy %src%\external\pix\bin\WinPixEventRuntime.dll %copy_dest% /Y
-    copy %src%\external\pix\PACKAGE_LICENSES\winpixeventruntime-LICENSE.md %copy_dest% /Y
+    copy %src%\external\pix\PACKAGE-LICENSES\winpixeventruntime-LICENSE.md %copy_dest% /Y
 )
 
 exit /b 0
@@ -309,6 +311,7 @@ copy %src%\docs\changelog.txt %dest% /Y
 copy %src%\README.md             %dest% /Y
 copy %src%\license.txt           %dest% /Y
 copy %src%\"NVIDIA Nsight Perf SDK License (28Sept2022).pdf" %dest% /Y
+copy %src%\"NVIDIA Nsight Graphics SDK License (Apache 2.0).txt" %dest% /Y
 copy %src%\3rd-party-licenses.md %dest% /Y
 
 :: SOURCE
@@ -392,6 +395,7 @@ IF "%include_source%"=="True" (
     copy %src%\external\json\LICENSE.MIT                       %dest%\external\json
     copy %src%\external\json\nlohmann_json.natvis              %dest%\external\json
     copy %src%\external\ngx-sdk\include\nvsdk_ngx_defs.h       %dest%\external\ngx-sdk\include
+    copy %src%\external\ngx-sdk\include\nvsdk_ngx_defs_vk.h   %dest%\external\ngx-sdk\include
     copy %src%\external\ngx-sdk\include\nvsdk_ngx_helpers.h    %dest%\external\ngx-sdk\include
     copy %src%\external\ngx-sdk\include\nvsdk_ngx_helpers_vk.h %dest%\external\ngx-sdk\include
     copy %src%\external\ngx-sdk\include\nvsdk_ngx_params.h     %dest%\external\ngx-sdk\include
@@ -413,6 +417,9 @@ IF "%include_source%"=="True" (
     mkdir %dest%\external\reflex-sdk-vk
     xcopy %src%\external\reflex-sdk-vk\ %dest%\external\reflex-sdk-vk /S
     copy %src%\features\reflex.license.txt %dest%\external\reflex-sdk-vk /Y
+
+    mkdir %dest%\external\nsight-sdk
+    xcopy %src%\external\nsight-sdk\ %dest%\external\nsight-sdk /S
 
     :: Shader Source
     copy %src%\shaders\copy.hlsl                       %dest%\shaders
@@ -462,5 +469,6 @@ IF "%include_source%"=="True" (
         copy %artifacts_src%\sl.dlss_g\Production_%arch_vs%\sl.dlss_g.dll %dest%\_artifacts\sl.dlss_g\Production_%arch_vs%
         copy %artifacts_src%\sl.dlss_g\Develop_%arch_vs%\sl.dlss_g.dll %dest%\_artifacts\sl.dlss_g\Develop_%arch_vs%
     )
+
 
 )

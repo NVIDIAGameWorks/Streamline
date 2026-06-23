@@ -20,7 +20,6 @@
 * SOFTWARE.
 */
 
-#ifdef SL_WINDOWS
 #include <d3d11.h>
 #include "source/core/sl.interposer/d3d12/d3d12.h"
 #include "source/core/sl.interposer/d3d12/d3d12Device.h"
@@ -30,9 +29,6 @@
 #include "source/core/sl.interposer/dxgi/dxgiSwapchain.h"
 #include "external/vulkan/include/vulkan/vulkan.h"
 #include <versionhelpers.h>
-#else
-#include <unistd.h>
-#endif
 #include <chrono>
 
 #include "include/sl.h"
@@ -260,13 +256,6 @@ sl::Result slInit(const Preferences &pref, uint64_t sdkVersion)
             // Check to see if RenderDoc is present and notify the user
 #ifdef SL_WINDOWS
             HMODULE renderDocMod = GetModuleHandleA("renderdoc.dll");
-            if (renderDocMod)
-            {
-                SL_LOG_WARN("RenderDoc has been detected.  As RenderDoc disables NVAPI, any plugins which require NVAPI will be disabled.");
-            }
-#endif
-#ifdef SL_LINUX
-            void* renderDocMod = dlopen("librenderdoc.so", RTLD_NOW | RTLD_NOLOAD);
             if (renderDocMod)
             {
                 SL_LOG_WARN("RenderDoc has been detected.  As RenderDoc disables NVAPI, any plugins which require NVAPI will be disabled.");
@@ -628,7 +617,6 @@ Result slUpgradeInterface(void** baseInterface)
     {
         SL_CHECK(slValidateState());
 
-#if SL_WINDOWS
         if (!baseInterface || !*baseInterface)
         {
             SL_LOG_ERROR( "Missing input interface");
@@ -729,9 +717,6 @@ Result slUpgradeInterface(void** baseInterface)
         }
 
         SL_LOG_ERROR( "Unable to upgrade unsupported interface");
-#else
-        SL_LOG_ERROR("This method is not supported on Linux");
-#endif
 
         return Result::eErrorUnsupportedInterface;
     };

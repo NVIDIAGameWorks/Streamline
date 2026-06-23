@@ -1,0 +1,40 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//--------------------------------------------------------------------------------------
+// File: NGFX_OpenGL_Types.h
+//
+// Distributed as part of the NVIDIA Nsight Graphics SDK.
+//--------------------------------------------------------------------------------------
+
+#ifndef NGFX_OPENGL_TYPES_H
+#define NGFX_OPENGL_TYPES_H
+
+#include "NGFX_Types.h"
+
+/**
+ * @brief Parameters for delimiting a OpenGL frame.
+ */
+typedef struct NGFX_FrameBoundary_OpenGL_Params_V1
+{
+    uint32_t version; /**< Used for versioning; must be assigned a value of NGFX_FrameBoundary_OpenGL_Params_VER */
+} NGFX_FrameBoundary_OpenGL_Params_V1;
+typedef NGFX_FrameBoundary_OpenGL_Params_V1 NGFX_FrameBoundary_OpenGL_Params;
+#define NGFX_FrameBoundary_OpenGL_Params_V1_VER NGFX_MAKE_STRUCT_VERSION(NGFX_FrameBoundary_OpenGL_Params_V1, 1)
+#define NGFX_FrameBoundary_OpenGL_Params_VER NGFX_FrameBoundary_OpenGL_Params_V1_VER
+
+#endif // NGFX_OPENGL_TYPES_H

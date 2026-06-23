@@ -305,6 +305,11 @@ void OTA::setNGXPathOverride(const std::optional<std::filesystem::path> ngxPath)
     m_ngxPathOverride = ngxPath;
 }
 
+void OTA::setOTAOverrideEnabled(std::optional<bool> enabled)
+{
+    m_otaOverrideEnabled = enabled;
+}
+
 bool OTA::getDriverPath(std::filesystem::path& driverPath) const
 {
     WCHAR pathAbsW[MAX_PATH] = {};
@@ -693,9 +698,7 @@ bool OTA::readOTAOverrideDRS()
         if (NvAPI_DRS_GetSetting(drsSession, appProfile, SL_DLSS_OVERRIDE_ID, &setting) == NVAPI_OK)
         {
             result = (setting.u32CurrentValue == SL_DLSS_OVERRIDE_ON);
-            SL_LOG_INFO("Read SL_DLSS_OVERRIDE DRS key (%s profile): %u",
-                        setting.settingLocation == NVDRS_CURRENT_PROFILE_LOCATION ? "app" : "global",
-                        setting.u32CurrentValue);
+            SL_LOG_INFO("Read SL_DLSS_OVERRIDE DRS key (app profile): %u", setting.u32CurrentValue);
             NvAPI_DRS_DestroySession(drsSession);
             return result;
         }

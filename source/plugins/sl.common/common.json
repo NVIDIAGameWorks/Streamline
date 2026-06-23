@@ -39,6 +39,25 @@
         },
 
         {
+            "class": "IDXGIFactory",
+            "target" : "CreateSwapChain",
+            "replacement" : "slHookCreateSwapChain",
+            "base" : "before"
+        },
+        {
+            "class": "IDXGIFactory",
+            "target" : "CreateSwapChainForHwnd",
+            "replacement" : "slHookCreateSwapChainForHwnd",
+            "base" : "before"
+        },
+        {
+            "class": "IDXGIFactory",
+            "target" : "CreateSwapChainForCoreWindow",
+            "replacement" : "slHookCreateSwapChainForCoreWindow",
+            "base" : "before"
+        },
+
+        {
             "class": "IDXGISwapChain",
             "target" : "ResizeBuffers",
             "replacement" : "slHookResizeSwapChainPre",
